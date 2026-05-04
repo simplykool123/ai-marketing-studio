@@ -88,7 +88,10 @@ export default function CreatePost() {
             setEditedHashtags(res.options[0].hashtags);
           }
         },
-        onError: () => toast({ title: "Failed to generate captions", variant: "destructive" }),
+        onError: (err) => {
+          const message = err instanceof Error ? err.message : "AI generation failed";
+          toast({ title: "Failed to generate captions", description: message, variant: "destructive" });
+        },
       }
     );
   };

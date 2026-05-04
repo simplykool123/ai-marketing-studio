@@ -38,9 +38,34 @@ function getGeminiClient(): GoogleGenerativeAI {
   return new GoogleGenerativeAI(key);
 }
 
+// Map any retired/old model aliases to current valid equivalents.
+const MODEL_ALIASES: Record<string, string> = {
+  "claude-opus-4-5": "claude-sonnet-4-6",
+  "claude-3-opus-20240229": "claude-sonnet-4-6",
+};
+
+function resolveModel(provider: string, model: string): string {
+  if (provider === "anthropic") {
+    return MODEL_ALIASES[model] ?? (model || "claude-sonnet-4-6");
+  }
+  if (provider === "openai") return model || "gpt-4o";
+  if (provider === "gemini") return model || "gemini-1.5-pro";
+  return model;
+}
+
 function toAiErrorResponse(err: unknown, fallback: string): { status: number; message: string } {
   if (err instanceof AiConfigError) return { status: 503, message: err.message };
-  if (err instanceof Error) return { status: 500, message: err.message.includes("API key") ? err.message : fallback };
+  if (err instanceof Error) {
+    const msg = err.message;
+    const lower = msg.toLowerCase();
+    if (lower.includes("authentication") || lower.includes("api key") || lower.includes("incorrect api key") || lower.includes("invalid api key") || lower.includes("unauthorized")) {
+      return { status: 503, message: `AI provider authentication failed — check your API key in Settings. (${msg})` };
+    }
+    if (lower.includes("model") && (lower.includes("not found") || lower.includes("does not exist") || lower.includes("invalid model"))) {
+      return { status: 503, message: `AI model not recognised. Update your model in Settings. (${msg})` };
+    }
+    return { status: 500, message: fallback };
+  }
   return { status: 500, message: fallback };
 }
 
@@ -52,6 +77,32 @@ async function getUserSettings(userId?: string) {
     .where(eq(userSettingsTable.userId, userId))
     .limit(1);
   return settings ?? null;
+}
+
+// Resolve provider + model: prefer explicit user settings when the matching key
+// is present; otherwise fall back to whichever key is available in env.
+function resolveProviderAndModel(
+  settings: { aiProvider: string; aiModel: string } | null
+): { provider: string; model: string } {
+  if (settings) {
+    const { aiProvider, aiModel } = settings;
+    const keyPresent =
+      (aiProvider === "anthropic" && !!process.env.ANTHROPIC_KEY) ||
+      (aiProvider === "openai" && !!process.env.OPENAI_KEY) ||
+      (aiProvider === "gemini" && !!process.env.GEMINI_KEY);
+    if (keyPresent) {
+      return { provider: aiProvider, model: resolveModel(aiProvider, aiModel) };
+    }
+    // Configured provider key is missing — fall through to auto-detect
+  }
+
+  if (process.env.ANTHROPIC_KEY) return { provider: "anthropic", model: "claude-sonnet-4-6" };
+  if (process.env.OPENAI_KEY) return { provider: "openai", model: "gpt-4o" };
+  if (process.env.GEMINI_KEY) return { provider: "gemini", model: "gemini-1.5-pro" };
+
+  throw new AiConfigError(
+    "No AI provider API keys are configured. Add ANTHROPIC_KEY, OPENAI_KEY, or GEMINI_KEY to your .env file and restart the server."
+  );
 }
 
 async function generateTextWithProvider(
@@ -77,7 +128,7 @@ async function generateTextWithProvider(
   // Default: anthropic
   const anthropic = getAnthropicClient();
   const msg = await anthropic.messages.create({
-    model: model || "claude-opus-4-5",
+    model: model || "claude-sonnet-4-6",
     max_tokens: 1500,
     messages: [{ role: "user", content: prompt }],
   });
@@ -95,8 +146,7 @@ router.post("/ai/generate-captions", async (req: AuthRequest, res) => {
 
     const context = await buildClientContext(body.clientId);
     const settings = await getUserSettings(req.userId);
-    const provider = settings?.aiProvider ?? "anthropic";
-    const model = settings?.aiModel ?? "claude-opus-4-5";
+    const { provider, model } = resolveProviderAndModel(settings);
 
     const prompt = `You are a professional social media content strategist. Using the brand context below, generate exactly 3 distinct caption options for a post about the given topic. Each caption must match the brand's voice and tone.
 
@@ -128,7 +178,11 @@ Respond with ONLY valid JSON in this exact format:
     res.json(parsed);
   } catch (err) {
     const { status, message } = toAiErrorResponse(err, "Failed to generate captions. Check that your AI provider key is configured in Settings.");
-    console.error("Caption generation error:", err);
+    console.error("Caption generation error:", {
+      message: err instanceof Error ? err.message : String(err),
+      status: (err as { status?: number }).status ?? (err as { statusCode?: number }).statusCode,
+      name: err instanceof Error ? err.name : typeof err,
+    });
     res.status(status).json({ error: message });
   }
 });
@@ -209,8 +263,7 @@ router.post("/clients/:clientId/suggestions", requireClientRole(EDIT_CONTENT_ROL
     const { clientId } = req.params;
     const context = await buildClientContext(clientId);
     const settings = await getUserSettings(req.userId);
-    const provider = settings?.aiProvider ?? "anthropic";
-    const model = settings?.aiModel ?? "claude-opus-4-5";
+    const { provider, model } = resolveProviderAndModel(settings);
     const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
     const prompt = `You are a senior content strategist. Based on the brand context below, suggest 5 specific content ideas for the next 7 days of posts.

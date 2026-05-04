@@ -55,7 +55,7 @@ router.put("/settings", requireAuth, async (req: AuthRequest, res): Promise<void
     } else {
       const [created] = await db
         .insert(userSettingsTable)
-        .values({ userId, aiProvider: aiProvider ?? "anthropic", aiModel: aiModel ?? "claude-opus-4-5", imageProvider: imageProvider ?? "openai", imageModel: imageModel ?? "dall-e-3" })
+        .values({ userId, aiProvider: aiProvider ?? "anthropic", aiModel: aiModel ?? "claude-sonnet-4-6", imageProvider: imageProvider ?? "openai", imageModel: imageModel ?? "dall-e-3" })
         .returning();
       res.json(created);
     }
