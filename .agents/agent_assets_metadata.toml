@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "hFayx19t_PGKbVntcPlrT"
+uri = "file://docs/PROJECT_OVERVIEW.md"
+type = "text"
+title = "AI Marketing Studio — Full Project Overview"

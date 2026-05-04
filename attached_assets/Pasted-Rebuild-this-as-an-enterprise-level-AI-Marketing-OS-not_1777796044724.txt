@@ -1,0 +1,534 @@
+Rebuild this as an enterprise-level AI Marketing OS, not a basic caption generator.
+
+The current app is too basic. Refactor it into a full one-stop digital marketing platform.
+
+MAIN GOAL:
+A multi-client AI marketing platform where I log in, select a client, and the system acts like that client’s digital marketing agency.
+
+It should:
+- remember the client’s full brand history
+- suggest what content to create next
+- research ideas
+- generate captions, blogs, newsletters, image prompts, and social posts
+- show platform-wise previews
+- allow editing and approval
+- schedule/export/publish foundation
+- support future direct posting to Instagram, Facebook, LinkedIn, YouTube, Pinterest, X, Threads
+
+DO NOT make only a simple post generator.
+
+ADD AUTHENTICATION + TEAM ACCESS:
+Use Supabase Auth.
+Add login/logout.
+Only logged-in users can access the app.
+Add user profile table.
+Add team/client access table.
+
+Tables:
+profiles:
+- id uuid references auth.users(id)
+- name text
+- email text
+- role text
+- created_at timestamp default now()
+
+client_users:
+- id uuid primary key
+- client_id uuid references clients(id)
+- user_id uuid references auth.users(id)
+- role text -- owner/admin/editor/approver/viewer
+- created_at timestamp default now()
+
+Rules:
+- User should only see clients they have access to.
+- Every query must filter by client_id and user access.
+- Add RLS policies in Supabase.
+- No public access to client data.
+
+ADD SETTINGS PAGE:
+Create a proper Settings area with tabs:
+1. Account Settings
+2. Team Members
+3. Client Settings
+4. Brand DNA
+5. Brand Assets
+6. AI Settings
+7. Social Accounts
+8. Posting Settings
+9. Webhooks / Export
+
+AI SETTINGS:
+Add ability to choose AI provider per task.
+
+Tables:
+ai_settings:
+- id uuid primary key
+- client_id uuid references clients(id)
+- task_type text -- captions/blogs/newsletters/research/images/video_prompts
+- provider text -- claude/openai/gemini
+- model text
+- temperature numeric
+- enabled boolean default true
+- created_at timestamp default now()
+
+Frontend:
+- Dropdown to select AI tool:
+  Claude / OpenAI / Gemini
+- Task-wise selection:
+  Captions can use Claude
+  Image prompt can use OpenAI/Claude
+  Blog can use Claude/OpenAI
+  Research can use Gemini/OpenAI
+- If one provider fails, show error and allow retry with another.
+
+ADD CONTENT BRAIN:
+This is the most important part.
+
+Create an AI Brain page with:
+- Next content suggestions
+- Campaign ideas
+- What we posted recently
+- What to avoid repeating
+- What audience to target next
+- Suggested weekly/monthly themes
+- Blog ideas
+- Newsletter ideas
+- Social post ideas
+- Product/service promotion ideas
+
+Backend route:
+POST /api/clients/:clientId/brain/suggest-next
+
+It must load:
+- client details
+- brand_dna
+- brand_assets notes
+- content_memory
+- storylines
+- last 30 posts
+- rejected ideas/images
+- approved posts
+- current month plan
+
+AI should return:
+- 10 next content ideas
+- recommended platforms
+- reason for each idea
+- suggested format: post/blog/newsletter/carousel/reel/youtube
+- priority score
+- suggested date
+
+ADD RESEARCH ENGINE:
+Create Research page.
+
+User can enter topic or product.
+AI researches and gives:
+- market angle
+- customer pain points
+- competitor style
+- post ideas
+- blog ideas
+- newsletter ideas
+- campaign hook
+- FAQs
+- keywords
+
+Store research in table:
+research_notes:
+- id uuid primary key
+- client_id uuid references clients(id)
+- topic text
+- summary text
+- ideas jsonb
+- source_notes text
+- created_at timestamp default now()
+
+ADD PLATFORM COMPOSER:
+Create a composer that works platform-wise.
+
+Supported platforms:
+- Instagram
+- Facebook
+- LinkedIn
+- YouTube
+- Pinterest
+- X
+- Threads
+- Blog
+- Newsletter
+
+For each platform, AI should create the correct format:
+Instagram:
+- caption
+- hashtags
+- image/carousel idea
+- reel idea
+- CTA
+
+Facebook:
+- caption
+- longer community-style text
+- CTA
+
+LinkedIn:
+- professional post
+- hook
+- body
+- CTA
+- hashtags
+
+YouTube:
+- title
+- description
+- tags
+- thumbnail prompt
+- short script
+- upload metadata
+
+Blog:
+- title
+- outline
+- full body
+- SEO title
+- meta description
+- keywords
+
+Newsletter:
+- subject line
+- preview text
+- body
+- CTA
+
+ADD SOCIAL PREVIEW:
+Do not just show plain text.
+
+Create preview cards that look like each platform:
+- Instagram preview
+- Facebook preview
+- LinkedIn preview
+- YouTube preview
+- Blog preview
+- Newsletter preview
+
+The preview should show:
+- image/video thumbnail
+- account name
+- caption formatting
+- hashtags
+- platform layout
+- date/status
+
+ADD MANUAL POST FLOW:
+User should be able to create content without AI.
+
+Manual content options:
+- write caption manually
+- paste existing content
+- upload image
+- upload video
+- create blog manually
+- create newsletter manually
+- save as draft
+- preview by platform
+- approve/schedule/export
+
+ADD CAMPAIGN PLANNER:
+Create campaign planner page.
+
+Features:
+- Plan week
+- Plan month
+- AI suggests campaign theme
+- AI creates content calendar
+- user can approve/edit ideas
+- generate posts from selected ideas
+
+Tables:
+campaigns:
+- id uuid primary key
+- client_id uuid references clients(id)
+- name text
+- goal text
+- theme text
+- start_date date
+- end_date date
+- status text
+- created_at timestamp default now()
+
+content_ideas:
+- id uuid primary key
+- client_id uuid references clients(id)
+- campaign_id uuid references campaigns(id)
+- title text
+- platform text
+- format text
+- angle text
+- status text default 'idea'
+- suggested_date date
+- created_at timestamp default now()
+
+ADD APPROVAL WORKFLOW:
+Statuses:
+idea
+draft
+in_review
+approved
+scheduled
+posted
+failed
+rejected
+
+User can:
+- generate
+- edit
+- preview
+- approve
+- schedule
+- export
+- mock post
+
+ADD POSTING FOUNDATION:
+Do not build final real platform APIs yet if too much.
+But build the correct foundation now.
+
+Tables:
+social_accounts:
+- id uuid primary key
+- client_id uuid references clients(id)
+- platform text
+- account_name text
+- handle text
+- provider text
+- status text
+- encrypted_token_reference text
+- created_at timestamp default now()
+
+posting_providers:
+- id uuid primary key
+- name text
+- type text -- mock/direct/webhook/postiz/custom
+- enabled boolean
+- created_at timestamp default now()
+
+scheduled_posts:
+- id uuid primary key
+- client_id uuid references clients(id)
+- post_id uuid references posts(id)
+- platform text
+- scheduled_at timestamp
+- posting_status text default 'pending'
+- provider text
+- error_message text
+- created_at timestamp default now()
+
+posting_logs:
+- id uuid primary key
+- client_id uuid references clients(id)
+- post_id uuid references posts(id)
+- platform text
+- provider text
+- status text
+- response text
+- created_at timestamp default now()
+
+Add:
+- Mock Post button
+- Export JSON
+- Webhook export
+- Copy caption
+- Download asset
+- Mark as posted manually
+
+Do not store social media passwords.
+
+ADD NEWSLETTER MODULE:
+Tables:
+newsletters:
+- id uuid primary key
+- client_id uuid references clients(id)
+- subject text
+- preview_text text
+- body text
+- status text
+- scheduled_date date
+- created_at timestamp default now()
+
+Features:
+- AI generate newsletter
+- manual newsletter
+- preview
+- approve
+- export HTML/text
+
+ADD BLOG MODULE:
+Tables:
+blog_posts:
+- id uuid primary key
+- client_id uuid references clients(id)
+- title text
+- slug text
+- body text
+- seo_title text
+- meta_description text
+- keywords text[]
+- status text
+- created_at timestamp default now()
+
+Features:
+- AI blog ideas
+- blog outline
+- full blog
+- manual edit
+- preview
+- approve
+- export
+
+ADD BRAND ASSET MEMORY:
+Brand assets must be used by AI.
+
+Tables:
+brand_assets:
+- id uuid primary key
+- client_id uuid references clients(id)
+- asset_type text -- logo/color_palette/reference_image/brochure/sample_post/font/design
+- file_url text
+- notes text
+- created_at timestamp default now()
+
+AI image prompts must use:
+- logo notes
+- color palette
+- visual style
+- previous selected images
+- rejected image notes
+
+ADD IMAGE/VIDEO ASSET LIBRARY:
+Asset library page:
+- all logos
+- generated images
+- uploaded images
+- rejected images
+- videos
+- thumbnails
+- blog images
+- filter by client/platform/status
+
+ADD DASHBOARD HOME:
+When I select a client, homepage should show:
+- today’s suggested post
+- pending approvals
+- upcoming scheduled posts
+- recent posts
+- current campaign
+- current storyline
+- AI recommendation: “What should we post next?”
+
+ADD BACKEND CONTEXT ENGINE:
+Every AI generation request must build a complete context packet:
+
+Client:
+- name
+- industry
+- products/services
+- USP
+
+Brand:
+- tone
+- audience
+- colors
+- language
+- content pillars
+- visual notes
+
+History:
+- last 30 posts
+- approved posts
+- rejected posts
+- selected images
+- rejected images
+- content memory
+
+Strategy:
+- active storyline
+- active campaign
+- current month plan
+
+Then send this context to selected AI provider.
+
+ADD API ROUTES:
+Auth:
+GET /api/me
+GET /api/my-clients
+
+Clients:
+GET /api/clients
+POST /api/clients
+GET /api/clients/:clientId/context
+
+Settings:
+GET/POST /api/clients/:clientId/brand-dna
+GET/POST /api/clients/:clientId/ai-settings
+GET/POST /api/clients/:clientId/content-memory
+GET/POST /api/clients/:clientId/brand-assets
+
+Brain:
+POST /api/clients/:clientId/brain/suggest-next
+POST /api/clients/:clientId/research
+POST /api/clients/:clientId/planner/month
+POST /api/clients/:clientId/planner/week
+
+Composer:
+POST /api/clients/:clientId/generate/platform-post
+POST /api/clients/:clientId/generate/blog
+POST /api/clients/:clientId/generate/newsletter
+POST /api/clients/:clientId/generate/image-prompt
+POST /api/clients/:clientId/generate/images
+
+Posts:
+GET /api/clients/:clientId/posts
+POST /api/clients/:clientId/posts
+PATCH /api/clients/:clientId/posts/:postId
+PATCH /api/clients/:clientId/posts/:postId/status
+
+Export:
+GET /api/clients/:clientId/export/approved
+GET /api/clients/:clientId/export/calendar
+POST /api/clients/:clientId/webhook/export
+
+UI PAGES:
+1. Login
+2. Dashboard
+3. Clients
+4. AI Brain
+5. Content Studio
+6. Platform Composer
+7. Research
+8. Campaign Planner
+9. Blog Studio
+10. Newsletter Studio
+11. Drafts & Approval
+12. Calendar
+13. Asset Library
+14. Brand DNA
+15. Brand Assets
+16. Content Memory
+17. AI Settings
+18. Social Accounts
+19. Posting Queue
+20. Exports
+
+DESIGN:
+- enterprise dashboard style
+- clean sidebar
+- selected client always visible
+- mobile responsive
+- status badges
+- platform icons
+- preview cards
+- clear loading/error states
+
+IMPORTANT:
+Do not build a toy app.
+Build the full enterprise foundation.
+Real direct posting can remain mock/webhook/export for now, but the UI and database must be ready for it.
+The app must feel like a serious digital marketing command center.

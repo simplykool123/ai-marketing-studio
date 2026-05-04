@@ -1,0 +1,136 @@
+The app foundation is good, but several important enterprise features are missing or incomplete.
+
+Please improve the app with the following fixes.
+
+1. CLIENT MANAGEMENT FIX
+Add full client edit/delete/archive functionality.
+- Edit client name, industry, logo_url
+- Upload/change client logo
+- Delete client only if no related data exists
+- Otherwise show “Archive Client”
+- Add archived boolean to clients table
+- Hide archived clients by default
+- Add restore archived client option
+
+2. TEAM + ACCESS CONTROL
+Verify Supabase Auth is fully enforced.
+Add client_users table if missing:
+- id
+- client_id
+- user_id
+- role: owner/admin/editor/approver/viewer
+- created_at
+
+Rules:
+- Logged-in user should only see clients they have access to
+- All backend queries must verify user access to client_id
+- No client data should leak between clients
+- Add role-based permissions:
+  owner/admin can edit client/settings
+  editor can create/edit drafts
+  approver can approve/schedule
+  viewer can only view
+
+3. SETTINGS PAGE IMPROVEMENT
+Settings must include:
+- Account settings
+- Team members
+- Client settings
+- Brand DNA
+- AI provider settings
+- Image provider settings
+- Export/webhook settings
+- Social account settings
+
+4. AI BRAIN FULL PAGE
+Create a proper AI Brain page, not just a small widget.
+It should show:
+- What should we post next?
+- Why this content matters
+- 10 suggested content ideas
+- Suggested platform
+- Suggested format: post/blog/newsletter/carousel/reel/youtube
+- Campaign angle
+- Priority score
+- Avoid-repeat warning based on last 30 posts
+
+5. PLATFORM PREVIEW CHECK
+Improve PlatformPreview so each platform has realistic preview:
+- Instagram
+- Facebook
+- LinkedIn
+- YouTube
+- Blog
+- Newsletter
+Show image, caption, hashtags, account name, date/status.
+
+6. BLOG + NEWSLETTER MODULES
+Create proper Blog Studio and Newsletter Studio pages.
+Blog:
+- title
+- outline
+- full body
+- SEO title
+- meta description
+- keywords
+- preview
+- export
+
+Newsletter:
+- subject line
+- preview text
+- body
+- CTA
+- preview
+- export HTML/text
+
+7. AI PROVIDER SELECTION
+Text AI already supports Anthropic/OpenAI/Gemini.
+Make sure UI allows selecting provider/model per task:
+- captions
+- blog
+- newsletter
+- research
+- image prompt
+
+For images:
+- keep DALL-E working
+- add placeholder/modular interface for Gemini/other image providers
+
+8. RESEARCH PAGE
+Add Research page.
+User enters topic/product.
+AI returns:
+- market angle
+- customer pain points
+- FAQs
+- keywords
+- post ideas
+- blog ideas
+- newsletter ideas
+Save research notes per client.
+
+9. FIX TYPESCRIPT ERRORS
+Fix existing TypeScript errors in ai_content.ts and upload.ts.
+Do not leave broken TS errors.
+
+10. POSTING STATUS CLARITY
+Keep real OAuth/direct posting pending.
+But clearly show in UI:
+- Mock Post
+- Export JSON
+- Webhook Export
+- Manual Mark as Posted
+Do not make it look like real posting is already connected.
+
+11. CAMPAIGN-SCOPED APPROVAL
+Add “Approve all posts in campaign” button.
+Allow bulk approve/schedule for one campaign.
+
+12. FINAL QA
+Check:
+- status flow: idea → draft → in_review → approved → scheduled → published / rejected
+- calendar drag/drop updates scheduled date correctly
+- approval image swap persists correctly
+- selected/rejected images save correctly
+- all data filters by client_id

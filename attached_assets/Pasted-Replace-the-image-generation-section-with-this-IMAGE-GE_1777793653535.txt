@@ -1,0 +1,62 @@
+Replace the image generation section with this:
+IMAGE GENERATION — use both APIs:
+
+Left panel: OpenAI GPT Image 1
+Model: gpt-image-1
+Quality: high
+Size: 1024x1024
+Key: OPENAI_KEY
+
+Right panel: Google Imagen 3
+Model: imagen-3.0-generate-001
+Via: Google AI Studio (Gemini API)
+Key: GEMINI_KEY
+
+Show both images side by side.
+User clicks one to select.
+Save both to Supabase Storage.
+Status: selected / rejected.
+
+Your API Keys — Where to Get Them
+KeyWhereNoteOPENAI_KEYplatform.openai.com → API keysYour ChatGPT Pro subscription ≠ API credit. API is separate billing but cheapGEMINI_KEYaistudio.google.com → Get API keyFree via Google AI Studio, Imagen 3 included
+Important: ChatGPT Pro and API are separate accounts at OpenAI. Your Pro subscription doesn't give API credit automatically — you need to add $5–10 credit at platform.openai.com separately. gpt-image-1 costs about $0.04 per image, so $5 = 125 images.
+
+Add This to Your Replit Secrets
+OPENAI_KEY=sk-...
+GEMINI_KEY=AIza...
+ANTHROPIC_KEY=sk-ant-...
+SUPABASE_URL=https://...
+SUPABASE_SERVICE_ROLE_KEY=eyJ...
+
+The Actual API Calls for Replit
+Tell Replit to use exactly these:
+javascript// Left panel — OpenAI gpt-image-1
+const openai = new OpenAI({ apiKey: process.env.OPENAI_KEY });
+const result = await openai.images.generate({
+  model: "gpt-image-1",
+  prompt: imagePrompt,
+  n: 1,
+  size: "1024x1024",
+  quality: "high"
+});
+
+// Right panel — Google Imagen 3
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
+const model = genAI.getGenerativeModel({
+  model: "imagen-3.0-generate-001"
+});
+const imgResult = await model.generateImages({
+  prompt: imagePrompt,
+  numberOfImages: 1,
+  aspectRatio: "1:1"
+});
+Add this line to your Replit prompt so it uses these exactly:
+For image generation use:
+- OpenAI: model gpt-image-1, quality high
+- Google: model imagen-3.0-generate-001 via @google/generative-ai package
+Both called in parallel using Promise.all()
+Both results uploaded to Supabase Storage
+Both saved to images table
+
+With both running in parallel via Promise.all(), your user sees two genuinely different high-quality images in about 8–12 seconds and picks the better one. That's a better workflow than any paid tool offers right now.

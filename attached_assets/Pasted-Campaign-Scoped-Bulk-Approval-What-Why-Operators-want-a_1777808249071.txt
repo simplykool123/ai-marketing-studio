@@ -1,0 +1,31 @@
+Campaign-Scoped Bulk Approval
+
+What & Why
+
+Operators want a one-click "Approve all posts in this campaign" action so they don't have to multi-select 20+ drafts manually after a bulk-generation. Approval permissions matter, so this depends on the access-control system landing first.
+
+Done looks like
+
+On the Approval Queue (when filtered to a single campaign) and on each Campaign detail card, an "Approve all in this campaign" button bulk-approves every draft belonging to that campaign through the existing rules-aware auto-scheduler.
+The button is gated to approver/admin/owner roles via the access-control system; editors and viewers do not see it, and the API rejects their attempts with 403.
+A confirmation dialog shows the post count + the suggested earliest schedule window, then on confirm reports {approved, skipped, scheduledFrom, scheduledTo}.
+Per-platform daily limits and posting-rule windows still apply; posts that can't fit are returned as "skipped" with a reason.
+Out of scope
+
+Bulk reject by campaign.
+Re-scheduling already-scheduled campaign posts.
+Approving across multiple campaigns at once.
+Steps
+
+API endpoint — Add POST /clients/:clientId/campaigns/:campaignId/approve-all. Loads every draft for the campaign and runs the existing bulk-approve / auto-schedule flow against them. Returns the count approved, skipped, and the resulting schedule window. Role-gated to approver/admin/owner via the access-control middleware.
+Approval Queue UI — When a campaign filter is active, show an "Approve all in this campaign" button. On click, open a confirm dialog summarising the post count + earliest valid schedule slot from the rules engine, then call the new endpoint and show a result toast.
+Campaign detail UI — Add the same button on each Campaign card / detail panel for direct one-click approval from campaign view.
+Verification — Walk the status flow draft → scheduled → published end-to-end after a campaign-scoped bulk approve to confirm rules + per-platform daily limits still apply.
+Relevant files
+
+artifacts/api-server/src/routes/posts.ts
+artifacts/api-server/src/routes/campaigns.ts
+artifacts/marketing-studio/src/pages/ApprovalQueue.tsx
+artifacts/marketing-studio/src/pages/CampaignPlanner.tsx
+Dependencies
+Enterprise Auth, Team Access & Schema Foundation

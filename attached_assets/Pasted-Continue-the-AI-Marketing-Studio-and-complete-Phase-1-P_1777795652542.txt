@@ -1,0 +1,167 @@
+Continue the AI Marketing Studio and complete Phase 1 + Phase 2 foundation now.
+
+Important:
+I have limited time, so build the full structure now. Testing and API corrections can happen later.
+Do not stop after each step now. Build all modules in one go.
+
+Keep external posting modular. If real Instagram/Facebook/LinkedIn posting is not ready, create the connector structure, scheduled queue, logs, and placeholder posting provider.
+
+ADD THESE MODULES NOW:
+
+1. Brand Assets
+- Upload logo
+- Upload brand reference images
+- Upload color palette/reference files
+- Upload sample posts/brochures
+- Store in Supabase Storage
+- Save in brand_assets table
+
+Table:
+brand_assets
+- id uuid primary key
+- client_id uuid references clients(id)
+- asset_type text
+- file_url text
+- notes text
+- created_at timestamp default now()
+
+2. Manual Post Creation
+- Add Create Manual Post button
+- User can type/paste caption manually
+- User can upload image manually
+- User can choose platform/date
+- Save as draft
+- This should work without AI
+
+3. Blog Module
+- Add platform option: Blog
+- Blog title
+- Blog body
+- SEO title
+- meta description
+- status draft/approved
+- Save in posts table or add blog_posts table if needed
+
+4. AI Monthly Planner
+- Button: Plan This Month
+- AI creates content topics for the selected client
+- Uses brand_dna, storylines, content_memory, past posts
+- Saves planned posts as draft ideas
+
+5. Storyline Manager
+- Create/edit monthly storyline
+- Theme
+- narrative
+- chapter number
+- active/completed
+- AI should use active storyline while generating captions
+
+6. Content Memory
+- Add page to save learnings manually:
+  what worked
+  what to avoid
+  preferred visual style
+  repeated instructions
+- AI generation must use this memory
+
+7. Advanced Calendar
+- Show draft, approved, scheduled, posted posts
+- Allow changing post date
+- Click post to open detail panel
+- Allow status update from calendar
+
+8. Scheduling Foundation
+Add tables:
+
+scheduled_posts
+- id uuid primary key
+- client_id uuid references clients(id)
+- post_id uuid references posts(id)
+- platform text
+- scheduled_at timestamp
+- posting_status text default 'pending'
+- provider text
+- error_message text
+- created_at timestamp default now()
+
+posting_logs
+- id uuid primary key
+- client_id uuid references clients(id)
+- post_id uuid references posts(id)
+- platform text
+- provider text
+- status text
+- response text
+- created_at timestamp default now()
+
+9. Future Social Posting Structure
+Do not store passwords.
+Create structure for future OAuth posting.
+
+social_accounts
+- id uuid primary key
+- client_id uuid references clients(id)
+- platform text
+- account_name text
+- provider text
+- status text
+- encrypted_token_reference text
+- created_at timestamp default now()
+
+For now:
+- Add “Mock Post” button
+- Add “Export JSON” button
+- Add “Webhook Export” field for future n8n/Postiz/custom posting
+- Do not build real OAuth unless simple and safe
+
+10. Export Options
+- Export approved posts as JSON
+- Export selected post as JSON
+- Copy caption
+- Download image
+- Export monthly calendar as JSON
+
+11. Image Consistency
+When generating image prompts, AI must use:
+- brand colors
+- logo notes
+- brand assets notes
+- previous selected images
+- rejected image style notes
+- content memory
+
+12. UI Pages
+Create these pages:
+- Dashboard / Content Studio
+- Clients
+- Brand DNA
+- Brand Assets
+- Manual Post
+- AI Planner
+- Storyline Manager
+- Drafts & Approval
+- Calendar
+- Content Memory
+- Export / Posting Queue
+
+13. Backend Rules
+- Every request must include client_id
+- Every database query must filter by client_id
+- No API keys in frontend
+- All AI/image calls through Express backend only
+- Graceful error if API key is missing
+- Keep code modular and easy to extend
+
+14. Posting Reality
+Do not waste time building full Instagram/Facebook/LinkedIn APIs now.
+Instead build:
+- scheduled_posts table
+- posting_logs table
+- provider interface
+- mock posting provider
+- export/webhook option
+
+The app should feel complete now, even if real direct posting is connected later.
+
+Goal:
+By the end, I should have a multi-client AI marketing platform where each client has its own brand memory, logo, colors, assets, posts, images, blogs, storylines, calendar, drafts, approvals, and future posting queue.

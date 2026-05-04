@@ -1,0 +1,2304 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: AI Marketing Studio API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: auth
+    description: Authentication
+  - name: settings
+    description: User settings
+  - name: clients
+    description: Client management
+  - name: brand-dna
+    description: Brand DNA management
+  - name: brand-assets
+    description: Brand asset management
+  - name: storylines
+    description: Storyline management
+  - name: posts
+    description: Post management
+  - name: campaigns
+    description: Campaign management
+  - name: social-accounts
+    description: Connected social media accounts
+  - name: images
+    description: Image management
+  - name: content-memory
+    description: Content memory management
+  - name: ai
+    description: AI generation endpoints
+  - name: ai-engine
+    description: AI content engine — campaign plans, bulk generation, and per-post regeneration
+  - name: dashboard
+    description: Dashboard summary
+  - name: uploads
+    description: File upload endpoints
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  # ── Clients ──────────────────────────────────────────────────────────────
+  /clients:
+    get:
+      operationId: listClients
+      tags: [clients]
+      summary: List all clients
+      responses:
+        "200":
+          description: List of clients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Client"
+    post:
+      operationId: createClient
+      tags: [clients]
+      summary: Create a new client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClientBody"
+      responses:
+        "201":
+          description: Created client
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+
+  /clients/{clientId}:
+    get:
+      operationId: getClient
+      tags: [clients]
+      summary: Get a client by ID
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Client
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+    patch:
+      operationId: updateClient
+      tags: [clients]
+      summary: Update a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateClientBody"
+      responses:
+        "200":
+          description: Updated client
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+    delete:
+      operationId: deleteClient
+      tags: [clients]
+      summary: Delete a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  # ── Brand DNA ─────────────────────────────────────────────────────────────
+  /clients/{clientId}/brand-dna:
+    get:
+      operationId: getBrandDna
+      tags: [brand-dna]
+      summary: Get brand DNA for a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Brand DNA
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandDna"
+    put:
+      operationId: upsertBrandDna
+      tags: [brand-dna]
+      summary: Create or update brand DNA for a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertBrandDnaBody"
+      responses:
+        "200":
+          description: Brand DNA
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandDna"
+
+  # ── Brand Assets ──────────────────────────────────────────────────────────
+  /clients/{clientId}/brand-assets:
+    get:
+      operationId: listBrandAssets
+      tags: [brand-assets]
+      summary: List brand assets for a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Brand assets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BrandAsset"
+
+  /clients/{clientId}/brand-assets/{assetId}:
+    delete:
+      operationId: deleteBrandAsset
+      tags: [brand-assets]
+      summary: Delete a brand asset
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  # ── Uploads ───────────────────────────────────────────────────────────────
+  /clients/{clientId}/upload/logo:
+    post:
+      operationId: uploadClientLogo
+      tags: [uploads]
+      summary: Upload client logo to Supabase Storage
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required: [file]
+      responses:
+        "200":
+          description: Upload result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadResult"
+
+  /clients/{clientId}/upload/asset:
+    post:
+      operationId: uploadBrandAsset
+      tags: [uploads]
+      summary: Upload a brand asset to Supabase Storage
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                assetType:
+                  type: string
+                  enum: [logo, color_palette, reference_image, brochure, sample_post]
+                notes:
+                  type: string
+              required: [file]
+      responses:
+        "201":
+          description: Created brand asset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandAsset"
+
+  /clients/{clientId}/posts/upload-image:
+    post:
+      operationId: uploadPostImage
+      tags: [uploads]
+      summary: Upload an image for a post to Supabase Storage
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required: [file]
+      responses:
+        "200":
+          description: Upload result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadResult"
+
+  # ── Storylines ────────────────────────────────────────────────────────────
+  /clients/{clientId}/storylines:
+    get:
+      operationId: listStorylines
+      tags: [storylines]
+      summary: List storylines for a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Storylines
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Storyline"
+    post:
+      operationId: createStoryline
+      tags: [storylines]
+      summary: Create a storyline
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStorylineBody"
+      responses:
+        "201":
+          description: Created storyline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Storyline"
+
+  /clients/{clientId}/storylines/{storylineId}:
+    patch:
+      operationId: updateStoryline
+      tags: [storylines]
+      summary: Update a storyline
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: storylineId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateStorylineBody"
+      responses:
+        "200":
+          description: Updated storyline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Storyline"
+    delete:
+      operationId: deleteStoryline
+      tags: [storylines]
+      summary: Delete a storyline
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: storylineId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  # ── Posts ─────────────────────────────────────────────────────────────────
+  /clients/{clientId}/posts:
+    get:
+      operationId: listPosts
+      tags: [posts]
+      summary: List posts for a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [draft, approved, scheduled, published, failed]
+      responses:
+        "200":
+          description: Posts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Post"
+    post:
+      operationId: createPost
+      tags: [posts]
+      summary: Create a post (save draft)
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePostBody"
+      responses:
+        "201":
+          description: Created post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+
+  /clients/{clientId}/posts/{postId}:
+    get:
+      operationId: getPost
+      tags: [posts]
+      summary: Get a post
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+    patch:
+      operationId: updatePost
+      tags: [posts]
+      summary: Update a post
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePostBody"
+      responses:
+        "200":
+          description: Updated post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+    delete:
+      operationId: deletePost
+      tags: [posts]
+      summary: Delete a post
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /clients/{clientId}/posts/{postId}/publish:
+    post:
+      operationId: publishPost
+      tags: [posts]
+      summary: Publish an approved post to its target social platform
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Published post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "422":
+          description: No connected account for platform
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /clients/{clientId}/posts/{postId}/approve:
+    post:
+      operationId: approvePost
+      tags: [posts]
+      summary: Approve a draft post
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovePostBody"
+      responses:
+        "200":
+          description: Approved post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+
+  /clients/{clientId}/posts/{postId}/reject:
+    post:
+      operationId: rejectPost
+      tags: [posts]
+      summary: Reject a draft post
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Rejected post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+
+  /clients/{clientId}/posts/bulk-approve:
+    post:
+      operationId: bulkApprovePosts
+      tags: [posts]
+      summary: Bulk approve multiple draft posts
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkApproveBody"
+      responses:
+        "200":
+          description: Bulk approval result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkApproveResponse"
+
+  /clients/{clientId}/posts/auto-schedule:
+    post:
+      operationId: autoSchedulePosts
+      tags: [posts]
+      summary: Auto-schedule draft posts across upcoming time slots
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AutoScheduleBody"
+      responses:
+        "200":
+          description: Auto-schedule result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoScheduleResponse"
+
+  /clients/{clientId}/posting-rules:
+    get:
+      operationId: getPostingRules
+      tags: [posts]
+      summary: Get posting rules for a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Posting rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostingRules"
+    put:
+      operationId: upsertPostingRules
+      tags: [posts]
+      summary: Create or update posting rules for a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertPostingRulesBody"
+      responses:
+        "200":
+          description: Updated posting rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostingRules"
+
+  /clients/{clientId}/posts/export:
+    get:
+      operationId: exportPosts
+      tags: [posts]
+      summary: Export approved posts as Postiz-compatible JSON
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Export data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostizExport"
+
+  # ── Images ────────────────────────────────────────────────────────────────
+  /clients/{clientId}/posts/{postId}/images:
+    get:
+      operationId: listPostImages
+      tags: [images]
+      summary: List images for a post
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Images
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Image"
+    post:
+      operationId: saveImage
+      tags: [images]
+      summary: Save an image record
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveImageBody"
+      responses:
+        "201":
+          description: Saved image
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Image"
+
+  # ── Content Memory ─────────────────────────────────────────────────────────
+  /clients/{clientId}/memory:
+    get:
+      operationId: listMemory
+      tags: [content-memory]
+      summary: List content memory for a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Memory entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MemoryEntry"
+    post:
+      operationId: addMemory
+      tags: [content-memory]
+      summary: Add a memory entry
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddMemoryBody"
+      responses:
+        "201":
+          description: Memory entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryEntry"
+
+  /clients/{clientId}/memory/{memoryId}:
+    delete:
+      operationId: deleteMemory
+      tags: [content-memory]
+      summary: Delete a memory entry
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: memoryId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  # ── AI Generation ─────────────────────────────────────────────────────────
+  /ai/generate-captions:
+    post:
+      operationId: generateCaptions
+      tags: [ai]
+      summary: Generate 3 caption options using Claude with full client context
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateCaptionsBody"
+      responses:
+        "200":
+          description: Three caption options
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenerateCaptionsResponse"
+
+  /ai/generate-images:
+    post:
+      operationId: generateImages
+      tags: [ai]
+      summary: Generate two image variations in parallel using DALL-E 3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateImagesBody"
+      responses:
+        "200":
+          description: Two image results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenerateImagesResponse"
+
+  # ── Dashboard ─────────────────────────────────────────────────────────────
+  /clients/{clientId}/dashboard:
+    get:
+      operationId: getClientDashboard
+      tags: [dashboard]
+      summary: Get dashboard summary for a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientDashboard"
+
+  # ── Auth ──────────────────────────────────────────────────────────────────
+  /auth/signup:
+    post:
+      operationId: signUp
+      tags: [auth]
+      summary: Create a new account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthSignupBody"
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Sign in with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthLoginBody"
+      responses:
+        "200":
+          description: Auth tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Sign out
+      responses:
+        "200":
+          description: Logged out
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+
+  /auth/refresh:
+    post:
+      operationId: refreshToken
+      tags: [auth]
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+              required: [refreshToken]
+      responses:
+        "200":
+          description: New tokens
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken:
+                    type: string
+                  refreshToken:
+                    type: string
+                required: [accessToken, refreshToken]
+
+  # ── Settings ──────────────────────────────────────────────────────────────
+  /settings:
+    get:
+      operationId: getSettings
+      tags: [settings]
+      summary: Get current user settings
+      responses:
+        "200":
+          description: User settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSettings"
+    put:
+      operationId: updateSettings
+      tags: [settings]
+      summary: Update user settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSettingsBody"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSettings"
+
+  # ── Campaigns ─────────────────────────────────────────────────────────────
+  /clients/{clientId}/campaigns:
+    get:
+      operationId: listCampaigns
+      tags: [campaigns]
+      summary: List campaigns for a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Campaigns
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Campaign"
+    post:
+      operationId: createCampaign
+      tags: [campaigns]
+      summary: Create a campaign
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCampaignBody"
+      responses:
+        "201":
+          description: Created campaign
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+
+  /clients/{clientId}/campaigns/{campaignId}:
+    get:
+      operationId: getCampaign
+      tags: [campaigns]
+      summary: Get a campaign with its posts
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Campaign with posts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CampaignDetail"
+    patch:
+      operationId: updateCampaign
+      tags: [campaigns]
+      summary: Update a campaign
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCampaignBody"
+      responses:
+        "200":
+          description: Updated campaign
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+    delete:
+      operationId: deleteCampaign
+      tags: [campaigns]
+      summary: Delete a campaign
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  # ── Social Accounts ───────────────────────────────────────────────────────
+  /clients/{clientId}/social-accounts:
+    get:
+      operationId: listSocialAccounts
+      tags: [social-accounts]
+      summary: List connected social accounts for a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Social accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SocialAccount"
+    post:
+      operationId: connectSocialAccount
+      tags: [social-accounts]
+      summary: Connect a social media account
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectSocialAccountBody"
+      responses:
+        "201":
+          description: Connected social account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SocialAccount"
+
+  /clients/{clientId}/social-accounts/{accountId}:
+    patch:
+      operationId: updateSocialAccount
+      tags: [social-accounts]
+      summary: Update a social account
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSocialAccountBody"
+      responses:
+        "200":
+          description: Updated social account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SocialAccount"
+    delete:
+      operationId: disconnectSocialAccount
+      tags: [social-accounts]
+      summary: Disconnect a social media account
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Disconnected
+
+  # ── AI Suggestions ────────────────────────────────────────────────────────
+  /clients/{clientId}/suggestions:
+    post:
+      operationId: getContentSuggestions
+      tags: [ai]
+      summary: Get AI-powered content suggestions for a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Content suggestions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentSuggestionsResponse"
+
+  # ── AI Engine ────────────────────────────────────────────────────────────
+  /clients/{clientId}/campaigns/{campaignId}/generate-plan:
+    post:
+      operationId: generateCampaignPlan
+      tags: [ai-engine]
+      summary: Generate an AI content plan for a campaign (creates post drafts)
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: campaignId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeneratePlanBody"
+      responses:
+        "200":
+          description: Generated posts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeneratePlanResponse"
+
+  /clients/{clientId}/posts/{postId}/regenerate-copy:
+    post:
+      operationId: regeneratePostCopy
+      tags: [ai-engine]
+      summary: Regenerate AI caption and hashtags for an existing post
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+
+  /clients/{clientId}/posts/{postId}/generate-image:
+    post:
+      operationId: generatePostImage
+      tags: [ai-engine]
+      summary: Generate a DALL-E image for a post and save it
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated post with image URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+
+  /clients/{clientId}/generate-bulk:
+    post:
+      operationId: bulkGeneratePosts
+      tags: [ai-engine]
+      summary: Bulk-generate a full week or month of content for a brand
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkGenerateBody"
+      responses:
+        "200":
+          description: All generated posts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkGenerateResponse"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    # ── Client ──────────────────────────────────────────────────────────────
+    Client:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        color:
+          type: string
+        avatarInitials:
+          type: string
+        logoUrl:
+          type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, name, color, avatarInitials, createdAt, updatedAt]
+
+    CreateClientBody:
+      type: object
+      properties:
+        name:
+          type: string
+        color:
+          type: string
+      required: [name]
+
+    UpdateClientBody:
+      type: object
+      properties:
+        name:
+          type: string
+        color:
+          type: string
+        logoUrl:
+          type: string
+
+    # ── Brand DNA ────────────────────────────────────────────────────────────
+    BrandDna:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        brandName:
+          type: string
+        voiceTone:
+          type: string
+        targetAudience:
+          type: string
+        industry:
+          type: string
+        brandValues:
+          type: string
+        visualStyle:
+          type: string
+        competitors:
+          type: string
+        additionalContext:
+          type: string
+        primaryColor:
+          type: string
+        secondaryColor:
+          type: string
+        accentColor:
+          type: string
+        fontStyle:
+          type: string
+        designNotes:
+          type: string
+        contentThemes:
+          type: string
+        postingCadence:
+          type: string
+        audiencePersonas:
+          type: string
+        campaignGoals:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, clientId, brandName, updatedAt]
+
+    UpsertBrandDnaBody:
+      type: object
+      properties:
+        brandName:
+          type: string
+        voiceTone:
+          type: string
+        targetAudience:
+          type: string
+        industry:
+          type: string
+        brandValues:
+          type: string
+        visualStyle:
+          type: string
+        competitors:
+          type: string
+        additionalContext:
+          type: string
+        primaryColor:
+          type: string
+        secondaryColor:
+          type: string
+        accentColor:
+          type: string
+        fontStyle:
+          type: string
+        designNotes:
+          type: string
+        contentThemes:
+          type: string
+        postingCadence:
+          type: string
+        audiencePersonas:
+          type: string
+        campaignGoals:
+          type: string
+      required: [brandName]
+
+    # ── Brand Asset ──────────────────────────────────────────────────────────
+    BrandAsset:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        assetType:
+          type: string
+          enum: [logo, color_palette, reference_image, brochure, sample_post]
+        fileUrl:
+          type: string
+        notes:
+          type: string
+        createdAt:
+          type: string
+      required: [id, clientId, assetType, fileUrl, createdAt]
+
+    # ── Upload ───────────────────────────────────────────────────────────────
+    UploadResult:
+      type: object
+      properties:
+        url:
+          type: string
+      required: [url]
+
+    # ── Storyline ────────────────────────────────────────────────────────────
+    Storyline:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        title:
+          type: string
+        narrative:
+          type: string
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, clientId, title, narrative, isActive, createdAt, updatedAt]
+
+    CreateStorylineBody:
+      type: object
+      properties:
+        title:
+          type: string
+        narrative:
+          type: string
+        isActive:
+          type: boolean
+      required: [title, narrative]
+
+    UpdateStorylineBody:
+      type: object
+      properties:
+        title:
+          type: string
+        narrative:
+          type: string
+        isActive:
+          type: boolean
+
+    # ── Post ─────────────────────────────────────────────────────────────────
+    Post:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        campaignId:
+          type: string
+        topic:
+          type: string
+        caption:
+          type: string
+        hashtags:
+          type: string
+        selectedImageUrl:
+          type: string
+        status:
+          type: string
+          enum: [draft, approved, scheduled, published, failed, rejected]
+        scheduledAt:
+          type: string
+        platform:
+          type: string
+          enum: [instagram, facebook, twitter, linkedin, blog, newsletter]
+        postType:
+          type: string
+          enum: [social, blog, newsletter]
+        title:
+          type: string
+        longFormBody:
+          type: string
+        generationStatus:
+          type: string
+          enum: [generating, ready, failed]
+        imagePrompt:
+          type: string
+        publishedAt:
+          type: string
+        publishedUrl:
+          type: string
+        publishError:
+          type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, clientId, topic, caption, status, postType, createdAt, updatedAt]
+
+    CreatePostBody:
+      type: object
+      properties:
+        topic:
+          type: string
+        caption:
+          type: string
+        hashtags:
+          type: string
+        selectedImageUrl:
+          type: string
+        platform:
+          type: string
+          enum: [instagram, facebook, twitter, linkedin, blog, newsletter]
+        campaignId:
+          type: string
+        postType:
+          type: string
+          enum: [social, blog, newsletter]
+        title:
+          type: string
+        longFormBody:
+          type: string
+      required: [topic, caption]
+
+    UpdatePostBody:
+      type: object
+      properties:
+        topic:
+          type: string
+        caption:
+          type: string
+        hashtags:
+          type: string
+        selectedImageUrl:
+          type: string
+        status:
+          type: string
+          enum: [draft, approved, scheduled, published, failed, rejected]
+        scheduledAt:
+          type: string
+        platform:
+          type: string
+          enum: [instagram, facebook, twitter, linkedin, blog, newsletter]
+        campaignId:
+          type: string
+        postType:
+          type: string
+          enum: [social, blog, newsletter]
+        title:
+          type: string
+        longFormBody:
+          type: string
+
+    BulkApproveBody:
+      type: object
+      properties:
+        postIds:
+          type: array
+          items:
+            type: string
+        scheduledAt:
+          type: string
+        platform:
+          type: string
+          enum: [instagram, facebook, twitter, linkedin, blog, newsletter]
+      required: [postIds]
+
+    BulkApproveResponse:
+      type: object
+      properties:
+        approved:
+          type: array
+          items:
+            $ref: "#/components/schemas/Post"
+        count:
+          type: number
+      required: [approved, count]
+
+    AutoScheduleBody:
+      type: object
+      properties:
+        dryRun:
+          type: boolean
+
+    AutoScheduleResponse:
+      type: object
+      properties:
+        scheduled:
+          type: array
+          items:
+            type: object
+            properties:
+              postId:
+                type: string
+              scheduledAt:
+                type: string
+            required: [postId, scheduledAt]
+        count:
+          type: number
+        dryRun:
+          type: boolean
+        message:
+          type: string
+      required: [scheduled, count]
+
+    PostingRules:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        maxPostsPerDay:
+          type: object
+          additionalProperties:
+            type: number
+        preferredWindows:
+          type: array
+          items:
+            type: number
+        blackoutDates:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [clientId, maxPostsPerDay, preferredWindows, blackoutDates]
+
+    UpsertPostingRulesBody:
+      type: object
+      properties:
+        maxPostsPerDay:
+          type: object
+          additionalProperties:
+            type: number
+        preferredWindows:
+          type: array
+          items:
+            type: number
+        blackoutDates:
+          type: array
+          items:
+            type: string
+
+    ApprovePostBody:
+      type: object
+      properties:
+        scheduledAt:
+          type: string
+        platform:
+          type: string
+          enum: [instagram, facebook, twitter, linkedin, blog]
+      required: [scheduledAt]
+
+    PostizExport:
+      type: object
+      properties:
+        clientName:
+          type: string
+        exportedAt:
+          type: string
+        posts:
+          type: array
+          items:
+            $ref: "#/components/schemas/PostizPost"
+      required: [clientName, exportedAt, posts]
+
+    PostizPost:
+      type: object
+      properties:
+        id:
+          type: string
+        caption:
+          type: string
+        hashtags:
+          type: string
+        image_url:
+          type: string
+        scheduled_at:
+          type: string
+        platform:
+          type: string
+      required: [id, caption, scheduled_at]
+
+    # ── Image ─────────────────────────────────────────────────────────────────
+    Image:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        postId:
+          type: string
+        url:
+          type: string
+        provider:
+          type: string
+          enum: [openai, google]
+        status:
+          type: string
+          enum: [selected, rejected, pending]
+        prompt:
+          type: string
+        createdAt:
+          type: string
+      required: [id, clientId, postId, url, provider, status, createdAt]
+
+    SaveImageBody:
+      type: object
+      properties:
+        url:
+          type: string
+        provider:
+          type: string
+          enum: [openai, google]
+        status:
+          type: string
+          enum: [selected, rejected, pending]
+        prompt:
+          type: string
+      required: [url, provider, status]
+
+    # ── Content Memory ────────────────────────────────────────────────────────
+    MemoryEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        key:
+          type: string
+        value:
+          type: string
+        createdAt:
+          type: string
+      required: [id, clientId, key, value, createdAt]
+
+    AddMemoryBody:
+      type: object
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+      required: [key, value]
+
+    # ── AI ─────────────────────────────────────────────────────────────────────
+    GenerateCaptionsBody:
+      type: object
+      properties:
+        clientId:
+          type: string
+        topic:
+          type: string
+      required: [clientId, topic]
+
+    CaptionOption:
+      type: object
+      properties:
+        id:
+          type: number
+        caption:
+          type: string
+        hashtags:
+          type: string
+      required: [id, caption, hashtags]
+
+    GenerateCaptionsResponse:
+      type: object
+      properties:
+        options:
+          type: array
+          items:
+            $ref: "#/components/schemas/CaptionOption"
+      required: [options]
+
+    GenerateImagesBody:
+      type: object
+      properties:
+        clientId:
+          type: string
+        postId:
+          type: string
+        caption:
+          type: string
+        visualStyle:
+          type: string
+      required: [clientId, caption]
+
+    ImageResult:
+      type: object
+      properties:
+        provider:
+          type: string
+          enum: [openai, google]
+        panel:
+          type: string
+          enum: [left, right]
+        url:
+          type: string
+        prompt:
+          type: string
+        error:
+          type: string
+      required: [provider, panel, url, prompt]
+
+    GenerateImagesResponse:
+      type: object
+      properties:
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImageResult"
+      required: [images]
+
+    # ── Dashboard ──────────────────────────────────────────────────────────────
+    ClientDashboard:
+      type: object
+      properties:
+        totalPosts:
+          type: number
+        draftCount:
+          type: number
+        approvedCount:
+          type: number
+        scheduledCount:
+          type: number
+        publishedCount:
+          type: number
+        hasStoryline:
+          type: boolean
+        hasBrandDna:
+          type: boolean
+        recentPosts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Post"
+        upcomingPosts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Post"
+        connectedAccounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/SocialAccount"
+        recentlyPublished:
+          type: array
+          items:
+            $ref: "#/components/schemas/Post"
+      required: [totalPosts, draftCount, approvedCount, scheduledCount, publishedCount, hasStoryline, hasBrandDna, recentPosts, upcomingPosts, connectedAccounts, recentlyPublished]
+
+    # ── Social Account ─────────────────────────────────────────────────────────
+    SocialAccount:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        platform:
+          type: string
+          enum: [instagram, facebook, twitter, linkedin]
+        accountName:
+          type: string
+        accountHandle:
+          type: string
+        accountId:
+          type: string
+        avatarUrl:
+          type: string
+        followerCount:
+          type: number
+        isActive:
+          type: boolean
+        hasOauth:
+          type: boolean
+          description: True when an OAuth access token is stored for this account
+        tokenExpired:
+          type: boolean
+          description: True when the stored OAuth token has passed its expiry date
+        tokenExpiresAt:
+          type: string
+          description: ISO 8601 expiry timestamp of the stored token, if known
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, clientId, platform, accountName, isActive, hasOauth, tokenExpired, createdAt, updatedAt]
+
+    ConnectSocialAccountBody:
+      type: object
+      properties:
+        platform:
+          type: string
+          enum: [instagram, facebook, twitter, linkedin]
+        accountName:
+          type: string
+        accountHandle:
+          type: string
+        accountId:
+          type: string
+        avatarUrl:
+          type: string
+        followerCount:
+          type: number
+      required: [platform, accountName]
+
+    UpdateSocialAccountBody:
+      type: object
+      properties:
+        accountName:
+          type: string
+        accountHandle:
+          type: string
+        avatarUrl:
+          type: string
+        followerCount:
+          type: number
+        isActive:
+          type: boolean
+
+    # ── Auth ─────────────────────────────────────────────────────────────────
+    AuthSignupBody:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        name:
+          type: string
+      required: [email, password, name]
+
+    AuthLoginBody:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+      required: [email, password]
+
+    AuthUser:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+      required: [id, email, name]
+
+    AuthResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/AuthUser"
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+      required: [user]
+
+    # ── Settings ──────────────────────────────────────────────────────────────
+    UserSettings:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        aiProvider:
+          type: string
+          enum: [anthropic, openai, gemini]
+        aiModel:
+          type: string
+        imageProvider:
+          type: string
+          enum: [openai, google]
+        imageModel:
+          type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, userId, aiProvider, aiModel, imageProvider, imageModel, createdAt, updatedAt]
+
+    UpdateSettingsBody:
+      type: object
+      properties:
+        aiProvider:
+          type: string
+          enum: [anthropic, openai, gemini]
+        aiModel:
+          type: string
+        imageProvider:
+          type: string
+          enum: [openai, google]
+        imageModel:
+          type: string
+
+    # ── Campaign ──────────────────────────────────────────────────────────────
+    Campaign:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        name:
+          type: string
+        goal:
+          type: string
+        description:
+          type: string
+        startDate:
+          type: string
+        endDate:
+          type: string
+        platforms:
+          type: string
+        status:
+          type: string
+          enum: [draft, active, completed, paused]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, clientId, name, status, createdAt, updatedAt]
+
+    CampaignDetail:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        name:
+          type: string
+        goal:
+          type: string
+        description:
+          type: string
+        startDate:
+          type: string
+        endDate:
+          type: string
+        platforms:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        posts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Post"
+      required: [id, clientId, name, status, createdAt, updatedAt, posts]
+
+    CreateCampaignBody:
+      type: object
+      properties:
+        name:
+          type: string
+        goal:
+          type: string
+        description:
+          type: string
+        startDate:
+          type: string
+        endDate:
+          type: string
+        platforms:
+          type: string
+        status:
+          type: string
+          enum: [draft, active, completed, paused]
+      required: [name]
+
+    UpdateCampaignBody:
+      type: object
+      properties:
+        name:
+          type: string
+        goal:
+          type: string
+        description:
+          type: string
+        startDate:
+          type: string
+        endDate:
+          type: string
+        platforms:
+          type: string
+        status:
+          type: string
+          enum: [draft, active, completed, paused]
+
+    # ── AI Suggestions ────────────────────────────────────────────────────────
+    ContentSuggestion:
+      type: object
+      properties:
+        topic:
+          type: string
+        platform:
+          type: string
+        postType:
+          type: string
+        rationale:
+          type: string
+        hook:
+          type: string
+      required: [topic, platform, postType, rationale, hook]
+
+    ContentSuggestionsResponse:
+      type: object
+      properties:
+        suggestions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContentSuggestion"
+      required: [suggestions]
+
+    # ── AI Engine ────────────────────────────────────────────────────────────
+    GeneratePlanBody:
+      type: object
+      properties:
+        postsCount:
+          type: number
+        platforms:
+          type: array
+          items:
+            type: string
+      required: []
+
+    GeneratePlanResponse:
+      type: object
+      properties:
+        posts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Post"
+        generatedCount:
+          type: number
+      required: [posts, generatedCount]
+
+    BulkGenerateBody:
+      type: object
+      properties:
+        weeks:
+          type: number
+        postsPerWeek:
+          type: number
+        platforms:
+          type: array
+          items:
+            type: string
+        campaignId:
+          type: string
+      required: []
+
+    BulkGenerateResponse:
+      type: object
+      properties:
+        posts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Post"
+        generatedCount:
+          type: number
+      required: [posts, generatedCount]

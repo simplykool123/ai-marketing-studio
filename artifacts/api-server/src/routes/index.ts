@@ -1,0 +1,44 @@
+import { Router, type IRouter } from "express";
+import healthRouter from "./health.js";
+import authRouter from "./auth.js";
+import settingsRouter from "./settings.js";
+import clientsRouter from "./clients.js";
+import brandDnaRouter from "./brand_dna.js";
+import brandAssetsRouter from "./brand_assets.js";
+import storylinesRouter from "./storylines.js";
+import postsRouter from "./posts.js";
+import campaignsRouter from "./campaigns.js";
+import imagesRouter from "./images.js";
+import memoryRouter from "./memory.js";
+import dashboardRouter from "./dashboard.js";
+import aiRouter from "./ai.js";
+import aiContentRouter from "./ai_content.js";
+import uploadRouter from "./upload.js";
+import socialAccountsRouter from "./social_accounts.js";
+import oauthRouter from "./oauth.js";
+import publishRouter from "./publish.js";
+import postingRulesRouter from "./posting_rules.js";
+
+const router: IRouter = Router();
+
+router.use(healthRouter);
+router.use(authRouter);
+router.use(oauthRouter);
+router.use(settingsRouter);
+router.use(clientsRouter);
+router.use(brandDnaRouter);
+router.use(brandAssetsRouter);
+router.use(storylinesRouter);
+router.use(postsRouter);
+router.use(publishRouter);
+router.use(campaignsRouter);
+router.use(imagesRouter);
+router.use(memoryRouter);
+router.use(dashboardRouter);
+router.use(aiRouter);
+router.use(aiContentRouter);
+router.use(uploadRouter);
+router.use(socialAccountsRouter);
+router.use(postingRulesRouter);
+
+export default router;
