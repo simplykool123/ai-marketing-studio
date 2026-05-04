@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { contentMemoryTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { AddMemoryBody } from "@workspace/api-zod";
+import { EDIT_CONTENT_ROLES, requireClientRole } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -19,7 +20,7 @@ router.get("/clients/:clientId/memory", async (req, res) => {
   }
 });
 
-router.post("/clients/:clientId/memory", async (req, res) => {
+router.post("/clients/:clientId/memory", requireClientRole(EDIT_CONTENT_ROLES), async (req, res) => {
   try {
     const body = AddMemoryBody.parse(req.body);
     const [entry] = await db
@@ -32,7 +33,7 @@ router.post("/clients/:clientId/memory", async (req, res) => {
   }
 });
 
-router.delete("/clients/:clientId/memory/:memoryId", async (req, res) => {
+router.delete("/clients/:clientId/memory/:memoryId", requireClientRole(EDIT_CONTENT_ROLES), async (req, res) => {
   try {
     await db
       .delete(contentMemoryTable)

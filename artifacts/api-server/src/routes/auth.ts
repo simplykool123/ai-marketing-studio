@@ -1,5 +1,9 @@
 import { Router } from "express";
+import { eq } from "drizzle-orm";
+import { db } from "@workspace/db";
+import { profilesTable } from "@workspace/db/schema";
 import { supabase } from "../lib/supabase.js";
+import { requireAuth, upsertProfile, type AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -23,6 +27,13 @@ router.post("/auth/signup", async (req, res): Promise<void> => {
     if (error) {
       res.status(400).json({ error: error.message });
       return;
+    }
+    if (data.user) {
+      await upsertProfile({
+        id: data.user.id,
+        email: data.user.email ?? email,
+        user_metadata: { name },
+      });
     }
     // Auto sign-in after signup
     const tokenRes = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
@@ -99,16 +110,17 @@ router.post("/auth/refresh", async (req, res): Promise<void> => {
 });
 
 // GET /auth/me
-router.get("/auth/me", async (req, res): Promise<void> => {
-  const token = req.headers.authorization?.slice(7);
-  if (!token) { res.status(401).json({ error: "Unauthorized" }); return; }
+router.get("/auth/me", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   try {
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-    if (error || !user) { res.status(401).json({ error: "Invalid token" }); return; }
+    const [profile] = await db
+      .select()
+      .from(profilesTable)
+      .where(eq(profilesTable.id, req.userId!))
+      .limit(1);
     res.json({
-      id: user.id,
-      email: user.email,
-      name: user.user_metadata?.name ?? user.email?.split("@")[0] ?? "User",
+      id: req.userId,
+      email: req.userEmail,
+      name: profile?.name ?? req.userEmail?.split("@")[0] ?? "User",
     });
   } catch {
     res.status(500).json({ error: "Failed to get user" });
@@ -116,7 +128,7 @@ router.get("/auth/me", async (req, res): Promise<void> => {
 });
 
 // POST /auth/logout
-router.post("/auth/logout", async (req, res): Promise<void> => {
+router.post("/auth/logout", requireAuth, async (req, res): Promise<void> => {
   const token = req.headers.authorization?.slice(7);
   if (token) {
     try { await supabase.auth.admin.signOut(token); } catch {}

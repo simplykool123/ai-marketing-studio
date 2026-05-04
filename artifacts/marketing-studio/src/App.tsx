@@ -1,5 +1,5 @@
-import { Switch, Route, Router as WouterRouter, Redirect } from "wouter";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Switch, Route, Router as WouterRouter, Redirect, useParams } from "wouter";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Layout } from "@/components/layout/Layout";
@@ -42,6 +42,50 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+async function verifyClientAccess(clientId: string): Promise<boolean> {
+  const res = await fetch(`/api/clients/${clientId}`);
+  if (res.status === 403 || res.status === 404) return false;
+  if (!res.ok) {
+    const error = new Error("Client access check failed") as Error & { status?: number };
+    error.status = res.status;
+    throw error;
+  }
+  return true;
+}
+
+function ClientAccessRoute({ children }: { children: ReactNode }) {
+  const { clientId } = useParams<{ clientId?: string }>();
+  const access = useQuery({
+    queryKey: ["client-access", clientId],
+    queryFn: () => verifyClientAccess(clientId!),
+    enabled: !!clientId,
+    retry: false,
+  });
+
+  if (!clientId) return <Redirect to="/" />;
+  if (access.isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+  if (access.data === false) return <Redirect to="/" />;
+  if ((access.error as { status?: number } | null)?.status === 401) return <Redirect to="/login" />;
+  if (access.error) return <Redirect to="/" />;
+  return <>{children}</>;
+}
+
+function ProtectedClientRoute({ children }: { children: ReactNode }) {
+  return (
+    <ProtectedRoute>
+      <ClientAccessRoute>
+        <Layout>{children}</Layout>
+      </ClientAccessRoute>
+    </ProtectedRoute>
+  );
+}
+
 function PlaceholderPage({ title }: { title: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -73,63 +117,63 @@ function Router() {
       </Route>
 
       <Route path="/clients/:clientId">
-        {() => <ProtectedRoute><Layout><ClientDashboard /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><ClientDashboard /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/brand-dna">
-        {() => <ProtectedRoute><Layout><BrandDna /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><BrandDna /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/storylines">
-        {() => <ProtectedRoute><Layout><Storylines /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><Storylines /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/create">
-        {() => <ProtectedRoute><Layout><CreatePost /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><CreatePost /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/manual">
-        {() => <ProtectedRoute><Layout><ManualPost /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><ManualPost /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/drafts">
-        {() => <ProtectedRoute><Layout><Drafts /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><Drafts /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/calendar">
-        {() => <ProtectedRoute><Layout><Calendar /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><Calendar /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/memory">
-        {() => <ProtectedRoute><Layout><Memory /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><Memory /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/campaigns">
-        {() => <ProtectedRoute><Layout><CampaignPlanner /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><CampaignPlanner /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/queue">
-        {() => <ProtectedRoute><Layout><PostingQueue /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><PostingQueue /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/social-accounts">
-        {() => <ProtectedRoute><Layout><SocialAccounts /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><SocialAccounts /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/bulk-generate">
-        {() => <ProtectedRoute><Layout><BulkGenerate /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><BulkGenerate /></ProtectedClientRoute>}
       </Route>
 
       <Route path="/clients/:clientId/assets">
-        {() => <ProtectedRoute><Layout><AssetLibrary /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><AssetLibrary /></ProtectedClientRoute>}
       </Route>
 
       <Route path="/clients/:clientId/brain">
-        {() => <ProtectedRoute><Layout><PlaceholderPage title="Content Brain" /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><PlaceholderPage title="Content Brain" /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/research">
-        {() => <ProtectedRoute><Layout><PlaceholderPage title="Research Engine" /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><PlaceholderPage title="Research Engine" /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/blog">
-        {() => <ProtectedRoute><Layout><PlaceholderPage title="Blog" /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><PlaceholderPage title="Blog" /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/newsletters">
-        {() => <ProtectedRoute><Layout><PlaceholderPage title="Newsletters" /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><PlaceholderPage title="Newsletters" /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/approvals">
-        {() => <ProtectedRoute><Layout><ApprovalQueue /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><ApprovalQueue /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/settings">
-        {() => <ProtectedRoute><Layout><PostingRulesPage /></Layout></ProtectedRoute>}
+        {() => <ProtectedClientRoute><PostingRulesPage /></ProtectedClientRoute>}
       </Route>
 
       <Route component={NotFound} />

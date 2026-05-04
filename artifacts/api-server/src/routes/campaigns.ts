@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { campaignsTable, postsTable } from "@workspace/db/schema";
 import { eq, and, count } from "drizzle-orm";
+import { EDIT_CONTENT_ROLES, requireClientRole } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -20,7 +21,7 @@ router.get("/clients/:clientId/campaigns", async (req, res): Promise<void> => {
 });
 
 // POST /clients/:clientId/campaigns
-router.post("/clients/:clientId/campaigns", async (req, res): Promise<void> => {
+router.post("/clients/:clientId/campaigns", requireClientRole(EDIT_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const { name, goal, description, startDate, endDate, platforms, status } = req.body as {
       name: string;
@@ -67,7 +68,12 @@ router.get("/clients/:clientId/campaigns/:campaignId", async (req, res): Promise
     const posts = await db
       .select()
       .from(postsTable)
-      .where(eq(postsTable.campaignId, req.params.campaignId));
+      .where(
+        and(
+          eq(postsTable.campaignId, req.params.campaignId),
+          eq(postsTable.clientId, req.params.clientId),
+        )
+      );
 
     res.json({ ...campaign, posts });
   } catch {
@@ -76,7 +82,7 @@ router.get("/clients/:clientId/campaigns/:campaignId", async (req, res): Promise
 });
 
 // PATCH /clients/:clientId/campaigns/:campaignId
-router.patch("/clients/:clientId/campaigns/:campaignId", async (req, res): Promise<void> => {
+router.patch("/clients/:clientId/campaigns/:campaignId", requireClientRole(EDIT_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const { name, goal, description, startDate, endDate, platforms, status } = req.body as {
       name?: string;
@@ -112,7 +118,7 @@ router.patch("/clients/:clientId/campaigns/:campaignId", async (req, res): Promi
 });
 
 // DELETE /clients/:clientId/campaigns/:campaignId
-router.delete("/clients/:clientId/campaigns/:campaignId", async (req, res): Promise<void> => {
+router.delete("/clients/:clientId/campaigns/:campaignId", requireClientRole(EDIT_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     await db
       .delete(campaignsTable)

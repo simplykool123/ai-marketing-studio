@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { postsTable, clientsTable, postingLogsTable } from "@workspace/db/schema";
+import { postsTable, clientsTable, postingLogsTable, campaignsTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
   CreatePostBody,
@@ -8,8 +8,24 @@ import {
   ApprovePostBody,
   ListPostsQueryParams,
 } from "@workspace/api-zod";
+import {
+  APPROVE_CONTENT_ROLES,
+  EDIT_CONTENT_ROLES,
+  MUTATE_CONTENT_ROLES,
+  requireClientRole,
+} from "../middleware/auth.js";
 
 const router = Router();
+
+async function campaignBelongsToClient(campaignId: string | undefined, clientId: string): Promise<boolean> {
+  if (!campaignId) return true;
+  const [campaign] = await db
+    .select({ id: campaignsTable.id })
+    .from(campaignsTable)
+    .where(and(eq(campaignsTable.id, campaignId), eq(campaignsTable.clientId, clientId)))
+    .limit(1);
+  return !!campaign;
+}
 
 router.get("/clients/:clientId/posts", async (req, res) => {
   try {
@@ -29,9 +45,13 @@ router.get("/clients/:clientId/posts", async (req, res) => {
   }
 });
 
-router.post("/clients/:clientId/posts", async (req, res) => {
+router.post("/clients/:clientId/posts", requireClientRole(EDIT_CONTENT_ROLES), async (req, res) => {
   try {
     const body = CreatePostBody.parse(req.body);
+    if (!(await campaignBelongsToClient(body.campaignId, req.params.clientId))) {
+      res.status(404).json({ error: "Campaign not found" });
+      return;
+    }
     const [post] = await db
       .insert(postsTable)
       .values({ clientId: req.params.clientId, ...body, status: "draft" })
@@ -145,9 +165,13 @@ router.get("/clients/:clientId/posts/:postId", async (req, res): Promise<void> =
   }
 });
 
-router.patch("/clients/:clientId/posts/:postId", async (req, res) => {
+router.patch("/clients/:clientId/posts/:postId", requireClientRole(MUTATE_CONTENT_ROLES), async (req, res) => {
   try {
     const body = UpdatePostBody.parse(req.body);
+    if (!(await campaignBelongsToClient(body.campaignId, req.params.clientId))) {
+      res.status(404).json({ error: "Campaign not found" });
+      return;
+    }
     const { scheduledAt, ...rest } = body;
     const [post] = await db
       .update(postsTable)
@@ -166,7 +190,7 @@ router.patch("/clients/:clientId/posts/:postId", async (req, res) => {
 });
 
 // Dedicated status-transition endpoint
-router.patch("/clients/:clientId/posts/:postId/status", async (req, res): Promise<void> => {
+router.patch("/clients/:clientId/posts/:postId/status", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const { status, scheduledAt, platform } = req.body as {
       status: string;
@@ -201,7 +225,7 @@ router.patch("/clients/:clientId/posts/:postId/status", async (req, res): Promis
   }
 });
 
-router.delete("/clients/:clientId/posts/:postId", async (req, res) => {
+router.delete("/clients/:clientId/posts/:postId", requireClientRole(EDIT_CONTENT_ROLES), async (req, res) => {
   try {
     await db
       .delete(postsTable)
@@ -217,7 +241,7 @@ router.delete("/clients/:clientId/posts/:postId", async (req, res) => {
   }
 });
 
-router.post("/clients/:clientId/posts/:postId/reject", async (req, res): Promise<void> => {
+router.post("/clients/:clientId/posts/:postId/reject", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const [post] = await db
       .update(postsTable)
@@ -236,7 +260,7 @@ router.post("/clients/:clientId/posts/:postId/reject", async (req, res): Promise
   }
 });
 
-router.post("/clients/:clientId/posts/bulk-approve", async (req, res): Promise<void> => {
+router.post("/clients/:clientId/posts/bulk-approve", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const { postIds, scheduledAt, platform } = req.body as {
       postIds: string[];
@@ -269,7 +293,7 @@ router.post("/clients/:clientId/posts/bulk-approve", async (req, res): Promise<v
   }
 });
 
-router.post("/clients/:clientId/posts/:postId/approve", async (req, res) => {
+router.post("/clients/:clientId/posts/:postId/approve", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res) => {
   try {
     const body = ApprovePostBody.parse(req.body);
     const scheduledAt = new Date(body.scheduledAt);
@@ -294,7 +318,7 @@ router.post("/clients/:clientId/posts/:postId/approve", async (req, res) => {
   }
 });
 
-router.post("/clients/:clientId/posts/:postId/mock-post", async (req, res): Promise<void> => {
+router.post("/clients/:clientId/posts/:postId/mock-post", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const { clientId, postId } = req.params;
 
@@ -328,7 +352,7 @@ router.post("/clients/:clientId/posts/:postId/mock-post", async (req, res): Prom
   }
 });
 
-router.post("/clients/:clientId/posts/:postId/mark-posted", async (req, res): Promise<void> => {
+router.post("/clients/:clientId/posts/:postId/mark-posted", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const { clientId, postId } = req.params;
 
@@ -355,7 +379,7 @@ router.post("/clients/:clientId/posts/:postId/mark-posted", async (req, res): Pr
 });
 
 // Webhook export — uses the client's stored webhookUrl, not a user-supplied URL
-router.post("/clients/:clientId/webhook/export", async (req, res): Promise<void> => {
+router.post("/clients/:clientId/webhook/export", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const { clientId } = req.params;
     const { postId } = req.body as { postId?: string };

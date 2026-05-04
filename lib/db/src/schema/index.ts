@@ -1,4 +1,6 @@
 export * from "./clients";
+export * from "./profiles";
+export * from "./client_users";
 export * from "./brand_dna";
 export * from "./brand_assets";
 export * from "./storylines";

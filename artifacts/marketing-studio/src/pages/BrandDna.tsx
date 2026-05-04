@@ -96,6 +96,11 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
   );
 }
 
+async function getUploadErrorMessage(res: Response): Promise<string> {
+  const data = await res.json().catch(() => null) as { error?: string } | null;
+  return data?.error ?? `Upload failed with status ${res.status}`;
+}
+
 export default function BrandDna() {
   const { clientId } = useParams<{ clientId: string }>();
   const { toast } = useToast();
@@ -115,7 +120,7 @@ export default function BrandDna() {
   const deleteAsset = useDeleteBrandAsset();
 
   const form = useForm<BrandDnaFormValues>({
-    resolver: zodResolver(brandDnaSchema),
+    resolver: zodResolver(brandDnaSchema as unknown as Parameters<typeof zodResolver>[0]),
     defaultValues: {
       brandName: "", voiceTone: "", targetAudience: "", industry: "",
       brandValues: "", visualStyle: "", competitors: "", additionalContext: "",
@@ -169,11 +174,12 @@ export default function BrandDna() {
       const fd = new FormData();
       fd.append("file", file);
       const res = await fetch(`/api/clients/${clientId}/upload/logo`, { method: "POST", body: fd });
-      if (!res.ok) throw new Error("Upload failed");
+      if (!res.ok) throw new Error(await getUploadErrorMessage(res));
       queryClient.invalidateQueries({ queryKey: getGetClientQueryKey(clientId) });
       toast({ title: "Logo uploaded successfully" });
-    } catch {
-      toast({ title: "Failed to upload logo", variant: "destructive" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Upload failed";
+      toast({ title: "Failed to upload logo", description: message, variant: "destructive" });
     } finally {
       setIsUploadingLogo(false);
     }

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { brandAssetsTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
+import { EDIT_CONTENT_ROLES, requireClientRole } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -18,7 +19,7 @@ router.get("/clients/:clientId/brand-assets", async (req, res): Promise<void> =>
   }
 });
 
-router.delete("/clients/:clientId/brand-assets/:assetId", async (req, res): Promise<void> => {
+router.delete("/clients/:clientId/brand-assets/:assetId", requireClientRole(EDIT_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     await db
       .delete(brandAssetsTable)

@@ -5,7 +5,12 @@ import { socialAccountsTable } from "@workspace/db/schema";
 import { and, eq } from "drizzle-orm";
 import { encryptToken, isEncryptionConfigured } from "../lib/crypto.js";
 import { logger } from "../lib/logger.js";
-import { requireAuth, type AuthRequest } from "../middleware/auth.js";
+import {
+  MANAGE_CLIENT_ROLES,
+  requireAuth,
+  userHasClientRole,
+  type AuthRequest,
+} from "../middleware/auth.js";
 
 function generatePkce(): { verifier: string; challenge: string } {
   const verifier = randomBytes(32).toString("base64url");
@@ -161,6 +166,12 @@ router.post("/auth/oauth/:platform/start", requireAuth, async (req: AuthRequest,
 
   const userId = req.userId ?? "";
 
+  const hasAccess = await userHasClientRole(userId, clientId, MANAGE_CLIENT_ROLES);
+  if (!hasAccess) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
   if (!isEncryptionConfigured()) {
     res.status(503).json({ error: "TOKEN_ENCRYPTION_KEY is not configured — contact your administrator" });
     return;
@@ -213,6 +224,11 @@ router.get("/auth/oauth/:platform/callback", async (req, res) => {
   }
   const clientId = stateEntry.clientId;
   const codeVerifier = stateEntry.codeVerifier ?? "";
+  const hasAccess = await userHasClientRole(stateEntry.userId, clientId, MANAGE_CLIENT_ROLES);
+  if (!hasAccess) {
+    res.status(403).send("Forbidden");
+    return;
+  }
 
   const appUrl = getAppUrl(req);
   const returnUrl = `${appUrl}/clients/${clientId}/social-accounts`;
@@ -354,7 +370,12 @@ router.get("/auth/oauth/:platform/callback", async (req, res) => {
           isActive: true,
           updatedAt: new Date(),
         })
-        .where(eq(socialAccountsTable.id, existing[0]!.id));
+        .where(
+          and(
+            eq(socialAccountsTable.id, existing[0]!.id),
+            eq(socialAccountsTable.clientId, clientId),
+          ),
+        );
     } else {
       await db.insert(socialAccountsTable).values({
         clientId,

@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { brandDnaTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import { UpsertBrandDnaBody } from "@workspace/api-zod";
+import { EDIT_CONTENT_ROLES, requireClientRole } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -20,7 +21,7 @@ router.get("/clients/:clientId/brand-dna", async (req, res): Promise<void> => {
   }
 });
 
-router.put("/clients/:clientId/brand-dna", async (req, res): Promise<void> => {
+router.put("/clients/:clientId/brand-dna", requireClientRole(EDIT_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const body = UpsertBrandDnaBody.parse(req.body);
     const [existing] = await db

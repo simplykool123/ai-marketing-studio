@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { postingRulesTable, postsTable } from "@workspace/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { addDays, startOfDay, setHours } from "date-fns";
+import { APPROVE_CONTENT_ROLES, MANAGE_CLIENT_ROLES, requireClientRole } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -33,7 +34,7 @@ router.get("/clients/:clientId/posting-rules", async (req, res): Promise<void> =
   }
 });
 
-router.put("/clients/:clientId/posting-rules", async (req, res): Promise<void> => {
+router.put("/clients/:clientId/posting-rules", requireClientRole(MANAGE_CLIENT_ROLES), async (req, res): Promise<void> => {
   try {
     const { clientId } = req.params;
     const { maxPostsPerDay, preferredWindows, blackoutDates } = req.body as {
@@ -88,7 +89,7 @@ const PLATFORM_BEST_HOURS: Record<string, number[]> = {
   default: [9, 12, 15, 18],
 };
 
-router.post("/clients/:clientId/posts/auto-schedule", async (req, res): Promise<void> => {
+router.post("/clients/:clientId/posts/auto-schedule", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const { clientId } = req.params;
     const { dryRun = false } = req.body as { dryRun?: boolean };

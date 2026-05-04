@@ -11,12 +11,18 @@ import {
   contentMemoryTable,
   postingRulesTable,
   brandAssetsTable,
+  clientUsersTable,
 } from "@workspace/db/schema";
 import { eq, and, count } from "drizzle-orm";
 import {
   CreateClientBody,
   UpdateClientBody,
 } from "@workspace/api-zod";
+import {
+  MANAGE_CLIENT_ROLES,
+  requireClientRole,
+  type AuthRequest,
+} from "../middleware/auth.js";
 
 const router = Router();
 
@@ -52,17 +58,28 @@ async function clientHasRelatedData(clientId: string): Promise<boolean> {
 // GET /clients — returns non-archived by default; ?includeArchived=true includes all
 router.get("/clients", async (req, res) => {
   try {
+    const userId = (req as AuthRequest).userId!;
     const includeArchived = req.query.includeArchived === "true";
-    const clients = includeArchived
-      ? await db.select().from(clientsTable).orderBy(clientsTable.createdAt)
-      : await db.select().from(clientsTable).where(eq(clientsTable.archived, false)).orderBy(clientsTable.createdAt);
+    const conditions = [eq(clientUsersTable.userId, userId)];
+    if (!includeArchived) {
+      conditions.push(eq(clientsTable.archived, false));
+    }
+
+    const rows = await db
+      .select({ client: clientsTable })
+      .from(clientsTable)
+      .innerJoin(clientUsersTable, eq(clientUsersTable.clientId, clientsTable.id))
+      .where(and(...conditions))
+      .orderBy(clientsTable.createdAt);
+
+    const clients = rows.map((row) => row.client);
     res.json(clients);
   } catch (err) {
     res.status(500).json({ error: "Failed to list clients" });
   }
 });
 
-router.post("/clients", async (req, res) => {
+router.post("/clients", async (req: AuthRequest, res) => {
   try {
     const body = CreateClientBody.parse(req.body);
     const color = body.color ?? COLORS[Math.floor(Math.random() * COLORS.length)];
@@ -74,6 +91,13 @@ router.post("/clients", async (req, res) => {
         avatarInitials: getInitials(body.name),
       })
       .returning();
+
+    await db.insert(clientUsersTable).values({
+      clientId: client!.id,
+      userId: req.userId!,
+      role: "owner",
+    });
+
     res.status(201).json(client);
   } catch (err) {
     res.status(400).json({ error: "Failed to create client" });
@@ -94,7 +118,7 @@ router.get("/clients/:clientId", async (req, res): Promise<void> => {
   }
 });
 
-router.patch("/clients/:clientId", async (req, res) => {
+router.patch("/clients/:clientId", requireClientRole(MANAGE_CLIENT_ROLES), async (req, res) => {
   try {
     const body = UpdateClientBody.parse(req.body);
     const updates: Record<string, unknown> = { updatedAt: new Date() };
@@ -119,7 +143,7 @@ router.patch("/clients/:clientId", async (req, res) => {
 });
 
 // POST /clients/:clientId/archive
-router.post("/clients/:clientId/archive", async (req, res): Promise<void> => {
+router.post("/clients/:clientId/archive", requireClientRole(MANAGE_CLIENT_ROLES), async (req, res): Promise<void> => {
   try {
     const [client] = await db
       .update(clientsTable)
@@ -134,7 +158,7 @@ router.post("/clients/:clientId/archive", async (req, res): Promise<void> => {
 });
 
 // POST /clients/:clientId/restore
-router.post("/clients/:clientId/restore", async (req, res): Promise<void> => {
+router.post("/clients/:clientId/restore", requireClientRole(MANAGE_CLIENT_ROLES), async (req, res): Promise<void> => {
   try {
     const [client] = await db
       .update(clientsTable)
@@ -149,7 +173,7 @@ router.post("/clients/:clientId/restore", async (req, res): Promise<void> => {
 });
 
 // Update webhook URL for a client
-router.patch("/clients/:clientId/webhook-url", async (req, res): Promise<void> => {
+router.patch("/clients/:clientId/webhook-url", requireClientRole(MANAGE_CLIENT_ROLES), async (req, res): Promise<void> => {
   try {
     const { webhookUrl } = req.body as { webhookUrl?: string };
     const [client] = await db
@@ -165,7 +189,7 @@ router.patch("/clients/:clientId/webhook-url", async (req, res): Promise<void> =
 });
 
 // DELETE /clients/:clientId — only allowed if no related data exists
-router.delete("/clients/:clientId", async (req, res): Promise<void> => {
+router.delete("/clients/:clientId", requireClientRole(MANAGE_CLIENT_ROLES), async (req, res): Promise<void> => {
   try {
     const hasData = await clientHasRelatedData(req.params.clientId);
     if (hasData) {

@@ -18,12 +18,17 @@ import socialAccountsRouter from "./social_accounts.js";
 import oauthRouter from "./oauth.js";
 import publishRouter from "./publish.js";
 import postingRulesRouter from "./posting_rules.js";
+import { requireAuth, requireClientAccess } from "../middleware/auth.js";
 
 const router: IRouter = Router();
 
-router.use(healthRouter);
 router.use(authRouter);
 router.use(oauthRouter);
+
+router.use(requireAuth);
+router.use("/clients/:clientId", requireClientAccess());
+
+router.use(healthRouter);
 router.use(settingsRouter);
 router.use(clientsRouter);
 router.use(brandDnaRouter);

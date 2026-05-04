@@ -5,6 +5,7 @@ import { db } from "@workspace/db";
 import { postsTable, campaignsTable, userSettingsTable, imagesTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { buildClientContext, buildImagePrompt } from "../lib/context-engine.js";
+import { EDIT_CONTENT_ROLES, requireClientRole, type AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -85,7 +86,7 @@ async function triggerBackgroundImageGen(
       await db
         .update(postsTable)
         .set({ selectedImageUrl: imageUrl, generationStatus: "ready", imagePrompt: prompt, updatedAt: new Date() })
-        .where(eq(postsTable.id, post.id));
+        .where(and(eq(postsTable.id, post.id), eq(postsTable.clientId, clientId)));
 
       await db.insert(imagesTable).values({
         clientId,
@@ -99,14 +100,14 @@ async function triggerBackgroundImageGen(
       await db
         .update(postsTable)
         .set({ generationStatus: "failed", updatedAt: new Date() })
-        .where(eq(postsTable.id, post.id))
+        .where(and(eq(postsTable.id, post.id), eq(postsTable.clientId, clientId)))
         .catch(() => {});
     }
   }
 }
 
 // POST /clients/:clientId/campaigns/:campaignId/generate-plan
-router.post("/clients/:clientId/campaigns/:campaignId/generate-plan", async (req: any, res): Promise<void> => {
+router.post("/clients/:clientId/campaigns/:campaignId/generate-plan", requireClientRole(EDIT_CONTENT_ROLES), async (req: AuthRequest, res): Promise<void> => {
   try {
     const { clientId, campaignId } = req.params;
     const { postsCount = 7, platforms = ["instagram", "facebook", "linkedin"] } = req.body;
@@ -190,7 +191,7 @@ Respond with ONLY valid JSON:
 });
 
 // POST /clients/:clientId/posts/:postId/regenerate-copy
-router.post("/clients/:clientId/posts/:postId/regenerate-copy", async (req: any, res): Promise<void> => {
+router.post("/clients/:clientId/posts/:postId/regenerate-copy", requireClientRole(EDIT_CONTENT_ROLES), async (req: AuthRequest, res): Promise<void> => {
   try {
     const { clientId, postId } = req.params;
 
@@ -239,7 +240,7 @@ Respond with ONLY valid JSON:
         generationStatus: "ready",
         updatedAt: new Date(),
       })
-      .where(eq(postsTable.id, postId))
+      .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
       .returning();
 
     res.json(updated);
@@ -250,7 +251,7 @@ Respond with ONLY valid JSON:
 });
 
 // POST /clients/:clientId/posts/:postId/generate-image
-router.post("/clients/:clientId/posts/:postId/generate-image", async (req: any, res): Promise<void> => {
+router.post("/clients/:clientId/posts/:postId/generate-image", requireClientRole(EDIT_CONTENT_ROLES), async (req: AuthRequest, res): Promise<void> => {
   try {
     const { clientId, postId } = req.params;
 
@@ -265,7 +266,7 @@ router.post("/clients/:clientId/posts/:postId/generate-image", async (req: any, 
     await db
       .update(postsTable)
       .set({ generationStatus: "generating", updatedAt: new Date() })
-      .where(eq(postsTable.id, postId));
+      .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)));
 
     const imagePrompt = post.imagePrompt?.trim()
       ? post.imagePrompt
@@ -291,7 +292,7 @@ router.post("/clients/:clientId/posts/:postId/generate-image", async (req: any, 
         generationStatus: "ready",
         updatedAt: new Date(),
       })
-      .where(eq(postsTable.id, postId))
+      .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
       .returning();
 
     // Persist image as an asset
@@ -310,17 +311,29 @@ router.post("/clients/:clientId/posts/:postId/generate-image", async (req: any, 
     await db
       .update(postsTable)
       .set({ generationStatus: "failed", updatedAt: new Date() })
-      .where(eq(postsTable.id, req.params.postId))
+      .where(and(eq(postsTable.id, req.params.postId), eq(postsTable.clientId, req.params.clientId)))
       .catch(() => {});
     res.status(500).json({ error: "Failed to generate image" });
   }
 });
 
 // POST /clients/:clientId/generate-bulk
-router.post("/clients/:clientId/generate-bulk", async (req: any, res) => {
+router.post("/clients/:clientId/generate-bulk", requireClientRole(EDIT_CONTENT_ROLES), async (req: AuthRequest, res) => {
   try {
     const { clientId } = req.params;
     const { weeks = 1, postsPerWeek = 5, platforms = ["instagram", "facebook", "linkedin"], campaignId } = req.body;
+
+    if (campaignId) {
+      const [campaign] = await db
+        .select({ id: campaignsTable.id })
+        .from(campaignsTable)
+        .where(and(eq(campaignsTable.id, campaignId), eq(campaignsTable.clientId, clientId)))
+        .limit(1);
+      if (!campaign) {
+        res.status(404).json({ error: "Campaign not found" });
+        return;
+      }
+    }
 
     const totalPosts = Math.min(weeks * postsPerWeek, 28);
     const context = await buildClientContext(clientId);

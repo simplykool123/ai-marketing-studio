@@ -7,6 +7,12 @@ import { GenerateCaptionsBody, GenerateImagesBody } from "@workspace/api-zod";
 import { db } from "@workspace/db";
 import { userSettingsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
+import {
+  EDIT_CONTENT_ROLES,
+  requireClientRole,
+  userHasClientRole,
+  type AuthRequest,
+} from "../middleware/auth.js";
 
 const router = Router();
 
@@ -68,9 +74,15 @@ async function generateTextWithProvider(
   return msg.content[0].type === "text" ? msg.content[0].text : "";
 }
 
-router.post("/ai/generate-captions", async (req: any, res) => {
+router.post("/ai/generate-captions", async (req: AuthRequest, res) => {
   try {
     const body = GenerateCaptionsBody.parse(req.body);
+    const hasAccess = await userHasClientRole(req.userId!, body.clientId, EDIT_CONTENT_ROLES);
+    if (!hasAccess) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
     const context = await buildClientContext(body.clientId);
     const settings = await getUserSettings(req.userId);
     const provider = settings?.aiProvider ?? "anthropic";
@@ -121,9 +133,15 @@ interface GeneratedImage {
   error?: string;
 }
 
-router.post("/ai/generate-images", async (req, res) => {
+router.post("/ai/generate-images", async (req: AuthRequest, res) => {
   try {
     const body = GenerateImagesBody.parse(req.body);
+    const hasAccess = await userHasClientRole(req.userId!, body.clientId, EDIT_CONTENT_ROLES);
+    if (!hasAccess) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
     const basePrompt = await buildImagePrompt(body.clientId, body.caption, body.visualStyle);
     const altPrompt = `${basePrompt} Alternative artistic interpretation with a different visual angle.`;
     const openai = getOpenAIClient();
@@ -174,7 +192,7 @@ router.post("/ai/generate-images", async (req, res) => {
 });
 
 // POST /clients/:clientId/suggestions — AI Brain content ideas
-router.post("/clients/:clientId/suggestions", async (req: any, res) => {
+router.post("/clients/:clientId/suggestions", requireClientRole(EDIT_CONTENT_ROLES), async (req: AuthRequest, res) => {
   try {
     const { clientId } = req.params;
     const context = await buildClientContext(clientId);

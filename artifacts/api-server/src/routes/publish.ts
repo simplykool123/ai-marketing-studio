@@ -5,11 +5,12 @@ import { and, eq } from "drizzle-orm";
 import { isEncryptionConfigured } from "../lib/crypto.js";
 import { resolveAccessToken } from "../lib/scheduler.js";
 import { publishToPlatform } from "../lib/publishers/index.js";
+import { APPROVE_CONTENT_ROLES, requireClientRole } from "../middleware/auth.js";
 
 const router = Router();
 
 // POST /clients/:clientId/posts/:postId/publish
-router.post("/clients/:clientId/posts/:postId/publish", async (req, res) => {
+router.post("/clients/:clientId/posts/:postId/publish", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res) => {
   if (!isEncryptionConfigured()) {
     res.status(503).json({
       error: "Token encryption is not configured. Set TOKEN_ENCRYPTION_KEY in environment secrets.",
@@ -60,7 +61,7 @@ router.post("/clients/:clientId/posts/:postId/publish", async (req, res) => {
           publishError: `No active ${platform} account connected. Connect one in Social Accounts.`,
           updatedAt: new Date(),
         })
-        .where(eq(postsTable.id, postId));
+        .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)));
 
       res.status(422).json({
         error: `No active ${platform} account connected`,
@@ -71,7 +72,7 @@ router.post("/clients/:clientId/posts/:postId/publish", async (req, res) => {
     await db
       .update(postsTable)
       .set({ publishError: null, updatedAt: new Date() })
-      .where(eq(postsTable.id, postId));
+      .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)));
 
     const accessToken = await resolveAccessToken(account);
 
@@ -93,7 +94,7 @@ router.post("/clients/:clientId/posts/:postId/publish", async (req, res) => {
         publishError: null,
         updatedAt: new Date(),
       })
-      .where(eq(postsTable.id, postId))
+      .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
       .returning();
 
     res.json(updated);
@@ -106,7 +107,7 @@ router.post("/clients/:clientId/posts/:postId/publish", async (req, res) => {
         publishError: message,
         updatedAt: new Date(),
       })
-      .where(eq(postsTable.id, req.params.postId))
+      .where(and(eq(postsTable.id, req.params.postId), eq(postsTable.clientId, req.params.clientId)))
       .catch(() => {});
 
     res.status(500).json({ error: message });

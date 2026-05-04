@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { socialAccountsTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
+import { MANAGE_CLIENT_ROLES, requireClientRole } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -71,7 +72,7 @@ router.get("/clients/:clientId/social-accounts", async (req, res) => {
   }
 });
 
-router.post("/clients/:clientId/social-accounts", async (req, res) => {
+router.post("/clients/:clientId/social-accounts", requireClientRole(MANAGE_CLIENT_ROLES), async (req, res) => {
   try {
     const { platform, accountName, accountHandle, accountId, avatarUrl, followerCount } =
       req.body as {
@@ -108,7 +109,7 @@ router.post("/clients/:clientId/social-accounts", async (req, res) => {
   }
 });
 
-router.patch("/clients/:clientId/social-accounts/:accountId", async (req, res) => {
+router.patch("/clients/:clientId/social-accounts/:accountId", requireClientRole(MANAGE_CLIENT_ROLES), async (req, res) => {
   try {
     const { accountName, accountHandle, avatarUrl, followerCount, isActive } = req.body as {
       accountName?: string;
@@ -146,7 +147,7 @@ router.patch("/clients/:clientId/social-accounts/:accountId", async (req, res) =
   }
 });
 
-router.delete("/clients/:clientId/social-accounts/:accountId", async (req, res) => {
+router.delete("/clients/:clientId/social-accounts/:accountId", requireClientRole(MANAGE_CLIENT_ROLES), async (req, res) => {
   try {
     await db
       .delete(socialAccountsTable)

@@ -6,6 +6,7 @@ import {
   CreateStorylineBody,
   UpdateStorylineBody,
 } from "@workspace/api-zod";
+import { EDIT_CONTENT_ROLES, requireClientRole } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -22,7 +23,7 @@ router.get("/clients/:clientId/storylines", async (req, res) => {
   }
 });
 
-router.post("/clients/:clientId/storylines", async (req, res) => {
+router.post("/clients/:clientId/storylines", requireClientRole(EDIT_CONTENT_ROLES), async (req, res) => {
   try {
     const body = CreateStorylineBody.parse(req.body);
 
@@ -44,7 +45,7 @@ router.post("/clients/:clientId/storylines", async (req, res) => {
   }
 });
 
-router.patch("/clients/:clientId/storylines/:storylineId", async (req, res) => {
+router.patch("/clients/:clientId/storylines/:storylineId", requireClientRole(EDIT_CONTENT_ROLES), async (req, res) => {
   try {
     const body = UpdateStorylineBody.parse(req.body);
 
@@ -77,7 +78,7 @@ router.patch("/clients/:clientId/storylines/:storylineId", async (req, res) => {
   }
 });
 
-router.delete("/clients/:clientId/storylines/:storylineId", async (req, res) => {
+router.delete("/clients/:clientId/storylines/:storylineId", requireClientRole(EDIT_CONTENT_ROLES), async (req, res) => {
   try {
     await db
       .delete(storylinesTable)

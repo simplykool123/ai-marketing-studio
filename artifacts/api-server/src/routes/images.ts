@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { imagesTable, postsTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { SaveImageBody } from "@workspace/api-zod";
+import { EDIT_CONTENT_ROLES, requireClientRole } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -24,7 +25,7 @@ router.get("/clients/:clientId/posts/:postId/images", async (req, res) => {
   }
 });
 
-router.post("/clients/:clientId/posts/:postId/images", async (req, res): Promise<void> => {
+router.post("/clients/:clientId/posts/:postId/images", requireClientRole(EDIT_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const body = SaveImageBody.parse(req.body);
 
@@ -68,7 +69,7 @@ router.get("/clients/:clientId/images", async (req, res) => {
   }
 });
 
-router.patch("/clients/:clientId/images/:imageId", async (req, res): Promise<void> => {
+router.patch("/clients/:clientId/images/:imageId", requireClientRole(EDIT_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const { status, prompt, type, notes } = req.body as {
       status?: string;
@@ -106,7 +107,7 @@ router.patch("/clients/:clientId/images/:imageId", async (req, res): Promise<voi
   }
 });
 
-router.delete("/clients/:clientId/images/:imageId", async (req, res): Promise<void> => {
+router.delete("/clients/:clientId/images/:imageId", requireClientRole(EDIT_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     await db
       .delete(imagesTable)
