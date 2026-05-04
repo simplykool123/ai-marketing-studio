@@ -1,4 +1,5 @@
 import { Router } from "express";
+import OpenAI from "openai";
 import { buildClientContext, buildImagePrompt } from "../lib/context-engine.js";
 import { GenerateCaptionsBody, GenerateImagesBody } from "@workspace/api-zod";
 import { db } from "@workspace/db";
@@ -11,9 +12,9 @@ import {
   type AuthRequest,
 } from "../middleware/auth.js";
 import {
-  getOpenAIClient,
   generateTextWithProvider,
   resolveProviderAndModel,
+  resolveApiKey,
   toAiErrorResponse,
   safeErrorMessage,
 } from "../lib/ai-provider.js";
@@ -39,7 +40,7 @@ router.post("/ai/generate-captions", async (req: AuthRequest, res) => {
 
     const context = await buildClientContext(body.clientId);
     const settings = await getUserSettings(req.userId);
-    const { provider, model } = resolveProviderAndModel(settings);
+    const { provider, model } = await resolveProviderAndModel(settings, req.userId);
 
     const prompt = `You are a professional social media content strategist. Using the brand context below, generate exactly 3 distinct caption options for a post about the given topic. Each caption must match the brand's voice and tone.
 
@@ -64,7 +65,7 @@ Respond with ONLY valid JSON in this exact format:
   ]
 }`;
 
-    const responseText = await generateTextWithProvider(provider, model, prompt);
+    const responseText = await generateTextWithProvider(provider, model, prompt, 1500, req.userId);
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("Invalid AI response format");
     const parsed = JSON.parse(jsonMatch[0]);
@@ -95,7 +96,9 @@ router.post("/ai/generate-images", async (req: AuthRequest, res) => {
 
     const basePrompt = await buildImagePrompt(body.clientId, body.caption, body.visualStyle);
     const altPrompt = `${basePrompt} Alternative artistic interpretation with a different visual angle.`;
-    const openai = getOpenAIClient();
+
+    const { key } = await resolveApiKey("openai", req.userId);
+    const openai = new OpenAI({ apiKey: key });
 
     const [leftResult, rightResult] = await Promise.allSettled([
       openai.images.generate({ model: "dall-e-3", prompt: basePrompt, n: 1, size: "1024x1024", quality: "standard", response_format: "url" }),
@@ -133,7 +136,7 @@ router.post("/clients/:clientId/suggestions", requireClientRole(EDIT_CONTENT_ROL
     const { clientId } = req.params;
     const context = await buildClientContext(clientId);
     const settings = await getUserSettings(req.userId);
-    const { provider, model } = resolveProviderAndModel(settings);
+    const { provider, model } = await resolveProviderAndModel(settings, req.userId);
     const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
     const prompt = `You are a senior content strategist. Based on the brand context below, suggest 5 specific content ideas for the next 7 days of posts.
@@ -161,7 +164,7 @@ Respond with ONLY valid JSON:
   ]
 }`;
 
-    const responseText = await generateTextWithProvider(provider, model, prompt);
+    const responseText = await generateTextWithProvider(provider, model, prompt, 1500, req.userId);
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("Invalid AI response");
     const parsed = JSON.parse(jsonMatch[0]);

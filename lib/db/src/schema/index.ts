@@ -12,3 +12,4 @@ export * from "./campaigns";
 export * from "./social_accounts";
 export * from "./posting_logs";
 export * from "./posting_rules";
+export * from "./user_api_keys";

@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, User, Bot, ImageIcon, Save, AlertTriangle, CheckCircle2, XCircle, FlaskConical } from "lucide-react";
+import { Loader2, User, Bot, ImageIcon, Save, AlertTriangle, CheckCircle2, XCircle, FlaskConical, Key, Eye, EyeOff, Trash2 } from "lucide-react";
 
 type Settings = {
   id: string;
@@ -33,6 +33,17 @@ type TestResult = {
   model: string;
   keyFound: boolean;
   error?: string;
+};
+
+type SavedKeyInfo = { masked: string; source: "database" } | null;
+type ApiKeysState = Record<string, SavedKeyInfo>;
+
+type KeyEditorState = {
+  value: string;
+  visible: boolean;
+  saving: boolean;
+  testing: boolean;
+  testResult: TestResult | null;
 };
 
 // Current valid model IDs per provider
@@ -88,6 +99,14 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
+
+  // AI Keys tab state
+  const [apiKeys, setApiKeys] = useState<ApiKeysState>({ anthropic: null, openai: null, gemini: null });
+  const [keysLoading, setKeysLoading] = useState(false);
+  // editing[provider] = true means the input row is shown
+  const [editing, setEditing] = useState<Record<string, boolean>>({});
+  const [keyEditors, setKeyEditors] = useState<Record<string, KeyEditorState>>({});
+  const [keyVisible, setKeyVisible] = useState<Record<string, boolean>>({});
 
   const token = localStorage.getItem("ams_token");
   const headers = { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
@@ -158,6 +177,79 @@ export default function SettingsPage() {
     }
   };
 
+  const loadApiKeys = async () => {
+    setKeysLoading(true);
+    try {
+      const res = await fetch("/api/settings/api-keys", { headers });
+      const data = await res.json() as ApiKeysState;
+      setApiKeys(data);
+    } catch {
+      toast({ title: "Failed to load API keys", variant: "destructive" });
+    } finally {
+      setKeysLoading(false);
+    }
+  };
+
+  const startEditing = (provider: string) => {
+    setEditing(e => ({ ...e, [provider]: true }));
+    setKeyEditors(ed => ({ ...ed, [provider]: { value: "", visible: false, saving: false, testing: false, testResult: null } }));
+  };
+
+  const cancelEditing = (provider: string) => {
+    setEditing(e => ({ ...e, [provider]: false }));
+  };
+
+  const saveApiKey = async (provider: string) => {
+    const editor = keyEditors[provider];
+    if (!editor?.value.trim()) return;
+    setKeyEditors(ed => ({ ...ed, [provider]: { ...ed[provider], saving: true } }));
+    try {
+      const res = await fetch(`/api/settings/api-keys/${provider}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ key: editor.value.trim() }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      const data = await res.json() as { masked: string; source: "database" };
+      setApiKeys(k => ({ ...k, [provider]: data }));
+      setEditing(e => ({ ...e, [provider]: false }));
+      toast({ title: "API key saved", description: `${provider} key saved and encrypted.` });
+    } catch {
+      toast({ title: "Failed to save key", variant: "destructive" });
+    } finally {
+      setKeyEditors(ed => ({ ...ed, [provider]: { ...ed[provider], saving: false } }));
+    }
+  };
+
+  const deleteApiKey = async (provider: string) => {
+    try {
+      await fetch(`/api/settings/api-keys/${provider}`, { method: "DELETE", headers });
+      setApiKeys(k => ({ ...k, [provider]: null }));
+      setEditing(e => ({ ...e, [provider]: false }));
+      toast({ title: "API key removed", description: `${provider} key has been deleted.` });
+    } catch {
+      toast({ title: "Failed to remove key", variant: "destructive" });
+    }
+  };
+
+  const testApiKey = async (provider: string) => {
+    const model = AI_PROVIDERS.find(p => p.value === provider)?.models[0].id ?? "";
+    setKeyEditors(ed => ({ ...ed, [provider]: { ...ed[provider], testing: true, testResult: null } }));
+    try {
+      const res = await fetch("/api/settings/test-ai-provider", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ provider, model }),
+      });
+      const data = await res.json() as TestResult;
+      setKeyEditors(ed => ({ ...ed, [provider]: { ...ed[provider], testResult: data } }));
+    } catch {
+      setKeyEditors(ed => ({ ...ed, [provider]: { ...ed[provider], testResult: { success: false, provider, model, keyFound: false, error: "Network error." } } }));
+    } finally {
+      setKeyEditors(ed => ({ ...ed, [provider]: { ...ed[provider], testing: false } }));
+    }
+  };
+
   const selectedAiProvider = AI_PROVIDERS.find(p => p.value === settings?.aiProvider);
   const selectedImageProvider = IMAGE_PROVIDERS.find(p => p.value === settings?.imageProvider);
 
@@ -179,6 +271,7 @@ export default function SettingsPage() {
           <TabsTrigger value="profile" className="gap-1.5"><User className="w-3.5 h-3.5" />Profile</TabsTrigger>
           <TabsTrigger value="ai" className="gap-1.5"><Bot className="w-3.5 h-3.5" />AI Provider</TabsTrigger>
           <TabsTrigger value="images" className="gap-1.5"><ImageIcon className="w-3.5 h-3.5" />Image AI</TabsTrigger>
+          <TabsTrigger value="keys" className="gap-1.5" onClick={loadApiKeys}><Key className="w-3.5 h-3.5" />AI Keys</TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile" className="mt-4">
@@ -375,6 +468,157 @@ export default function SettingsPage() {
                       ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Saving…</>
                       : <><Save className="w-3.5 h-3.5 mr-1.5" />Save Changes</>}
                   </Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="keys" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">AI API Keys</CardTitle>
+              <CardDescription>
+                Keys are encrypted before storage. DB-stored keys take priority over .env keys.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {keysLoading ? (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+                </div>
+              ) : (
+                <>
+                  {[
+                    { provider: "anthropic", label: "Anthropic (Claude)", placeholder: "sk-ant-api03-…" },
+                    { provider: "openai",    label: "OpenAI (GPT / DALL-E)", placeholder: "sk-proj-…" },
+                    { provider: "gemini",    label: "Google Gemini", placeholder: "AIzaSy…" },
+                  ].map(({ provider, label, placeholder }) => {
+                    const saved = apiKeys[provider];
+                    const isEditing = editing[provider];
+                    const editor = keyEditors[provider] ?? { value: "", visible: false, saving: false, testing: false, testResult: null };
+                    const tr = editor.testResult;
+
+                    return (
+                      <div key={provider} className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm font-medium">{label}</Label>
+                          {saved && (
+                            <Badge variant="outline" className="text-[10px] font-mono text-green-700 border-green-300 dark:text-green-400 dark:border-green-700">
+                              encrypted · DB
+                            </Badge>
+                          )}
+                        </div>
+
+                        {/* Saved state — show masked key + action buttons */}
+                        {saved && !isEditing && (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <code className="flex-1 rounded-md bg-muted px-3 py-2 text-sm font-mono text-muted-foreground select-all">
+                                {keyVisible[provider] ? "••••••••" /* never show plaintext */ : saved.masked}
+                              </code>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-9 w-9 shrink-0"
+                                title={keyVisible[provider] ? "Hide" : "Show hint"}
+                                onClick={() => setKeyVisible(v => ({ ...v, [provider]: !v[provider] }))}
+                              >
+                                {keyVisible[provider] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                              </Button>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Button variant="outline" size="sm" onClick={() => startEditing(provider)}>
+                                Change Key
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={editor.testing}
+                                onClick={() => testApiKey(provider)}
+                              >
+                                {editor.testing
+                                  ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Testing…</>
+                                  : <><FlaskConical className="w-3.5 h-3.5 mr-1.5" />Test</>}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => deleteApiKey(provider)}
+                              >
+                                <Trash2 className="w-3.5 h-3.5 mr-1.5" />Remove
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* No saved key — show input directly */}
+                        {!saved && !isEditing && (
+                          <Button variant="outline" size="sm" onClick={() => startEditing(provider)}>
+                            <Key className="w-3.5 h-3.5 mr-1.5" />Add Key
+                          </Button>
+                        )}
+
+                        {/* Input editor */}
+                        {isEditing && (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <div className="relative flex-1">
+                                <Input
+                                  type={editor.visible ? "text" : "password"}
+                                  placeholder={placeholder}
+                                  value={editor.value}
+                                  autoComplete="off"
+                                  spellCheck={false}
+                                  onChange={e => setKeyEditors(ed => ({ ...ed, [provider]: { ...ed[provider], value: e.target.value } }))}
+                                  className="pr-10 font-mono text-sm"
+                                />
+                                <button
+                                  type="button"
+                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                  onClick={() => setKeyEditors(ed => ({ ...ed, [provider]: { ...ed[provider], visible: !ed[provider].visible } }))}
+                                  title={editor.visible ? "Hide key" : "Show key"}
+                                >
+                                  {editor.visible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                </button>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                disabled={editor.saving || !editor.value.trim()}
+                                onClick={() => saveApiKey(provider)}
+                              >
+                                {editor.saving
+                                  ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Saving…</>
+                                  : <><Save className="w-3.5 h-3.5 mr-1.5" />Save</>}
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => cancelEditing(provider)}>
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Test result */}
+                        {tr && (
+                          <div className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
+                            tr.success
+                              ? "border-green-200 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950/30 dark:text-green-400"
+                              : "border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400"
+                          }`}>
+                            {tr.success
+                              ? <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
+                              : <XCircle className="w-4 h-4 mt-0.5 shrink-0" />}
+                            <span>{tr.success ? `Connected — ${tr.provider} is working.` : (tr.error ?? "Connection failed.")}</span>
+                          </div>
+                        )}
+
+                        {provider !== "gemini" && <Separator />}
+                      </div>
+                    );
+                  })}
                 </>
               )}
             </CardContent>

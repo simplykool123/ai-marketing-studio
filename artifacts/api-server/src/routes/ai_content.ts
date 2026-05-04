@@ -1,13 +1,14 @@
 import { Router } from "express";
+import OpenAI from "openai";
 import { db } from "@workspace/db";
 import { postsTable, campaignsTable, userSettingsTable, imagesTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { buildClientContext, buildImagePrompt } from "../lib/context-engine.js";
 import { EDIT_CONTENT_ROLES, requireClientRole, type AuthRequest } from "../middleware/auth.js";
 import {
-  getOpenAIClient,
   generateTextWithProvider,
   resolveProviderAndModel,
+  resolveApiKey,
   safeErrorMessage,
 } from "../lib/ai-provider.js";
 import { logger } from "../lib/logger.js";
@@ -33,11 +34,13 @@ function extractJson(text: string): unknown {
 // Background: generate a DALL-E 3 image for each post, save to posts + images table
 async function triggerBackgroundImageGen(
   posts: Array<{ id: string; caption: string | null; imagePrompt: string | null }>,
-  clientId: string
+  clientId: string,
+  userId?: string
 ): Promise<void> {
   for (const post of posts) {
     try {
-      const openai = getOpenAIClient();
+      const { key } = await resolveApiKey("openai", userId);
+      const openai = new OpenAI({ apiKey: key });
       const prompt = post.imagePrompt?.trim()
         ? post.imagePrompt
         : await buildImagePrompt(clientId, post.caption ?? "");
@@ -92,7 +95,7 @@ router.post("/clients/:clientId/campaigns/:campaignId/generate-plan", requireCli
 
     const context = await buildClientContext(clientId);
     const settings = await getUserSettings(req.userId);
-    const { provider, model } = resolveProviderAndModel(settings);
+    const { provider, model } = await resolveProviderAndModel(settings, req.userId);
     const platformList = Array.isArray(platforms) ? platforms.join(", ") : platforms;
 
     const prompt = `You are a professional content strategist. Using the brand context below, generate exactly ${postsCount} distinct post ideas for this campaign.
@@ -127,7 +130,7 @@ Respond with ONLY valid JSON:
   ]
 }`;
 
-    const responseText = await generateTextWithProvider(provider, model, prompt, 3000);
+    const responseText = await generateTextWithProvider(provider, model, prompt, 3000, req.userId);
     const parsed = extractJson(responseText) as { posts: Array<{ topic: string; platform: string; caption: string; hashtags: string; imagePrompt?: string }> };
 
     if (!parsed || !Array.isArray((parsed as any).posts)) {
@@ -150,7 +153,7 @@ Respond with ONLY valid JSON:
     const created = await db.insert(postsTable).values(insertValues).returning();
 
     // Fire-and-forget background image generation
-    triggerBackgroundImageGen(created, clientId).catch(() => {});
+    triggerBackgroundImageGen(created, clientId, req.userId).catch(() => {});
 
     res.json({ posts: created, generatedCount: created.length });
   } catch (err) {
@@ -174,7 +177,7 @@ router.post("/clients/:clientId/posts/:postId/regenerate-copy", requireClientRol
 
     const context = await buildClientContext(clientId);
     const settings = await getUserSettings(req.userId);
-    const { provider, model } = resolveProviderAndModel(settings);
+    const { provider, model } = await resolveProviderAndModel(settings, req.userId);
 
     const prompt = `You are a professional social media copywriter. Using the brand context and post topic below, generate a fresh, engaging caption with hashtags.
 
@@ -197,7 +200,7 @@ Respond with ONLY valid JSON:
   "hashtags": "#tag1 #tag2 #tag3"
 }`;
 
-    const responseText = await generateTextWithProvider(provider, model, prompt, 1000);
+    const responseText = await generateTextWithProvider(provider, model, prompt, 1000, req.userId);
     const parsed = extractJson(responseText) as { caption: string; hashtags: string };
 
     const [updated] = await db
@@ -239,7 +242,8 @@ router.post("/clients/:clientId/posts/:postId/generate-image", requireClientRole
     const imagePrompt = post.imagePrompt?.trim()
       ? post.imagePrompt
       : await buildImagePrompt(clientId, post.caption ?? "");
-    const openai = getOpenAIClient();
+    const { key: openaiKey } = await resolveApiKey("openai", req.userId);
+    const openai = new OpenAI({ apiKey: openaiKey });
 
     const result = await openai.images.generate({
       model: "dall-e-3",
@@ -306,7 +310,7 @@ router.post("/clients/:clientId/generate-bulk", requireClientRole(EDIT_CONTENT_R
     const totalPosts = Math.min(weeks * postsPerWeek, 28);
     const context = await buildClientContext(clientId);
     const settings = await getUserSettings(req.userId);
-    const { provider, model } = resolveProviderAndModel(settings);
+    const { provider, model } = await resolveProviderAndModel(settings, req.userId);
     const platformList = Array.isArray(platforms) ? platforms.join(", ") : platforms;
 
     const prompt = `You are a senior content strategist for a digital marketing agency. Using the brand context below, create a complete ${weeks}-week content calendar with exactly ${totalPosts} posts.
@@ -338,7 +342,7 @@ Respond with ONLY valid JSON:
   ]
 }`;
 
-    const responseText = await generateTextWithProvider(provider, model, prompt, 4000);
+    const responseText = await generateTextWithProvider(provider, model, prompt, 4000, req.userId);
     const parsed = extractJson(responseText) as { posts: any[] };
 
     if (!parsed || !Array.isArray((parsed as any).posts)) {
@@ -361,7 +365,7 @@ Respond with ONLY valid JSON:
     const created = await db.insert(postsTable).values(insertValues).returning();
 
     // Fire-and-forget background image generation
-    triggerBackgroundImageGen(created, clientId).catch(() => {});
+    triggerBackgroundImageGen(created, clientId, req.userId).catch(() => {});
 
     res.json({ posts: created, generatedCount: created.length });
   } catch (err) {
