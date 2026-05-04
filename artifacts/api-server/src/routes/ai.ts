@@ -1,7 +1,4 @@
 import { Router } from "express";
-import Anthropic from "@anthropic-ai/sdk";
-import OpenAI from "openai";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { buildClientContext, buildImagePrompt } from "../lib/context-engine.js";
 import { GenerateCaptionsBody, GenerateImagesBody } from "@workspace/api-zod";
 import { db } from "@workspace/db";
@@ -13,61 +10,16 @@ import {
   userHasClientRole,
   type AuthRequest,
 } from "../middleware/auth.js";
+import {
+  getOpenAIClient,
+  generateTextWithProvider,
+  resolveProviderAndModel,
+  toAiErrorResponse,
+  safeErrorMessage,
+} from "../lib/ai-provider.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
-
-class AiConfigError extends Error {
-  constructor(message: string) { super(message); this.name = "AiConfigError"; }
-}
-
-function getAnthropicClient(): Anthropic {
-  const key = process.env.ANTHROPIC_KEY;
-  if (!key) throw new AiConfigError("Anthropic API key is not configured. Add ANTHROPIC_KEY to your .env file.");
-  return new Anthropic({ apiKey: key });
-}
-
-function getOpenAIClient(): OpenAI {
-  const key = process.env.OPENAI_KEY;
-  if (!key) throw new AiConfigError("OpenAI API key is not configured. Add OPENAI_KEY to your .env file.");
-  return new OpenAI({ apiKey: key });
-}
-
-function getGeminiClient(): GoogleGenerativeAI {
-  const key = process.env.GEMINI_KEY;
-  if (!key) throw new AiConfigError("Gemini API key is not configured. Add GEMINI_KEY to your .env file.");
-  return new GoogleGenerativeAI(key);
-}
-
-// Map any retired/old model aliases to current valid equivalents.
-const MODEL_ALIASES: Record<string, string> = {
-  "claude-opus-4-5": "claude-sonnet-4-6",
-  "claude-3-opus-20240229": "claude-sonnet-4-6",
-};
-
-function resolveModel(provider: string, model: string): string {
-  if (provider === "anthropic") {
-    return MODEL_ALIASES[model] ?? (model || "claude-sonnet-4-6");
-  }
-  if (provider === "openai") return model || "gpt-4o";
-  if (provider === "gemini") return model || "gemini-1.5-pro";
-  return model;
-}
-
-function toAiErrorResponse(err: unknown, fallback: string): { status: number; message: string } {
-  if (err instanceof AiConfigError) return { status: 503, message: err.message };
-  if (err instanceof Error) {
-    const msg = err.message;
-    const lower = msg.toLowerCase();
-    if (lower.includes("authentication") || lower.includes("api key") || lower.includes("incorrect api key") || lower.includes("invalid api key") || lower.includes("unauthorized")) {
-      return { status: 503, message: `AI provider authentication failed — check your API key in Settings. (${msg})` };
-    }
-    if (lower.includes("model") && (lower.includes("not found") || lower.includes("does not exist") || lower.includes("invalid model"))) {
-      return { status: 503, message: `AI model not recognised. Update your model in Settings. (${msg})` };
-    }
-    return { status: 500, message: fallback };
-  }
-  return { status: 500, message: fallback };
-}
 
 async function getUserSettings(userId?: string) {
   if (!userId) return null;
@@ -79,70 +31,11 @@ async function getUserSettings(userId?: string) {
   return settings ?? null;
 }
 
-// Resolve provider + model: prefer explicit user settings when the matching key
-// is present; otherwise fall back to whichever key is available in env.
-function resolveProviderAndModel(
-  settings: { aiProvider: string; aiModel: string } | null
-): { provider: string; model: string } {
-  if (settings) {
-    const { aiProvider, aiModel } = settings;
-    const keyPresent =
-      (aiProvider === "anthropic" && !!process.env.ANTHROPIC_KEY) ||
-      (aiProvider === "openai" && !!process.env.OPENAI_KEY) ||
-      (aiProvider === "gemini" && !!process.env.GEMINI_KEY);
-    if (keyPresent) {
-      return { provider: aiProvider, model: resolveModel(aiProvider, aiModel) };
-    }
-    // Configured provider key is missing — fall through to auto-detect
-  }
-
-  if (process.env.ANTHROPIC_KEY) return { provider: "anthropic", model: "claude-sonnet-4-6" };
-  if (process.env.OPENAI_KEY) return { provider: "openai", model: "gpt-4o" };
-  if (process.env.GEMINI_KEY) return { provider: "gemini", model: "gemini-1.5-pro" };
-
-  throw new AiConfigError(
-    "No AI provider API keys are configured. Add ANTHROPIC_KEY, OPENAI_KEY, or GEMINI_KEY to your .env file and restart the server."
-  );
-}
-
-async function generateTextWithProvider(
-  provider: string,
-  model: string,
-  prompt: string
-): Promise<string> {
-  if (provider === "openai") {
-    const openai = getOpenAIClient();
-    const res = await openai.chat.completions.create({
-      model: model || "gpt-4o",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 1500,
-    });
-    return res.choices[0]?.message?.content ?? "";
-  }
-  if (provider === "gemini") {
-    const genai = getGeminiClient();
-    const geminiModel = genai.getGenerativeModel({ model: model || "gemini-1.5-pro" });
-    const res = await geminiModel.generateContent(prompt);
-    return res.response.text();
-  }
-  // Default: anthropic
-  const anthropic = getAnthropicClient();
-  const msg = await anthropic.messages.create({
-    model: model || "claude-sonnet-4-6",
-    max_tokens: 1500,
-    messages: [{ role: "user", content: prompt }],
-  });
-  return msg.content[0].type === "text" ? msg.content[0].text : "";
-}
-
 router.post("/ai/generate-captions", async (req: AuthRequest, res) => {
   try {
     const body = GenerateCaptionsBody.parse(req.body);
     const hasAccess = await userHasClientRole(req.userId!, body.clientId, EDIT_CONTENT_ROLES);
-    if (!hasAccess) {
-      res.status(403).json({ error: "Forbidden" });
-      return;
-    }
+    if (!hasAccess) { res.status(403).json({ error: "Forbidden" }); return; }
 
     const context = await buildClientContext(body.clientId);
     const settings = await getUserSettings(req.userId);
@@ -178,11 +71,7 @@ Respond with ONLY valid JSON in this exact format:
     res.json(parsed);
   } catch (err) {
     const { status, message } = toAiErrorResponse(err, "Failed to generate captions. Check that your AI provider key is configured in Settings.");
-    console.error("Caption generation error:", {
-      message: err instanceof Error ? err.message : String(err),
-      status: (err as { status?: number }).status ?? (err as { statusCode?: number }).statusCode,
-      name: err instanceof Error ? err.name : typeof err,
-    });
+    logger.error({ error: safeErrorMessage(err) }, "Caption generation error");
     res.status(status).json({ error: message });
   }
 });
@@ -202,57 +91,38 @@ router.post("/ai/generate-images", async (req: AuthRequest, res) => {
   try {
     const body = GenerateImagesBody.parse(req.body);
     const hasAccess = await userHasClientRole(req.userId!, body.clientId, EDIT_CONTENT_ROLES);
-    if (!hasAccess) {
-      res.status(403).json({ error: "Forbidden" });
-      return;
-    }
+    if (!hasAccess) { res.status(403).json({ error: "Forbidden" }); return; }
 
     const basePrompt = await buildImagePrompt(body.clientId, body.caption, body.visualStyle);
     const altPrompt = `${basePrompt} Alternative artistic interpretation with a different visual angle.`;
     const openai = getOpenAIClient();
 
     const [leftResult, rightResult] = await Promise.allSettled([
-      openai.images.generate({
-        model: "dall-e-3",
-        prompt: basePrompt,
-        n: 1,
-        size: "1024x1024",
-        quality: "standard",
-        response_format: "url",
-      }),
-      openai.images.generate({
-        model: "dall-e-3",
-        prompt: altPrompt,
-        n: 1,
-        size: "1024x1024",
-        quality: "standard",
-        response_format: "url",
-      }),
+      openai.images.generate({ model: "dall-e-3", prompt: basePrompt, n: 1, size: "1024x1024", quality: "standard", response_format: "url" }),
+      openai.images.generate({ model: "dall-e-3", prompt: altPrompt,  n: 1, size: "1024x1024", quality: "standard", response_format: "url" }),
     ]);
 
-    const images: GeneratedImage[] = [];
-    const leftUrl = leftResult.status === "fulfilled" ? (leftResult.value.data?.[0]?.url ?? "") : "";
-    const rightUrl = rightResult.status === "fulfilled" ? (rightResult.value.data?.[0]?.url ?? "") : "";
-
-    images.push({
-      provider: "openai",
-      panel: "left",
-      url: leftUrl,
-      prompt: basePrompt,
-      ...(leftResult.status === "rejected" ? { error: String((leftResult.reason as Error)?.message ?? "Generation failed") } : {}),
-    });
-    images.push({
-      provider: "openai",
-      panel: "right",
-      url: rightUrl,
-      prompt: altPrompt,
-      ...(rightResult.status === "rejected" ? { error: String((rightResult.reason as Error)?.message ?? "Generation failed") } : {}),
-    });
+    const images: GeneratedImage[] = [
+      {
+        provider: "openai",
+        panel: "left",
+        url: leftResult.status === "fulfilled" ? (leftResult.value.data?.[0]?.url ?? "") : "",
+        prompt: basePrompt,
+        ...(leftResult.status === "rejected" ? { error: safeErrorMessage(leftResult.reason) } : {}),
+      },
+      {
+        provider: "openai",
+        panel: "right",
+        url: rightResult.status === "fulfilled" ? (rightResult.value.data?.[0]?.url ?? "") : "",
+        prompt: altPrompt,
+        ...(rightResult.status === "rejected" ? { error: safeErrorMessage(rightResult.reason) } : {}),
+      },
+    ];
 
     res.json({ images });
   } catch (err) {
     const { status, message } = toAiErrorResponse(err, "Failed to generate images. Check that your OpenAI key is configured in Settings.");
-    console.error("Image generation error:", err);
+    logger.error({ error: safeErrorMessage(err) }, "Image generation error");
     res.status(status).json({ error: message });
   }
 });
@@ -298,7 +168,7 @@ Respond with ONLY valid JSON:
     res.json(parsed);
   } catch (err) {
     const { status, message } = toAiErrorResponse(err, "Failed to generate suggestions. Check that your AI provider key is configured in Settings.");
-    console.error("Suggestions error:", err);
+    logger.error({ error: safeErrorMessage(err) }, "Suggestions error");
     res.status(status).json({ error: message });
   }
 });

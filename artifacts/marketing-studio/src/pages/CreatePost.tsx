@@ -22,7 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Image as ImageIcon, Sparkles, Check, ChevronRight, Save, Upload, X } from "lucide-react";
+import { Image as ImageIcon, Sparkles, Check, ChevronRight, Save, Upload, X, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Step = 1 | 2 | 3;
@@ -254,6 +254,16 @@ export default function CreatePost() {
           {generateCaptions.isPending && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {[1,2,3].map(i => <Skeleton key={i} className="h-40 rounded-xl" />)}
+            </div>
+          )}
+
+          {generateCaptions.isError && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>
+                AI provider is not working.{" "}
+                <a href="/settings" className="underline font-medium">Test connection in Settings.</a>
+              </span>
             </div>
           )}
 

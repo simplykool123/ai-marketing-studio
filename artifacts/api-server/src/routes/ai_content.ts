@@ -1,25 +1,18 @@
 import { Router } from "express";
-import Anthropic from "@anthropic-ai/sdk";
-import OpenAI from "openai";
 import { db } from "@workspace/db";
 import { postsTable, campaignsTable, userSettingsTable, imagesTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { buildClientContext, buildImagePrompt } from "../lib/context-engine.js";
 import { EDIT_CONTENT_ROLES, requireClientRole, type AuthRequest } from "../middleware/auth.js";
+import {
+  getOpenAIClient,
+  generateTextWithProvider,
+  resolveProviderAndModel,
+  safeErrorMessage,
+} from "../lib/ai-provider.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
-
-function getAnthropicClient(): Anthropic {
-  const key = process.env.ANTHROPIC_KEY;
-  if (!key) throw new Error("ANTHROPIC_KEY not set");
-  return new Anthropic({ apiKey: key });
-}
-
-function getOpenAIClient(): OpenAI {
-  const key = process.env.OPENAI_KEY;
-  if (!key) throw new Error("OPENAI_KEY not set");
-  return new OpenAI({ apiKey: key });
-}
 
 async function getUserSettings(userId?: string) {
   if (!userId) return null;
@@ -29,29 +22,6 @@ async function getUserSettings(userId?: string) {
     .where(eq(userSettingsTable.userId, userId))
     .limit(1);
   return settings ?? null;
-}
-
-async function generateTextWithClaude(prompt: string, maxTokens = 2000): Promise<string> {
-  const anthropic = getAnthropicClient();
-  const msg = await anthropic.messages.create({
-    model: "claude-opus-4-5",
-    max_tokens: maxTokens,
-    messages: [{ role: "user", content: prompt }],
-  });
-  return msg.content[0].type === "text" ? msg.content[0].text : "";
-}
-
-async function generateTextWithProvider(provider: string, model: string, prompt: string, maxTokens = 2000): Promise<string> {
-  if (provider === "openai") {
-    const openai = getOpenAIClient();
-    const res = await openai.chat.completions.create({
-      model: model || "gpt-4o",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: maxTokens,
-    });
-    return res.choices[0]?.message?.content ?? "";
-  }
-  return generateTextWithClaude(prompt, maxTokens);
 }
 
 function extractJson(text: string): unknown {
@@ -122,8 +92,7 @@ router.post("/clients/:clientId/campaigns/:campaignId/generate-plan", requireCli
 
     const context = await buildClientContext(clientId);
     const settings = await getUserSettings(req.userId);
-    const provider = settings?.aiProvider ?? "anthropic";
-    const model = settings?.aiModel ?? "claude-opus-4-5";
+    const { provider, model } = resolveProviderAndModel(settings);
     const platformList = Array.isArray(platforms) ? platforms.join(", ") : platforms;
 
     const prompt = `You are a professional content strategist. Using the brand context below, generate exactly ${postsCount} distinct post ideas for this campaign.
@@ -185,7 +154,7 @@ Respond with ONLY valid JSON:
 
     res.json({ posts: created, generatedCount: created.length });
   } catch (err) {
-    console.error("generate-plan error:", err);
+    logger.error({ error: safeErrorMessage(err) }, "generate-plan error");
     res.status(500).json({ error: "Failed to generate campaign plan" });
   }
 });
@@ -205,8 +174,7 @@ router.post("/clients/:clientId/posts/:postId/regenerate-copy", requireClientRol
 
     const context = await buildClientContext(clientId);
     const settings = await getUserSettings(req.userId);
-    const provider = settings?.aiProvider ?? "anthropic";
-    const model = settings?.aiModel ?? "claude-opus-4-5";
+    const { provider, model } = resolveProviderAndModel(settings);
 
     const prompt = `You are a professional social media copywriter. Using the brand context and post topic below, generate a fresh, engaging caption with hashtags.
 
@@ -245,7 +213,7 @@ Respond with ONLY valid JSON:
 
     res.json(updated);
   } catch (err) {
-    console.error("regenerate-copy error:", err);
+    logger.error({ error: safeErrorMessage(err) }, "regenerate-copy error");
     res.status(500).json({ error: "Failed to regenerate copy" });
   }
 });
@@ -307,7 +275,7 @@ router.post("/clients/:clientId/posts/:postId/generate-image", requireClientRole
 
     res.json(updated);
   } catch (err) {
-    console.error("generate-image error:", err);
+    logger.error({ error: safeErrorMessage(err) }, "generate-image error");
     await db
       .update(postsTable)
       .set({ generationStatus: "failed", updatedAt: new Date() })
@@ -338,8 +306,7 @@ router.post("/clients/:clientId/generate-bulk", requireClientRole(EDIT_CONTENT_R
     const totalPosts = Math.min(weeks * postsPerWeek, 28);
     const context = await buildClientContext(clientId);
     const settings = await getUserSettings(req.userId);
-    const provider = settings?.aiProvider ?? "anthropic";
-    const model = settings?.aiModel ?? "claude-opus-4-5";
+    const { provider, model } = resolveProviderAndModel(settings);
     const platformList = Array.isArray(platforms) ? platforms.join(", ") : platforms;
 
     const prompt = `You are a senior content strategist for a digital marketing agency. Using the brand context below, create a complete ${weeks}-week content calendar with exactly ${totalPosts} posts.
@@ -398,7 +365,7 @@ Respond with ONLY valid JSON:
 
     res.json({ posts: created, generatedCount: created.length });
   } catch (err) {
-    console.error("bulk-generate error:", err);
+    logger.error({ error: safeErrorMessage(err) }, "bulk-generate error");
     res.status(500).json({ error: "Failed to bulk generate posts" });
   }
 });
