@@ -16,22 +16,32 @@ import {
 
 const router = Router();
 
+class AiConfigError extends Error {
+  constructor(message: string) { super(message); this.name = "AiConfigError"; }
+}
+
 function getAnthropicClient(): Anthropic {
   const key = process.env.ANTHROPIC_KEY;
-  if (!key) throw new Error("ANTHROPIC_KEY not set");
+  if (!key) throw new AiConfigError("Anthropic API key is not configured. Add ANTHROPIC_KEY to your .env file.");
   return new Anthropic({ apiKey: key });
 }
 
 function getOpenAIClient(): OpenAI {
   const key = process.env.OPENAI_KEY;
-  if (!key) throw new Error("OPENAI_KEY not set");
+  if (!key) throw new AiConfigError("OpenAI API key is not configured. Add OPENAI_KEY to your .env file.");
   return new OpenAI({ apiKey: key });
 }
 
 function getGeminiClient(): GoogleGenerativeAI {
   const key = process.env.GEMINI_KEY;
-  if (!key) throw new Error("GEMINI_KEY not set");
+  if (!key) throw new AiConfigError("Gemini API key is not configured. Add GEMINI_KEY to your .env file.");
   return new GoogleGenerativeAI(key);
+}
+
+function toAiErrorResponse(err: unknown, fallback: string): { status: number; message: string } {
+  if (err instanceof AiConfigError) return { status: 503, message: err.message };
+  if (err instanceof Error) return { status: 500, message: err.message.includes("API key") ? err.message : fallback };
+  return { status: 500, message: fallback };
 }
 
 async function getUserSettings(userId?: string) {
@@ -117,8 +127,9 @@ Respond with ONLY valid JSON in this exact format:
     const parsed = JSON.parse(jsonMatch[0]);
     res.json(parsed);
   } catch (err) {
+    const { status, message } = toAiErrorResponse(err, "Failed to generate captions. Check that your AI provider key is configured in Settings.");
     console.error("Caption generation error:", err);
-    res.status(500).json({ error: "Failed to generate captions" });
+    res.status(status).json({ error: message });
   }
 });
 
@@ -186,8 +197,9 @@ router.post("/ai/generate-images", async (req: AuthRequest, res) => {
 
     res.json({ images });
   } catch (err) {
+    const { status, message } = toAiErrorResponse(err, "Failed to generate images. Check that your OpenAI key is configured in Settings.");
     console.error("Image generation error:", err);
-    res.status(500).json({ error: "Failed to generate images" });
+    res.status(status).json({ error: message });
   }
 });
 
@@ -232,8 +244,9 @@ Respond with ONLY valid JSON:
     const parsed = JSON.parse(jsonMatch[0]);
     res.json(parsed);
   } catch (err) {
+    const { status, message } = toAiErrorResponse(err, "Failed to generate suggestions. Check that your AI provider key is configured in Settings.");
     console.error("Suggestions error:", err);
-    res.status(500).json({ error: "Failed to generate suggestions" });
+    res.status(status).json({ error: message });
   }
 });
 

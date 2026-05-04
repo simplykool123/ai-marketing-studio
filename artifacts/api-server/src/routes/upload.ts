@@ -164,8 +164,9 @@ router.post(
 
       res.status(201).json(asset);
     } catch (err) {
-      console.error("Asset upload error:", err);
-      res.status(500).json({ error: "Failed to upload asset" });
+      const safeError = toSafeUploadError(err, "Failed to upload asset");
+      console.error("Asset upload error:", safeError, err);
+      res.status(safeError.statusCode).json({ error: safeError.message, code: safeError.code });
     }
   }
 );
@@ -185,8 +186,9 @@ router.post(
 
       res.json({ url });
     } catch (err) {
-      console.error("Post image upload error:", err);
-      res.status(500).json({ error: "Failed to upload post image" });
+      const safeError = toSafeUploadError(err, "Failed to upload post image");
+      console.error("Post image upload error:", safeError, err);
+      res.status(safeError.statusCode).json({ error: safeError.message, code: safeError.code });
     }
   }
 );

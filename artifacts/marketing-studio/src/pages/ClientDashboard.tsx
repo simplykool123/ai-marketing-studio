@@ -1,5 +1,5 @@
-import { useState } from "react";
 import { useParams, Link } from "wouter";
+import { cn } from "@/lib/utils";
 import { useGetClient, type Post } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,8 +13,6 @@ import {
   Send,
   LayoutDashboard,
   ArrowRight,
-  AlertCircle,
-  Calendar,
   Instagram,
   Facebook,
   Twitter,
@@ -25,6 +23,7 @@ import {
   CalendarDays,
   BookOpen,
   Image as ImageIcon,
+  Circle,
 } from "lucide-react";
 import AiBrainWidget from "@/components/AiBrainWidget";
 
@@ -109,7 +108,6 @@ function PlatformIcon({ platform, className }: { platform: string; className?: s
 
 export default function ClientDashboard() {
   const { clientId } = useParams<{ clientId: string }>();
-  const [, setShowRecommendation] = useState(false);
 
   const { data: client, isLoading: isClientLoading } = useGetClient(clientId || "");
 
@@ -141,35 +139,97 @@ export default function ClientDashboard() {
 
   if (!client || !dashboard) return <div>Client not found</div>;
 
+  const setupSteps = [
+    {
+      label: "Brand DNA completed",
+      done: dashboard.hasBrandDna,
+      href: `/clients/${clientId}/brand-dna`,
+    },
+    {
+      label: "AI provider configured",
+      done: false,
+      href: "/settings",
+      hint: "Add API key in Settings",
+    },
+    {
+      label: "Storage configured",
+      done: false,
+      href: "/settings",
+      hint: "Check Supabase storage in Settings",
+    },
+    {
+      label: "First draft created",
+      done: dashboard.totalPosts > 0,
+      href: `/clients/${clientId}/create`,
+    },
+    {
+      label: "Approval / export ready",
+      done: dashboard.approvedCount > 0 || dashboard.publishedCount > 0,
+      href: `/clients/${clientId}/approvals`,
+    },
+  ];
+  const setupComplete = setupSteps.filter((s) => s.done).length;
+  const allDone = setupComplete === setupSteps.length;
+
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Overview</h1>
           <p className="text-muted-foreground mt-1">Dashboard for {client.name}</p>
         </div>
-        <div className="flex gap-2 flex-wrap justify-end">
-          {!dashboard.hasBrandDna && (
-            <Badge variant="destructive" className="gap-1 px-3 py-1">
-              <AlertCircle className="w-3 h-3" />
-              Missing Brand DNA
-            </Badge>
-          )}
-          {dashboard.hasBrandDna && (
-            <Badge className="bg-primary/20 text-primary hover:bg-primary/30 border-none gap-1 px-3 py-1">
-              <CheckCircle2 className="w-3 h-3" />
-              Brand DNA Active
-            </Badge>
-          )}
-          {dashboard.hasStoryline && (
-            <Badge className="bg-primary/20 text-primary hover:bg-primary/30 border-none gap-1 px-3 py-1">
-              <CheckCircle2 className="w-3 h-3" />
-              Storyline Active
-            </Badge>
-          )}
-        </div>
+        <Link href={`/clients/${clientId}/create`}>
+          <Button size="lg" className="gap-2 shadow-md">
+            <Sparkles className="w-4 h-4" />
+            Create Next Post
+          </Button>
+        </Link>
       </div>
+
+      {/* Setup checklist */}
+      {!allDone && (
+        <Card className="border-primary/20 bg-primary/5">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-primary" />
+                Getting Started
+              </span>
+              <span className="text-sm font-normal text-muted-foreground">
+                {setupComplete} / {setupSteps.length} complete
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {setupSteps.map((step) => (
+                <Link key={step.label} href={step.href}>
+                  <div className={cn(
+                    "flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
+                    step.done ? "opacity-60" : "hover:bg-primary/10 cursor-pointer"
+                  )}>
+                    {step.done ? (
+                      <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
+                    ) : (
+                      <Circle className="w-4 h-4 text-muted-foreground shrink-0" />
+                    )}
+                    <span className={cn("text-sm flex-1", step.done && "line-through text-muted-foreground")}>
+                      {step.label}
+                    </span>
+                    {!step.done && step.hint && (
+                      <span className="text-xs text-muted-foreground">{step.hint}</span>
+                    )}
+                    {!step.done && (
+                      <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    )}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stats Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

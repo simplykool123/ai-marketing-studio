@@ -5,27 +5,26 @@ import {
   Home,
   LayoutDashboard,
   Dna,
-  BookOpen,
-  PenTool,
-  PenLine,
-  FileText,
+  Sparkles,
   Calendar as CalendarIcon,
-  BrainCircuit,
   Menu,
   X,
   ImageIcon,
-  Flag,
-  ListOrdered,
   Settings,
   LogOut,
-  Share2,
-  Zap,
-  Sparkles,
   CheckSquare,
-  Megaphone,
+  ChevronDown,
+  ChevronRight,
+  BrainCircuit,
+  Search,
   Newspaper,
   Mail,
-  Search,
+  Share2,
+  ListOrdered,
+  Zap,
+  BookOpen,
+  Flag,
+  FileText,
   Database,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
@@ -48,8 +47,11 @@ async function fetchDashboardPendingCount(clientId: string): Promise<number> {
   }
 }
 
+type NavItem = { href: string; label: string; icon: React.ElementType; badge?: number };
+
 export function Sidebar({ clientId }: { clientId?: string }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const { toast } = useToast();
@@ -76,60 +78,57 @@ export function Sidebar({ clientId }: { clientId?: string }) {
     prevCountRef.current = pendingCount;
   }, [pendingCount, clientId]);
 
-  type NavSection = {
-    label: string;
-    items: { href: string; label: string; icon: React.ElementType; badge?: number }[];
-  };
-
-  const navSections: NavSection[] = clientId ? [
-    {
-      label: "Overview",
-      items: [
-        { href: `/clients/${clientId}`, label: "Dashboard", icon: LayoutDashboard },
-        { href: `/clients/${clientId}/brand-dna`, label: "Brand DNA", icon: Dna },
-        { href: `/clients/${clientId}/storylines`, label: "Storylines", icon: BookOpen },
-        { href: `/clients/${clientId}/social-accounts`, label: "Social Accounts", icon: Share2 },
-      ],
-    },
-    {
-      label: "Content",
-      items: [
-        { href: `/clients/${clientId}/brain`, label: "Brain", icon: BrainCircuit },
-        { href: `/clients/${clientId}/research`, label: "Search", icon: Search },
-        { href: `/clients/${clientId}/create`, label: "AI Create", icon: Sparkles },
-        { href: `/clients/${clientId}/bulk-generate`, label: "Bulk Generate", icon: Zap },
-        { href: `/clients/${clientId}/manual`, label: "Manual Post", icon: PenLine },
-      ],
-    },
-    {
-      label: "Publish",
-      items: [
-        { href: `/clients/${clientId}/campaigns`, label: "Campaigns", icon: Flag },
-        { href: `/clients/${clientId}/blog`, label: "Blog", icon: Newspaper },
-        { href: `/clients/${clientId}/newsletters`, label: "Newsletters", icon: Mail },
-        { href: `/clients/${clientId}/approvals`, label: "Approvals", icon: CheckSquare, badge: pendingCount > 0 ? pendingCount : undefined },
-        { href: `/clients/${clientId}/queue`, label: "Posting Queue", icon: ListOrdered },
-        { href: `/clients/${clientId}/calendar`, label: "Calendar", icon: CalendarIcon },
-        { href: `/clients/${clientId}/drafts`, label: "Drafts", icon: FileText },
-      ],
-    },
-    {
-      label: "Library",
-      items: [
-        { href: `/clients/${clientId}/assets`, label: "Asset Library", icon: ImageIcon },
-        { href: `/clients/${clientId}/memory`, label: "Memory", icon: Database },
-      ],
-    },
-    {
-      label: "Settings",
-      items: [
-        { href: `/clients/${clientId}/settings`, label: "Posting Rules", icon: Settings },
-      ],
-    },
+  const primaryItems: NavItem[] = clientId ? [
+    { href: `/clients/${clientId}`, label: "Dashboard", icon: LayoutDashboard },
+    { href: `/clients/${clientId}/brand-dna`, label: "Brand Setup", icon: Dna },
+    { href: `/clients/${clientId}/create`, label: "Create Content", icon: Sparkles },
+    { href: `/clients/${clientId}/calendar`, label: "Calendar", icon: CalendarIcon },
+    { href: `/clients/${clientId}/approvals`, label: "Approvals", icon: CheckSquare, badge: pendingCount > 0 ? pendingCount : undefined },
+    { href: `/clients/${clientId}/assets`, label: "Assets", icon: ImageIcon },
   ] : [];
+
+  const advancedItems: NavItem[] = clientId ? [
+    { href: `/clients/${clientId}/brain`, label: "Brain", icon: BrainCircuit },
+    { href: `/clients/${clientId}/research`, label: "Search", icon: Search },
+    { href: `/clients/${clientId}/storylines`, label: "Storylines", icon: BookOpen },
+    { href: `/clients/${clientId}/campaigns`, label: "Campaigns", icon: Flag },
+    { href: `/clients/${clientId}/bulk-generate`, label: "Bulk Generate", icon: Zap },
+    { href: `/clients/${clientId}/drafts`, label: "Drafts", icon: FileText },
+    { href: `/clients/${clientId}/blog`, label: "Blog", icon: Newspaper },
+    { href: `/clients/${clientId}/newsletters`, label: "Newsletters", icon: Mail },
+    { href: `/clients/${clientId}/social-accounts`, label: "Social Accounts", icon: Share2 },
+    { href: `/clients/${clientId}/queue`, label: "Posting Queue", icon: ListOrdered },
+    { href: `/clients/${clientId}/memory`, label: "Memory", icon: Database },
+  ] : [];
+
+  function NavLink({ item }: { item: NavItem }) {
+    const Icon = item.icon;
+    const isActive = location === item.href;
+    return (
+      <Link
+        href={item.href}
+        onClick={() => setIsOpen(false)}
+        className={cn(
+          "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
+          isActive
+            ? "bg-primary text-primary-foreground"
+            : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        )}
+      >
+        <Icon className="w-4 h-4 shrink-0" />
+        <span className="flex-1">{item.label}</span>
+        {item.badge !== undefined && item.badge > 0 && (
+          <Badge variant="destructive" className="h-5 min-w-5 px-1.5 text-[10px] rounded-full">
+            {item.badge}
+          </Badge>
+        )}
+      </Link>
+    );
+  }
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full bg-sidebar border-r border-sidebar-border text-sidebar-foreground w-64 overflow-y-auto">
+      {/* Header */}
       <div className="flex items-center justify-between p-4 pb-2">
         <Link href="/" className="flex items-center gap-2 font-bold text-xl text-primary">
           <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center">
@@ -142,6 +141,7 @@ export function Sidebar({ clientId }: { clientId?: string }) {
         </Button>
       </div>
 
+      {/* Client chip */}
       {client && (
         <div className="mx-4 mb-3 p-3 rounded-lg bg-sidebar-accent flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 border border-sidebar-border">
@@ -167,58 +167,68 @@ export function Sidebar({ clientId }: { clientId?: string }) {
         </div>
       )}
 
-      <nav className="flex-1 px-3 pb-4 space-y-4">
-        <Link href="/" className={cn(
-          "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
-          location === "/" ? "bg-primary text-primary-foreground" : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        )}>
+      <nav className="flex-1 px-3 pb-4 space-y-0.5">
+        {/* All Clients */}
+        <Link
+          href="/"
+          className={cn(
+            "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors mb-2",
+            location === "/"
+              ? "bg-primary text-primary-foreground"
+              : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          )}
+        >
           <Home className="w-4 h-4" />
           All Clients
         </Link>
 
-        {navSections.map((section) => (
-          <div key={section.label}>
-            <div className="px-3 py-1 text-[10px] uppercase tracking-widest text-muted-foreground/70 font-semibold">
-              {section.label}
-            </div>
-            <div className="space-y-0.5 mt-1">
-              {section.items.map((link) => {
-                const Icon = link.icon;
-                const isActive = location === link.href;
-                return (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    onClick={() => setIsOpen(false)}
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
-                      isActive ? "bg-primary text-primary-foreground" : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                    )}
-                  >
-                    <Icon className="w-4 h-4 shrink-0" />
-                    <span className="flex-1">{link.label}</span>
-                    {link.badge !== undefined && link.badge > 0 && (
-                      <Badge
-                        variant="destructive"
-                        className="h-5 min-w-5 px-1.5 text-[10px] rounded-full"
-                      >
-                        {link.badge}
-                      </Badge>
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
+        {/* Primary nav */}
+        {primaryItems.map((item) => (
+          <NavLink key={item.href} item={item} />
         ))}
+
+        {/* Settings always visible */}
+        {clientId && (
+          <NavLink item={{ href: `/clients/${clientId}/settings`, label: "Settings", icon: Settings }} />
+        )}
+
+        {/* Advanced / Coming Later */}
+        {clientId && (
+          <div className="pt-2">
+            <button
+              onClick={() => setAdvancedOpen((v) => !v)}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-[10px] uppercase tracking-widest text-muted-foreground/70 font-semibold hover:text-muted-foreground transition-colors rounded-md"
+            >
+              {advancedOpen ? (
+                <ChevronDown className="w-3 h-3" />
+              ) : (
+                <ChevronRight className="w-3 h-3" />
+              )}
+              Advanced
+              <span className="ml-1 text-[9px] bg-muted px-1 py-0.5 rounded text-muted-foreground/60 normal-case tracking-normal font-normal">
+                coming later
+              </span>
+            </button>
+            {advancedOpen && (
+              <div className="space-y-0.5 mt-1">
+                {advancedItems.map((item) => (
+                  <NavLink key={item.href} item={item} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </nav>
 
+      {/* Footer */}
       <div className="mt-auto pt-3 border-t border-sidebar-border space-y-0.5 px-3 pb-3">
         <Link
           href="/settings"
           className={cn(
             "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
-            location === "/settings" ? "bg-primary text-primary-foreground" : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            location === "/settings"
+              ? "bg-primary text-primary-foreground"
+              : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
           )}
         >
           <Settings className="w-4 h-4 shrink-0" />
@@ -262,8 +272,11 @@ export function Sidebar({ clientId }: { clientId?: string }) {
 
       {/* Mobile Drawer */}
       {isOpen && (
-        <div className="md:hidden fixed inset-0 z-50 bg-black/30 backdrop-blur-sm" onClick={() => setIsOpen(false)}>
-          <div className="fixed inset-y-0 left-0 w-64 shadow-xl" onClick={e => e.stopPropagation()}>
+        <div
+          className="md:hidden fixed inset-0 z-50 bg-black/30 backdrop-blur-sm"
+          onClick={() => setIsOpen(false)}
+        >
+          <div className="fixed inset-y-0 left-0 w-64 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <SidebarContent />
           </div>
         </div>

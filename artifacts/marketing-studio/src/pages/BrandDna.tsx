@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "wouter";
+import { useAuth } from "@/context/AuthContext";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -103,6 +104,7 @@ async function getUploadErrorMessage(res: Response): Promise<string> {
 
 export default function BrandDna() {
   const { clientId } = useParams<{ clientId: string }>();
+  const { token } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -173,7 +175,11 @@ export default function BrandDna() {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await fetch(`/api/clients/${clientId}/upload/logo`, { method: "POST", body: fd });
+      const res = await fetch(`/api/clients/${clientId}/upload/logo`, {
+        method: "POST",
+        body: fd,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (!res.ok) throw new Error(await getUploadErrorMessage(res));
       queryClient.invalidateQueries({ queryKey: getGetClientQueryKey(clientId) });
       toast({ title: "Logo uploaded successfully" });
@@ -193,13 +199,18 @@ export default function BrandDna() {
       fd.append("file", file);
       fd.append("assetType", assetType);
       if (assetNotes.trim()) fd.append("notes", assetNotes.trim());
-      const res = await fetch(`/api/clients/${clientId}/upload/asset`, { method: "POST", body: fd });
-      if (!res.ok) throw new Error("Upload failed");
+      const res = await fetch(`/api/clients/${clientId}/upload/asset`, {
+        method: "POST",
+        body: fd,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(await getUploadErrorMessage(res));
       queryClient.invalidateQueries({ queryKey: getListBrandAssetsQueryKey(clientId) });
       setAssetNotes("");
       toast({ title: "Asset uploaded" });
-    } catch {
-      toast({ title: "Failed to upload asset", variant: "destructive" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Upload failed";
+      toast({ title: "Failed to upload asset", description: message, variant: "destructive" });
     } finally {
       setIsUploadingAsset(false);
     }

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
+import { useAuth } from "@/context/AuthContext";
 import PlatformPreview from "@/components/PlatformPreview";
 import {
   useGenerateCaptions,
@@ -38,6 +39,7 @@ const PLATFORMS = [
 export default function CreatePost() {
   const { clientId } = useParams<{ clientId: string }>();
   const [, setLocation] = useLocation();
+  const { token } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -124,13 +126,21 @@ export default function CreatePost() {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await fetch(`/api/clients/${clientId}/posts/upload-image`, { method: "POST", body: fd });
-      if (!res.ok) throw new Error("Upload failed");
+      const res = await fetch(`/api/clients/${clientId}/posts/upload-image`, {
+        method: "POST",
+        body: fd,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(data?.error ?? `Upload failed (${res.status})`);
+      }
       const { url } = await res.json() as { url: string };
       setSelectedImageUrl(url);
       toast({ title: "Image uploaded" });
-    } catch {
-      toast({ title: "Failed to upload image", variant: "destructive" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Upload failed";
+      toast({ title: "Failed to upload image", description: message, variant: "destructive" });
     } finally {
       setIsUploadingImage(false);
     }
