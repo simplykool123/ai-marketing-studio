@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { postsTable, clientsTable, postingLogsTable, campaignsTable } from "@workspace/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import {
   CreatePostBody,
   UpdatePostBody,
@@ -77,7 +77,7 @@ router.get("/clients/:clientId/posts/export", async (req, res) => {
       .where(
         and(
           eq(postsTable.clientId, req.params.clientId),
-          eq(postsTable.status, "approved")
+          inArray(postsTable.status, ["approved", "export_ready"])
         )
       )
       .orderBy(postsTable.scheduledAt);
@@ -117,7 +117,7 @@ router.get("/clients/:clientId/export/approved", async (req, res) => {
       .where(
         and(
           eq(postsTable.clientId, req.params.clientId),
-          eq(postsTable.status, "approved")
+          inArray(postsTable.status, ["approved", "export_ready"])
         )
       )
       .orderBy(postsTable.scheduledAt);
@@ -197,7 +197,17 @@ router.patch("/clients/:clientId/posts/:postId/status", requireClientRole(APPROV
       scheduledAt?: string;
       platform?: string;
     };
-    const validStatuses = ["draft", "approved", "scheduled", "published", "rejected"];
+    const validStatuses = [
+      "draft",
+      "in_review",
+      "approved",
+      "export_ready",
+      "scheduled",
+      "posted",
+      "published",
+      "failed",
+      "rejected",
+    ];
     if (!status || !validStatuses.includes(status)) {
       res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` });
       return;
@@ -278,7 +288,7 @@ router.post("/clients/:clientId/posts/bulk-approve", requireClientRole(APPROVE_C
       const [post] = await db
         .update(postsTable)
         .set({
-          status: parsedDate ? "scheduled" : "approved",
+          status: parsedDate ? "scheduled" : "export_ready",
           ...(parsedDate ? { scheduledAt: parsedDate } : {}),
           ...(platform ? { platform } : {}),
           updatedAt: new Date(),
@@ -296,15 +306,17 @@ router.post("/clients/:clientId/posts/bulk-approve", requireClientRole(APPROVE_C
 router.post("/clients/:clientId/posts/:postId/approve", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res) => {
   try {
     const body = ApprovePostBody.parse(req.body);
-    const scheduledAt = new Date(body.scheduledAt);
+    const scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null;
+    const updates: Record<string, unknown> = {
+      status: scheduledAt ? "scheduled" : "export_ready",
+      ...(scheduledAt ? { scheduledAt } : {}),
+      ...(body.platform ? { platform: body.platform } : {}),
+      updatedAt: new Date(),
+    };
+
     const [post] = await db
       .update(postsTable)
-      .set({
-        status: "scheduled",
-        scheduledAt,
-        platform: body.platform ?? "instagram",
-        updatedAt: new Date(),
-      })
+      .set(updates)
       .where(
         and(
           eq(postsTable.id, req.params.postId),
@@ -332,7 +344,7 @@ router.post("/clients/:clientId/posts/:postId/mock-post", requireClientRole(APPR
 
     const [updated] = await db
       .update(postsTable)
-      .set({ status: "published", updatedAt: new Date() })
+      .set({ status: "posted", updatedAt: new Date() })
       .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
       .returning();
 
@@ -358,7 +370,7 @@ router.post("/clients/:clientId/posts/:postId/mark-posted", requireClientRole(AP
 
     const [updated] = await db
       .update(postsTable)
-      .set({ status: "published", updatedAt: new Date() })
+      .set({ status: "posted", updatedAt: new Date() })
       .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
       .returning();
 
@@ -403,7 +415,7 @@ router.post("/clients/:clientId/webhook/export", requireClientRole(APPROVE_CONTE
       posts = await db
         .select()
         .from(postsTable)
-        .where(and(eq(postsTable.clientId, clientId), eq(postsTable.status, "approved")));
+        .where(and(eq(postsTable.clientId, clientId), inArray(postsTable.status, ["approved", "export_ready"])));
     }
 
     const payload = {

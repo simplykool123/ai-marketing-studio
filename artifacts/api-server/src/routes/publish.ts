@@ -32,7 +32,7 @@ router.post("/clients/:clientId/posts/:postId/publish", requireClientRole(APPROV
       return;
     }
 
-    if (!["approved", "scheduled", "failed"].includes(post.status)) {
+    if (!["approved", "export_ready", "scheduled", "failed"].includes(post.status)) {
       res.status(400).json({
         error: `Cannot publish a post with status '${post.status}'. Approve it first.`,
       });
@@ -88,7 +88,7 @@ router.post("/clients/:clientId/posts/:postId/publish", requireClientRole(APPROV
     const [updated] = await db
       .update(postsTable)
       .set({
-        status: "published",
+        status: "posted",
         publishedAt: result.publishedAt,
         publishedUrl: result.publishedUrl,
         publishError: null,

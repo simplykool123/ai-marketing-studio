@@ -24,14 +24,17 @@ const PLATFORM_COLORS: Record<string, string> = {
   facebook: "bg-blue-50 text-blue-700 border-blue-200",
   twitter: "bg-sky-50 text-sky-700 border-sky-200",
   linkedin: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  youtube: "bg-red-50 text-red-700 border-red-200",
   blog: "bg-amber-50 text-amber-700 border-amber-200",
   newsletter: "bg-violet-50 text-violet-700 border-violet-200",
 };
 
 const PLATFORM_LABELS: Record<string, string> = {
-  instagram: "Instagram", facebook: "Facebook", twitter: "Twitter/X",
-  linkedin: "LinkedIn", blog: "Blog", newsletter: "Newsletter",
+  instagram: "Instagram", facebook: "Facebook", twitter: "X/Twitter",
+  linkedin: "LinkedIn", youtube: "YouTube", blog: "Blog", newsletter: "Newsletter",
 };
+
+const QUEUE_STATUSES = ["approved", "export_ready", "scheduled", "failed"];
 
 const BASE = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
 
@@ -64,7 +67,7 @@ async function webhookExportApi(clientId: string, postId: string) {
 }
 
 function formatSchedule(dateStr?: string): { label: string; urgent: boolean } {
-  if (!dateStr) return { label: "Unscheduled", urgent: false };
+  if (!dateStr) return { label: "Needs schedule/export", urgent: false };
   const d = new Date(dateStr);
   if (isPast(d) && !isToday(d)) return { label: `Overdue — ${format(d, "MMM d")}`, urgent: true };
   if (isToday(d)) return { label: `Today at ${format(d, "h:mm a")}`, urgent: true };
@@ -76,7 +79,7 @@ export default function PostingQueue() {
   const { clientId } = useParams<{ clientId: string }>();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [filter, setFilter] = useState<"all" | "approved" | "scheduled" | "published" | "failed">("all");
+  const [filter, setFilter] = useState<"all" | "approved" | "export_ready" | "scheduled" | "failed">("all");
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(
     () => typeof window !== "undefined" && window.localStorage.getItem("posting-mock-banner-dismissed") === "1"
   );
@@ -86,12 +89,12 @@ export default function PostingQueue() {
     try { window.localStorage.setItem("posting-mock-banner-dismissed", "1"); } catch {}
   };
 
-  const { data: posts = [], isLoading } = useListPosts(
-    clientId ?? "",
-    { status: filter === "all" ? undefined : filter }
-  );
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: getListPostsQueryKey(clientId!, {}) });
+  const { data: posts = [], isLoading } = useListPosts(clientId ?? "");
+  const invalidate = () => {
+    if (!clientId) return;
+    queryClient.invalidateQueries({ queryKey: getListPostsQueryKey(clientId) });
+    queryClient.invalidateQueries({ queryKey: ["enhanced-dashboard", clientId] });
+  };
 
   const mockPostMutation = useMutation({
     mutationFn: (postId: string) => mockPostApi(clientId!, postId),
@@ -99,7 +102,7 @@ export default function PostingQueue() {
       invalidate();
       toast({
         title: "Demo post simulated",
-        description: "Status was set to published locally — nothing was sent to any platform.",
+        description: "Status was set to posted locally — nothing was sent to any platform.",
       });
     },
     onError: () => toast({ title: "Failed to simulate mock post", variant: "destructive" }),
@@ -123,7 +126,11 @@ export default function PostingQueue() {
     onError: () => toast({ title: "Failed to webhook export", variant: "destructive" }),
   });
 
-  const sortedPosts = [...(posts as any[])].sort((a, b) => {
+  const queuePosts = (posts as any[]).filter((post) =>
+    QUEUE_STATUSES.includes(post.status) && (filter === "all" || post.status === filter)
+  );
+
+  const sortedPosts = [...queuePosts].sort((a, b) => {
     if (!a.scheduledAt && !b.scheduledAt) return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     if (!a.scheduledAt) return 1;
     if (!b.scheduledAt) return -1;
@@ -154,7 +161,7 @@ export default function PostingQueue() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Posting Queue</h1>
-            <p className="text-muted-foreground mt-1">All scheduled and approved posts in order</p>
+            <p className="text-muted-foreground mt-1">Approved, export-ready, scheduled, and failed posts</p>
           </div>
           <Select value={filter} onValueChange={v => setFilter(v as typeof filter)}>
             <SelectTrigger className="w-36 h-8 text-xs">
@@ -163,8 +170,8 @@ export default function PostingQueue() {
             <SelectContent>
               <SelectItem value="all">All posts</SelectItem>
               <SelectItem value="approved">Approved</SelectItem>
+              <SelectItem value="export_ready">Export Ready</SelectItem>
               <SelectItem value="scheduled">Scheduled</SelectItem>
-              <SelectItem value="published">Published</SelectItem>
               <SelectItem value="failed">Failed</SelectItem>
             </SelectContent>
           </Select>
@@ -189,8 +196,8 @@ export default function PostingQueue() {
             {sortedPosts.map((post: any, idx: number) => {
               const schedule = formatSchedule(post.scheduledAt);
               const isFailed = post.status === "failed";
-              const isPublished = post.status === "published";
-              const canAct = ["approved", "scheduled", "failed"].includes(post.status);
+              const isPublished = post.status === "posted" || post.status === "published";
+              const canAct = ["approved", "export_ready", "scheduled", "failed"].includes(post.status);
               const isBusy =
                 (mockPostMutation.isPending && mockPostMutation.variables === post.id) ||
                 (markPostedMutation.isPending && markPostedMutation.variables === post.id) ||
@@ -199,7 +206,7 @@ export default function PostingQueue() {
               return (
                 <Card key={post.id} className={cn(
                   "transition-shadow hover:shadow-sm",
-                  schedule.urgent && post.status !== "published" && "border-amber-200",
+                  schedule.urgent && !isPublished && "border-amber-200",
                   isFailed && "border-red-200"
                 )}>
                   <CardContent className="flex items-center gap-4 p-4">
@@ -224,11 +231,11 @@ export default function PostingQueue() {
                         )}
                         <Badge variant="outline" className={cn(
                           "text-xs",
-                          isPublished && "bg-green-50 text-green-700",
                           post.status === "approved" && "bg-blue-50 text-blue-700",
+                          post.status === "export_ready" && "bg-emerald-50 text-emerald-700",
                           isFailed && "bg-red-50 text-red-700"
                         )}>
-                          {post.status}
+                          {post.status === "export_ready" ? "export ready" : post.status}
                         </Badge>
                       </div>
                       <p className="text-sm font-medium truncate">{post.topic}</p>

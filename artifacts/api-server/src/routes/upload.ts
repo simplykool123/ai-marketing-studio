@@ -28,7 +28,7 @@ class SafeUploadError extends Error {
 
 let bucketReadyPromise: Promise<void> | null = null;
 
-async function ensureStorageBucket(): Promise<void> {
+export async function ensureStorageBucket(): Promise<void> {
   bucketReadyPromise ??= ensureStorageBucketOnce().catch((err) => {
     bucketReadyPromise = null;
     throw err;

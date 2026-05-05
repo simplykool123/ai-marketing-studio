@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from "react";
 import { useParams } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
-import { useListPosts, useUpdatePost } from "@workspace/api-client-react";
+import { getListPostsQueryKey, useListPosts, useUpdatePost } from "@workspace/api-client-react";
 import type { Post } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,22 +24,16 @@ import {
   isToday,
   getDay,
 } from "date-fns";
-import { CalendarClock, Clock, ChevronLeft, ChevronRight, GripVertical, Info, X } from "lucide-react";
+import { Clock, ChevronLeft, ChevronRight, GripVertical, Info, X } from "lucide-react";
 
 const PLATFORM_COLORS: Record<string, string> = {
   instagram: "bg-pink-500/80",
   facebook: "bg-blue-500/80",
   twitter: "bg-sky-500/80",
   linkedin: "bg-indigo-500/80",
+  youtube: "bg-red-500/80",
   blog: "bg-emerald-500/80",
   newsletter: "bg-amber-500/80",
-};
-
-const STATUS_DOT: Record<string, string> = {
-  approved: "bg-emerald-400",
-  scheduled: "bg-blue-400",
-  published: "bg-purple-400",
-  draft: "bg-yellow-400",
 };
 
 export default function Calendar() {
@@ -67,7 +61,8 @@ export default function Calendar() {
     posts?.filter(
       (p) =>
         p.clientId === clientId &&
-        ["approved", "scheduled", "published"].includes(p.status ?? "")
+        Boolean(p.scheduledAt) &&
+        ["approved", "export_ready", "scheduled"].includes(p.status ?? "")
     ) ?? [];
 
   const getPostsForDay = (day: Date) =>
@@ -130,11 +125,12 @@ export default function Calendar() {
       {
         clientId: clientId ?? "",
         postId,
-        data: { scheduledAt: newDate.toISOString() },
+        data: { scheduledAt: newDate.toISOString(), status: "scheduled" },
       },
       {
         onSuccess: () => {
-          qc.invalidateQueries({ queryKey: ["listPosts", clientId] });
+          if (clientId) qc.invalidateQueries({ queryKey: getListPostsQueryKey(clientId) });
+          qc.invalidateQueries({ queryKey: ["enhanced-dashboard", clientId] });
           toast({
             title: "Post rescheduled",
             description: `Moved to ${format(newDate, "MMMM d, yyyy 'at' h:mm a")}`,

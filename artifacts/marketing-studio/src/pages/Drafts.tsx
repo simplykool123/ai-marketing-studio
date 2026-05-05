@@ -55,7 +55,9 @@ const PLATFORMS = [
   { value: "facebook", label: "Facebook" },
   { value: "twitter", label: "Twitter / X" },
   { value: "linkedin", label: "LinkedIn" },
+  { value: "youtube", label: "YouTube" },
   { value: "blog", label: "Blog" },
+  { value: "newsletter", label: "Newsletter" },
 ];
 
 const PLATFORM_COLORS: Record<string, string> = {
@@ -63,7 +65,9 @@ const PLATFORM_COLORS: Record<string, string> = {
   facebook: "bg-blue-50 text-blue-700 border-blue-200",
   twitter: "bg-sky-50 text-sky-700 border-sky-200",
   linkedin: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  youtube: "bg-red-50 text-red-700 border-red-200",
   blog: "bg-amber-50 text-amber-700 border-amber-200",
+  newsletter: "bg-violet-50 text-violet-700 border-violet-200",
 };
 
 type Post = {
@@ -149,9 +153,9 @@ export default function Drafts() {
 
   const drafts = (posts?.filter(p => p.status === "draft") || []) as Post[];
   const approved = (posts?.filter(p =>
-    p.status === "approved" || p.status === "scheduled" || p.status === "failed"
+    p.status === "approved" || p.status === "export_ready" || p.status === "scheduled" || p.status === "failed"
   ) || []) as Post[];
-  const published = (posts?.filter(p => p.status === "published") || []) as Post[];
+  const published = (posts?.filter(p => p.status === "posted" || p.status === "published") || []) as Post[];
 
   const openEdit = (post: Post) => {
     setEditingPost(post);
@@ -196,7 +200,7 @@ export default function Drafts() {
       invalidatePosts();
       toast({
         title: "Demo post simulated",
-        description: "Status was set to published locally — nothing was sent to any platform.",
+        description: "Status was set to posted locally — nothing was sent to any platform.",
       });
     },
     onError: () => toast({ title: "Failed to simulate mock post", variant: "destructive" }),
@@ -691,15 +695,18 @@ function PostCard({
   actionBar?: ReactNode;
 }) {
   const isDraft = post.status === "draft";
-  const isApprovedOrScheduled = post.status === "approved" || post.status === "scheduled";
+  const isApprovedOrScheduled = post.status === "approved" || post.status === "export_ready" || post.status === "scheduled";
   const isFailed = post.status === "failed";
-  const isPublished = post.status === "published";
+  const isPublished = post.status === "posted" || post.status === "published";
   const platformClass = PLATFORM_COLORS[post.platform || ""] || "bg-muted text-muted-foreground";
 
   const statusBadgeClass = {
     draft: "",
+    in_review: "bg-amber-50 text-amber-700 border border-amber-200",
     approved: "bg-blue-50 text-blue-700 border border-blue-200",
+    export_ready: "bg-emerald-50 text-emerald-700 border border-emerald-200",
     scheduled: "bg-primary/10 text-primary border border-primary/20",
+    posted: "bg-green-50 text-green-700 border border-green-200",
     published: "bg-green-50 text-green-700 border border-green-200",
     failed: "bg-red-50 text-red-700 border border-red-200",
   }[post.status] ?? "";

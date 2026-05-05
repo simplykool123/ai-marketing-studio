@@ -317,7 +317,7 @@ export const ListPostsParams = zod.object({
 
 export const ListPostsQueryParams = zod.object({
   status: zod
-    .enum(["draft", "approved", "scheduled", "published", "failed"])
+    .enum(["draft", "in_review", "approved", "export_ready", "scheduled", "posted", "published", "failed"])
     .optional(),
 });
 
@@ -331,8 +331,11 @@ export const ListPostsResponseItem = zod.object({
   selectedImageUrl: zod.string().optional(),
   status: zod.enum([
     "draft",
+    "in_review",
     "approved",
+    "export_ready",
     "scheduled",
+    "posted",
     "published",
     "failed",
     "rejected",
@@ -344,6 +347,7 @@ export const ListPostsResponseItem = zod.object({
       "facebook",
       "twitter",
       "linkedin",
+      "youtube",
       "blog",
       "newsletter",
     ])
@@ -379,6 +383,7 @@ export const CreatePostBody = zod.object({
       "facebook",
       "twitter",
       "linkedin",
+      "youtube",
       "blog",
       "newsletter",
     ])
@@ -407,8 +412,11 @@ export const GetPostResponse = zod.object({
   selectedImageUrl: zod.string().optional(),
   status: zod.enum([
     "draft",
+    "in_review",
     "approved",
+    "export_ready",
     "scheduled",
+    "posted",
     "published",
     "failed",
     "rejected",
@@ -420,6 +428,7 @@ export const GetPostResponse = zod.object({
       "facebook",
       "twitter",
       "linkedin",
+      "youtube",
       "blog",
       "newsletter",
     ])
@@ -450,7 +459,7 @@ export const UpdatePostBody = zod.object({
   hashtags: zod.string().optional(),
   selectedImageUrl: zod.string().optional(),
   status: zod
-    .enum(["draft", "approved", "scheduled", "published", "failed", "rejected"])
+    .enum(["draft", "in_review", "approved", "export_ready", "scheduled", "posted", "published", "failed", "rejected"])
     .optional(),
   scheduledAt: zod.string().optional(),
   platform: zod
@@ -459,6 +468,7 @@ export const UpdatePostBody = zod.object({
       "facebook",
       "twitter",
       "linkedin",
+      "youtube",
       "blog",
       "newsletter",
     ])
@@ -479,8 +489,11 @@ export const UpdatePostResponse = zod.object({
   selectedImageUrl: zod.string().optional(),
   status: zod.enum([
     "draft",
+    "in_review",
     "approved",
+    "export_ready",
     "scheduled",
+    "posted",
     "published",
     "failed",
     "rejected",
@@ -492,6 +505,7 @@ export const UpdatePostResponse = zod.object({
       "facebook",
       "twitter",
       "linkedin",
+      "youtube",
       "blog",
       "newsletter",
     ])
@@ -534,8 +548,11 @@ export const PublishPostResponse = zod.object({
   selectedImageUrl: zod.string().optional(),
   status: zod.enum([
     "draft",
+    "in_review",
     "approved",
+    "export_ready",
     "scheduled",
+    "posted",
     "published",
     "failed",
     "rejected",
@@ -547,6 +564,7 @@ export const PublishPostResponse = zod.object({
       "facebook",
       "twitter",
       "linkedin",
+      "youtube",
       "blog",
       "newsletter",
     ])
@@ -572,9 +590,9 @@ export const ApprovePostParams = zod.object({
 });
 
 export const ApprovePostBody = zod.object({
-  scheduledAt: zod.string(),
+  scheduledAt: zod.string().optional(),
   platform: zod
-    .enum(["instagram", "facebook", "twitter", "linkedin", "blog"])
+    .enum(["instagram", "facebook", "twitter", "linkedin", "youtube", "blog", "newsletter"])
     .optional(),
 });
 
@@ -588,8 +606,11 @@ export const ApprovePostResponse = zod.object({
   selectedImageUrl: zod.string().optional(),
   status: zod.enum([
     "draft",
+    "in_review",
     "approved",
+    "export_ready",
     "scheduled",
+    "posted",
     "published",
     "failed",
     "rejected",
@@ -601,6 +622,7 @@ export const ApprovePostResponse = zod.object({
       "facebook",
       "twitter",
       "linkedin",
+      "youtube",
       "blog",
       "newsletter",
     ])
@@ -635,8 +657,11 @@ export const RejectPostResponse = zod.object({
   selectedImageUrl: zod.string().optional(),
   status: zod.enum([
     "draft",
+    "in_review",
     "approved",
+    "export_ready",
     "scheduled",
+    "posted",
     "published",
     "failed",
     "rejected",
@@ -648,6 +673,7 @@ export const RejectPostResponse = zod.object({
       "facebook",
       "twitter",
       "linkedin",
+      "youtube",
       "blog",
       "newsletter",
     ])
@@ -680,6 +706,7 @@ export const BulkApprovePostsBody = zod.object({
       "facebook",
       "twitter",
       "linkedin",
+      "youtube",
       "blog",
       "newsletter",
     ])
@@ -941,6 +968,8 @@ export const GetClientDashboardResponse = zod.object({
   publishedCount: zod.number(),
   hasStoryline: zod.boolean(),
   hasBrandDna: zod.boolean(),
+  storageReady: zod.boolean(),
+  storageStatusMessage: zod.string(),
   recentPosts: zod.array(
     zod.object({
       id: zod.string(),
@@ -1506,8 +1535,11 @@ export const RegeneratePostCopyResponse = zod.object({
   selectedImageUrl: zod.string().optional(),
   status: zod.enum([
     "draft",
+    "in_review",
     "approved",
+    "export_ready",
     "scheduled",
+    "posted",
     "published",
     "failed",
     "rejected",
@@ -1519,6 +1551,7 @@ export const RegeneratePostCopyResponse = zod.object({
       "facebook",
       "twitter",
       "linkedin",
+      "youtube",
       "blog",
       "newsletter",
     ])
@@ -1553,8 +1586,11 @@ export const GeneratePostImageResponse = zod.object({
   selectedImageUrl: zod.string().optional(),
   status: zod.enum([
     "draft",
+    "in_review",
     "approved",
+    "export_ready",
     "scheduled",
+    "posted",
     "published",
     "failed",
     "rejected",
@@ -1566,6 +1602,7 @@ export const GeneratePostImageResponse = zod.object({
       "facebook",
       "twitter",
       "linkedin",
+      "youtube",
       "blog",
       "newsletter",
     ])

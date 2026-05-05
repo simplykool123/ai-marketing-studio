@@ -127,8 +127,11 @@ export type PostStatus = (typeof PostStatus)[keyof typeof PostStatus];
 
 export const PostStatus = {
   draft: "draft",
+  in_review: "in_review",
   approved: "approved",
+  export_ready: "export_ready",
   scheduled: "scheduled",
+  posted: "posted",
   published: "published",
   failed: "failed",
   rejected: "rejected",
@@ -141,6 +144,7 @@ export const PostPlatform = {
   facebook: "facebook",
   twitter: "twitter",
   linkedin: "linkedin",
+  youtube: "youtube",
   blog: "blog",
   newsletter: "newsletter",
 } as const;
@@ -193,6 +197,7 @@ export const CreatePostBodyPlatform = {
   facebook: "facebook",
   twitter: "twitter",
   linkedin: "linkedin",
+  youtube: "youtube",
   blog: "blog",
   newsletter: "newsletter",
 } as const;
@@ -223,8 +228,11 @@ export type UpdatePostBodyStatus =
 
 export const UpdatePostBodyStatus = {
   draft: "draft",
+  in_review: "in_review",
   approved: "approved",
+  export_ready: "export_ready",
   scheduled: "scheduled",
+  posted: "posted",
   published: "published",
   failed: "failed",
   rejected: "rejected",
@@ -238,6 +246,7 @@ export const UpdatePostBodyPlatform = {
   facebook: "facebook",
   twitter: "twitter",
   linkedin: "linkedin",
+  youtube: "youtube",
   blog: "blog",
   newsletter: "newsletter",
 } as const;
@@ -273,6 +282,7 @@ export const BulkApproveBodyPlatform = {
   facebook: "facebook",
   twitter: "twitter",
   linkedin: "linkedin",
+  youtube: "youtube",
   blog: "blog",
   newsletter: "newsletter",
 } as const;
@@ -332,11 +342,13 @@ export const ApprovePostBodyPlatform = {
   facebook: "facebook",
   twitter: "twitter",
   linkedin: "linkedin",
+  youtube: "youtube",
   blog: "blog",
+  newsletter: "newsletter",
 } as const;
 
 export interface ApprovePostBody {
-  scheduledAt: string;
+  scheduledAt?: string;
   platform?: ApprovePostBodyPlatform;
 }
 
@@ -506,6 +518,8 @@ export interface ClientDashboard {
   publishedCount: number;
   hasStoryline: boolean;
   hasBrandDna: boolean;
+  storageReady: boolean;
+  storageStatusMessage: string;
   recentPosts: Post[];
   upcomingPosts: Post[];
   connectedAccounts: SocialAccount[];
@@ -761,8 +775,11 @@ export type ListPostsStatus =
 
 export const ListPostsStatus = {
   draft: "draft",
+  in_review: "in_review",
   approved: "approved",
+  export_ready: "export_ready",
   scheduled: "scheduled",
+  posted: "posted",
   published: "published",
   failed: "failed",
 } as const;

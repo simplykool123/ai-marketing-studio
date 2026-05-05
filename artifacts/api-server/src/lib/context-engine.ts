@@ -99,7 +99,8 @@ Narrative: ${activeStoryline.narrative}`);
 export async function buildImagePrompt(
   clientId: string,
   caption: string,
-  overrideVisualStyle?: string
+  overrideVisualStyle?: string,
+  options: { useBrandDna?: boolean; useBrandColors?: boolean } = {},
 ): Promise<string> {
   const [brandDna] = await db
     .select()
@@ -107,11 +108,13 @@ export async function buildImagePrompt(
     .where(eq(brandDnaTable.clientId, clientId))
     .limit(1);
 
-  const visualStyle = overrideVisualStyle ?? brandDna?.visualStyle ?? "";
-  const primaryColor = brandDna?.primaryColor;
-  const secondaryColor = brandDna?.secondaryColor;
-  const accentColor = brandDna?.accentColor;
-  const designNotes = brandDna?.designNotes;
+  const useBrandDna = options.useBrandDna !== false;
+  const useBrandColors = useBrandDna && options.useBrandColors !== false;
+  const visualStyle = overrideVisualStyle ?? (useBrandDna ? brandDna?.visualStyle : "") ?? "";
+  const primaryColor = useBrandColors ? brandDna?.primaryColor : undefined;
+  const secondaryColor = useBrandColors ? brandDna?.secondaryColor : undefined;
+  const accentColor = useBrandColors ? brandDna?.accentColor : undefined;
+  const designNotes = useBrandDna ? brandDna?.designNotes : undefined;
 
   const colorDesc = [primaryColor, secondaryColor, accentColor].filter(Boolean).join(", ");
 

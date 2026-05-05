@@ -434,7 +434,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [draft, approved, scheduled, published, failed]
+            enum: [draft, in_review, approved, export_ready, scheduled, posted, published, failed]
       responses:
         "200":
           description: Posts
@@ -1593,12 +1593,12 @@ components:
           type: string
         status:
           type: string
-          enum: [draft, approved, scheduled, published, failed, rejected]
+          enum: [draft, in_review, approved, export_ready, scheduled, posted, published, failed, rejected]
         scheduledAt:
           type: string
         platform:
           type: string
-          enum: [instagram, facebook, twitter, linkedin, blog, newsletter]
+          enum: [instagram, facebook, twitter, linkedin, youtube, blog, newsletter]
         postType:
           type: string
           enum: [social, blog, newsletter]
@@ -1636,7 +1636,7 @@ components:
           type: string
         platform:
           type: string
-          enum: [instagram, facebook, twitter, linkedin, blog, newsletter]
+          enum: [instagram, facebook, twitter, linkedin, youtube, blog, newsletter]
         campaignId:
           type: string
         postType:
@@ -1661,12 +1661,12 @@ components:
           type: string
         status:
           type: string
-          enum: [draft, approved, scheduled, published, failed, rejected]
+          enum: [draft, in_review, approved, export_ready, scheduled, posted, published, failed, rejected]
         scheduledAt:
           type: string
         platform:
           type: string
-          enum: [instagram, facebook, twitter, linkedin, blog, newsletter]
+          enum: [instagram, facebook, twitter, linkedin, youtube, blog, newsletter]
         campaignId:
           type: string
         postType:
@@ -1688,7 +1688,7 @@ components:
           type: string
         platform:
           type: string
-          enum: [instagram, facebook, twitter, linkedin, blog, newsletter]
+          enum: [instagram, facebook, twitter, linkedin, youtube, blog, newsletter]
       required: [postIds]
 
     BulkApproveResponse:
@@ -1777,8 +1777,7 @@ components:
           type: string
         platform:
           type: string
-          enum: [instagram, facebook, twitter, linkedin, blog]
-      required: [scheduledAt]
+          enum: [instagram, facebook, twitter, linkedin, youtube, blog, newsletter]
 
     PostizExport:
       type: object
@@ -1961,6 +1960,10 @@ components:
           type: boolean
         hasBrandDna:
           type: boolean
+        storageReady:
+          type: boolean
+        storageStatusMessage:
+          type: string
         recentPosts:
           type: array
           items:
@@ -1977,7 +1980,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Post"
-      required: [totalPosts, draftCount, approvedCount, scheduledCount, publishedCount, hasStoryline, hasBrandDna, recentPosts, upcomingPosts, connectedAccounts, recentlyPublished]
+      required: [totalPosts, draftCount, approvedCount, scheduledCount, publishedCount, hasStoryline, hasBrandDna, storageReady, storageStatusMessage, recentPosts, upcomingPosts, connectedAccounts, recentlyPublished]
 
     # ── Social Account ─────────────────────────────────────────────────────────
     SocialAccount:

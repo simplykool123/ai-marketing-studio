@@ -73,6 +73,8 @@ type EnhancedDashboard = {
   }>;
   pendingApprovals: number;
   recentlyPublished?: Post[];
+  storageReady: boolean;
+  storageStatusMessage?: string;
 };
 
 async function fetchDashboard(clientId: string): Promise<EnhancedDashboard> {
@@ -139,7 +141,13 @@ export default function ClientDashboard() {
 
   if (!client || !dashboard) return <div>Client not found</div>;
 
-  const setupSteps = [
+  const setupSteps: Array<{
+    label: string;
+    done: boolean;
+    href?: string;
+    hint?: string;
+    doneHint?: string;
+  }> = [
     {
       label: "Brand DNA completed",
       done: dashboard.hasBrandDna,
@@ -153,9 +161,9 @@ export default function ClientDashboard() {
     },
     {
       label: "Storage configured",
-      done: false,
-      href: "/settings",
-      hint: "Check Supabase storage in Settings",
+      done: dashboard.storageReady,
+      hint: dashboard.storageStatusMessage ?? "Supabase Storage needs developer/admin setup",
+      doneHint: dashboard.storageStatusMessage ?? "Uploads working",
     },
     {
       label: "First draft created",
@@ -170,6 +178,40 @@ export default function ClientDashboard() {
   ];
   const setupComplete = setupSteps.filter((s) => s.done).length;
   const allDone = setupComplete === setupSteps.length;
+  const renderSetupStep = (step: (typeof setupSteps)[number]) => {
+    const row = (
+      <div className={cn(
+        "flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
+        step.done ? "opacity-60" : step.href ? "hover:bg-primary/10 cursor-pointer" : ""
+      )}>
+        {step.done ? (
+          <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
+        ) : (
+          <Circle className="w-4 h-4 text-muted-foreground shrink-0" />
+        )}
+        <span className={cn("text-sm flex-1", step.done && "line-through text-muted-foreground")}>
+          {step.label}
+        </span>
+        {step.done && step.doneHint && (
+          <span className="text-xs text-muted-foreground">{step.doneHint}</span>
+        )}
+        {!step.done && step.hint && (
+          <span className="text-xs text-muted-foreground">{step.hint}</span>
+        )}
+        {!step.done && step.href && (
+          <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+        )}
+      </div>
+    );
+
+    return step.href ? (
+      <Link key={step.label} href={step.href}>
+        {row}
+      </Link>
+    ) : (
+      <div key={step.label}>{row}</div>
+    );
+  };
 
   return (
     <div className="space-y-8">
@@ -203,29 +245,7 @@ export default function ClientDashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {setupSteps.map((step) => (
-                <Link key={step.label} href={step.href}>
-                  <div className={cn(
-                    "flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
-                    step.done ? "opacity-60" : "hover:bg-primary/10 cursor-pointer"
-                  )}>
-                    {step.done ? (
-                      <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
-                    ) : (
-                      <Circle className="w-4 h-4 text-muted-foreground shrink-0" />
-                    )}
-                    <span className={cn("text-sm flex-1", step.done && "line-through text-muted-foreground")}>
-                      {step.label}
-                    </span>
-                    {!step.done && step.hint && (
-                      <span className="text-xs text-muted-foreground">{step.hint}</span>
-                    )}
-                    {!step.done && (
-                      <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                    )}
-                  </div>
-                </Link>
-              ))}
+              {setupSteps.map(renderSetupStep)}
             </div>
           </CardContent>
         </Card>
@@ -252,7 +272,7 @@ export default function ClientDashboard() {
             <div className="flex items-end gap-2">
               <div className="text-3xl font-bold">{dashboard.pendingApprovals}</div>
               {dashboard.pendingApprovals > 0 && (
-                <Link href={`/clients/${clientId}/drafts`} className="text-xs text-primary hover:underline mb-1">
+                <Link href={`/clients/${clientId}/approvals`} className="text-xs text-primary hover:underline mb-1">
                   Review →
                 </Link>
               )}

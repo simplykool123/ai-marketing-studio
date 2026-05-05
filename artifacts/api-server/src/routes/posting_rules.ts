@@ -108,10 +108,10 @@ router.post("/clients/:clientId/posts/auto-schedule", requireClientRole(APPROVE_
     const unscheduled = await db
       .select()
       .from(postsTable)
-      .where(and(eq(postsTable.clientId, clientId), eq(postsTable.status, "draft")));
+      .where(and(eq(postsTable.clientId, clientId), eq(postsTable.status, "in_review")));
 
     if (unscheduled.length === 0) {
-      res.json({ scheduled: [], count: 0, message: "No draft posts to schedule" });
+      res.json({ scheduled: [], count: 0, message: "No posts awaiting approval to schedule" });
       return;
     }
 

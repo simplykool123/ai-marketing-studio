@@ -6,16 +6,33 @@ import {
   storylinesTable,
   socialAccountsTable,
 } from "@workspace/db/schema";
-import { eq, and, desc, gte, asc } from "drizzle-orm";
+import { eq, and, desc, gte, asc, inArray } from "drizzle-orm";
+import { ensureStorageBucket } from "./upload.js";
 
 const router = Router();
+
+async function getStorageReadiness(): Promise<{
+  storageReady: boolean;
+  storageStatusMessage: string;
+}> {
+  try {
+    await ensureStorageBucket();
+    return { storageReady: true, storageStatusMessage: "Uploads working" };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : "Unknown storage error";
+    return {
+      storageReady: false,
+      storageStatusMessage: `Supabase Storage bucket is not ready. Developer/admin action required: ${detail}`,
+    };
+  }
+}
 
 router.get("/clients/:clientId/dashboard", async (req, res) => {
   try {
     const clientId = req.params.clientId;
     const now = new Date();
 
-    const [allPosts, brandDna, activeStoryline, recentPosts, connectedAccounts, upcomingPosts, recentlyPublished] =
+    const [allPosts, brandDna, activeStoryline, recentPosts, connectedAccounts, upcomingPosts, recentlyPublished, storage] =
       await Promise.all([
         db.select().from(postsTable).where(eq(postsTable.clientId, clientId)),
         db
@@ -67,7 +84,7 @@ router.get("/clients/:clientId/dashboard", async (req, res) => {
           .where(
             and(
               eq(postsTable.clientId, clientId),
-              eq(postsTable.status, "scheduled"),
+              inArray(postsTable.status, ["approved", "export_ready", "scheduled"]),
               gte(postsTable.scheduledAt, now)
             )
           )
@@ -79,11 +96,12 @@ router.get("/clients/:clientId/dashboard", async (req, res) => {
           .where(
             and(
               eq(postsTable.clientId, clientId),
-              eq(postsTable.status, "published")
+              inArray(postsTable.status, ["posted", "published"])
             )
           )
           .orderBy(desc(postsTable.publishedAt))
           .limit(10),
+        getStorageReadiness(),
       ]);
 
     const statusCounts = allPosts.reduce(
@@ -105,17 +123,19 @@ router.get("/clients/:clientId/dashboard", async (req, res) => {
       return d >= todayStart && d <= todayEnd;
     });
 
-    const pendingApprovals = allPosts.filter(p => p.status === "draft");
+    const pendingApprovals = allPosts.filter(p => p.status === "in_review");
 
     res.json({
       totalPosts: allPosts.length,
       draftCount: statusCounts["draft"] ?? 0,
-      approvedCount: statusCounts["approved"] ?? 0,
+      approvedCount: (statusCounts["approved"] ?? 0) + (statusCounts["export_ready"] ?? 0),
       scheduledCount: statusCounts["scheduled"] ?? 0,
-      publishedCount: statusCounts["published"] ?? 0,
+      publishedCount: (statusCounts["posted"] ?? 0) + (statusCounts["published"] ?? 0),
       hasStoryline: activeStoryline.length > 0,
       activeStoryline: activeStoryline[0] ?? null,
       hasBrandDna: brandDna.length > 0,
+      storageReady: storage.storageReady,
+      storageStatusMessage: storage.storageStatusMessage,
       recentPosts,
       upcomingPosts,
       connectedAccounts,

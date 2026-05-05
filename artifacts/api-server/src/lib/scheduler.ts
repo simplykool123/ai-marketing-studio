@@ -208,7 +208,7 @@ async function runScheduledPublish(): Promise<void> {
         await db
           .update(postsTable)
           .set({
-            status: "published",
+            status: "posted",
             publishedAt: result.publishedAt,
             publishedUrl: result.publishedUrl,
             publishError: null,

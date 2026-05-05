@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   useListPosts,
   useApprovePost,
   useUpdatePost,
+  getListPostsQueryKey,
   rejectPost,
   bulkApprovePosts,
   autoSchedulePosts,
@@ -62,6 +63,7 @@ const PLATFORM_BEST_HOURS: Record<string, number[]> = {
   facebook: [9, 13, 16],
   linkedin: [8, 12, 17],
   twitter: [8, 12, 17, 20],
+  youtube: [12, 18],
   default: [9, 12, 15, 18],
 };
 
@@ -81,7 +83,16 @@ export default function ApprovalQueue() {
   const { toast } = useToast();
 
   const { data: allPosts, isLoading } = useListPosts(clientId ?? "");
-  const pendingPosts = allPosts?.filter((p) => p.status === "draft") ?? [];
+  const pendingPosts = allPosts?.filter((p) => p.status === "in_review") ?? [];
+  const approvedHistory = allPosts?.filter((p) =>
+    ["approved", "export_ready", "scheduled"].includes(p.status)
+  ) ?? [];
+
+  const invalidatePosts = () => {
+    if (!clientId) return;
+    qc.invalidateQueries({ queryKey: getListPostsQueryKey(clientId) });
+    qc.invalidateQueries({ queryKey: ["enhanced-dashboard", clientId] });
+  };
 
   const { data: postingRules } = useQuery({
     queryKey: ["postingRules", clientId],
@@ -99,9 +110,7 @@ export default function ApprovalQueue() {
   const [approvePost, setApprovePost] = useState<Post | null>(null);
   const [approveDate, setApproveDate] = useState("");
   const [approvePlatform, setApprovePlatform] = useState<string>("");
-  const [bulkDate, setBulkDate] = useState(
-    new Date(Date.now() + 86400000).toISOString().slice(0, 16)
-  );
+  const [bulkDate, setBulkDate] = useState("");
   const [autoScheduleResult, setAutoScheduleResult] = useState<{
     count: number;
     dryRun: boolean;
@@ -114,7 +123,7 @@ export default function ApprovalQueue() {
     mutationFn: ({ postId }: { postId: string }) =>
       rejectPost(clientId ?? "", postId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["listPosts", clientId] });
+      invalidatePosts();
       toast({ title: "Post rejected" });
     },
     onError: () => toast({ title: "Failed to reject post", variant: "destructive" }),
@@ -127,9 +136,12 @@ export default function ApprovalQueue() {
         scheduledAt: bulkDate ? new Date(bulkDate).toISOString() : undefined,
       }),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ["listPosts", clientId] });
+      invalidatePosts();
       setSelected(new Set());
-      toast({ title: `${data.count} post${data.count !== 1 ? "s" : ""} approved` });
+      toast({
+        title: `${data.count} post${data.count !== 1 ? "s" : ""} approved`,
+        description: bulkDate ? "Scheduled posts moved to Calendar." : "Approved posts moved to Queue / Export Ready.",
+      });
     },
     onError: () => toast({ title: "Bulk approve failed", variant: "destructive" }),
   });
@@ -139,7 +151,7 @@ export default function ApprovalQueue() {
       autoSchedulePosts(clientId ?? "", { dryRun }),
     onSuccess: (data) => {
       if (!data.dryRun) {
-        qc.invalidateQueries({ queryKey: ["listPosts", clientId] });
+        invalidatePosts();
         toast({
           title: `Auto-scheduled ${data.count} post${data.count !== 1 ? "s" : ""}`,
           description: "Posts have been approved and scheduled.",
@@ -174,7 +186,7 @@ export default function ApprovalQueue() {
   const openApprove = (post: Post) => {
     setApprovePost(post);
     setApprovePlatform(post.platform ?? "");
-    setApproveDate(computeSuggestedTime(post.platform, preferredWindows));
+    setApproveDate("");
   };
 
   const saveEdit = () => {
@@ -191,7 +203,7 @@ export default function ApprovalQueue() {
       },
       {
         onSuccess: () => {
-          qc.invalidateQueries({ queryKey: ["listPosts", clientId] });
+          invalidatePosts();
           setEditingPost(null);
           toast({ title: "Post updated" });
         },
@@ -207,7 +219,7 @@ export default function ApprovalQueue() {
         clientId: clientId ?? "",
         postId: approvePost.id,
         data: {
-          scheduledAt: new Date(approveDate).toISOString(),
+          ...(approveDate ? { scheduledAt: new Date(approveDate).toISOString() } : {}),
           ...(approvePlatform && approvePlatform !== "inherit"
             ? { platform: approvePlatform as ApprovePostBodyPlatform }
             : {}),
@@ -215,9 +227,12 @@ export default function ApprovalQueue() {
       },
       {
         onSuccess: () => {
-          qc.invalidateQueries({ queryKey: ["listPosts", clientId] });
+          invalidatePosts();
           setApprovePost(null);
-          toast({ title: "Post approved & scheduled" });
+          toast({
+            title: approveDate ? "Post approved & scheduled" : "Post approved for export",
+            description: approveDate ? "Scheduled posts moved to Calendar." : "Approved posts moved to Queue / Export Ready.",
+          });
         },
         onError: () => toast({ title: "Approve failed", variant: "destructive" }),
       }
@@ -242,8 +257,7 @@ export default function ApprovalQueue() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Approval Queue</h1>
           <p className="text-muted-foreground mt-1">
-            {pendingPosts.length} post{pendingPosts.length !== 1 ? "s" : ""} awaiting
-            review
+            {pendingPosts.length} post{pendingPosts.length !== 1 ? "s" : ""} awaiting approval
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -262,7 +276,7 @@ export default function ApprovalQueue() {
                 disabled={bulkApproveMutation.isPending}
               >
                 <ListChecks className="w-3.5 h-3.5 mr-1.5" />
-                Approve Selected
+                {bulkDate ? "Approve & Schedule" : "Approve for Export"}
               </Button>
             </div>
           )}
@@ -336,10 +350,15 @@ export default function ApprovalQueue() {
       {pendingPosts.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-center">
           <CheckCircle2 className="w-12 h-12 text-muted-foreground/30 mb-4" />
-          <h3 className="text-lg font-semibold mb-1">Queue is empty</h3>
+          <h3 className="text-lg font-semibold mb-1">No posts awaiting approval</h3>
           <p className="text-muted-foreground text-sm mb-4">
-            All caught up! Generate content to fill the queue.
+            Approved posts moved to Queue / Export Ready.
           </p>
+          {approvedHistory.length > 0 && (
+            <p className="text-xs text-muted-foreground mb-4">
+              {approvedHistory.length} approved item{approvedHistory.length !== 1 ? "s are" : " is"} already in Queue or Calendar.
+            </p>
+          )}
           <Button variant="outline" onClick={() => navigate(`/clients/${clientId}/create`)}>
             Generate Content
           </Button>
@@ -460,22 +479,23 @@ export default function ApprovalQueue() {
         </div>
       )}
 
-      {/* Approve dialog — pre-populated with suggested time */}
+      {/* Approve dialog */}
       <Dialog open={!!approvePost} onOpenChange={(o) => !o && setApprovePost(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Schedule Post</DialogTitle>
+            <DialogTitle>Approve Post</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
-              <Label>Schedule Date & Time</Label>
+              <Label>Schedule Date & Time (optional)</Label>
               <Input
                 type="datetime-local"
                 value={approveDate}
                 onChange={(e) => setApproveDate(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Pre-filled from your posting rules preferred windows.
+                Leave empty to move this post to Queue / Export Ready. Suggested:{" "}
+                {approvePost ? format(new Date(computeSuggestedTime(approvePost.platform, preferredWindows)), "MMM d 'at' h:mm a") : ""}
               </p>
             </div>
             <div className="space-y-1.5">
@@ -490,6 +510,7 @@ export default function ApprovalQueue() {
                   <SelectItem value="facebook">Facebook</SelectItem>
                   <SelectItem value="twitter">Twitter</SelectItem>
                   <SelectItem value="linkedin">LinkedIn</SelectItem>
+                  <SelectItem value="youtube">YouTube</SelectItem>
                   <SelectItem value="blog">Blog</SelectItem>
                   <SelectItem value="newsletter">Newsletter</SelectItem>
                 </SelectContent>
@@ -511,7 +532,7 @@ export default function ApprovalQueue() {
               className="bg-emerald-600 hover:bg-emerald-700 text-white"
             >
               <CheckCircle2 className="w-4 h-4 mr-2" />
-              Approve & Schedule
+              {approveDate ? "Approve & Schedule" : "Approve for Export"}
             </Button>
           </DialogFooter>
         </DialogContent>
