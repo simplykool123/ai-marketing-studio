@@ -15,13 +15,15 @@ import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { format, isToday, isTomorrow, isPast } from "date-fns";
 import {
   CheckCircle2, Clock, CalendarCheck, ListOrdered, PenLine,
-  Send, Loader2, AlertCircle, PlayCircle, Webhook as WebhookIcon, Info, X, Link as LinkIcon, MoreHorizontal,
+  Send, Loader2, AlertCircle, PlayCircle, Workflow, Info, X, Link as LinkIcon, MoreHorizontal,
+  Download, Copy, CalendarPlus, FileJson,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -40,7 +42,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   linkedin: "LinkedIn", youtube: "YouTube", blog: "Blog", newsletter: "Newsletter",
 };
 
-const QUEUE_STATUSES = ["approved", "export_ready", "scheduled", "failed"];
+const QUEUE_STATUSES = ["approved", "export_ready", "scheduled", "failed", "posted", "published"];
 
 const BASE = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
 
@@ -61,6 +63,11 @@ function postImageUrl(post: any): string | null {
     schema.backgroundImageUrl ||
     null
   );
+}
+
+function finalArtworkUrl(post: any): string {
+  const schema = asRecord(post.contentSchema);
+  return String(schema.finalArtworkUrl || post.selectedImageUrl || post.brandedImageUrl || schema.imageUrl || "");
 }
 
 function QueueImage({ post }: { post: any }) {
@@ -111,6 +118,17 @@ async function webhookExportApi(clientId: string, postId: string) {
   return res.json();
 }
 
+async function autoScheduleApi(clientId: string) {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/posts/auto-schedule`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ dryRun: false }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Failed to auto-schedule ready posts");
+  return data as { count: number; message?: string };
+}
+
 async function publishApi(clientId: string, postId: string) {
   const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/publish`, {
     method: "POST",
@@ -157,7 +175,45 @@ function postStatusLabel(post: any): string {
   if (isNoAccountFailure(post)) return "Failed: no account connected";
   if (post.status === "failed") return "Failed";
   if (post.status === "approved" || post.status === "export_ready") return "Ready to post";
+  if (post.status === "posted" || post.status === "published") return "Ready to post";
   return "Not posted yet";
+}
+
+function exportableStatus(post: any): string {
+  return post.publishedAt ? "published" : post.status;
+}
+
+function buildExportPackage(clientName: string, posts: any[]) {
+  return {
+    clientName,
+    exportedAt: new Date().toISOString(),
+    totalItems: posts.length,
+    posts: posts.map((post) => ({
+      clientName,
+      postId: post.id,
+      platform: post.platform ?? "instagram",
+      caption: post.caption ?? "",
+      hashtags: post.hashtags ?? "",
+      finalArtworkUrl: finalArtworkUrl(post),
+      selectedImageUrl: post.selectedImageUrl ?? "",
+      scheduledAt: post.scheduledAt ?? "",
+      status: exportableStatus(post),
+      createdAt: post.createdAt ?? "",
+      contentType: post.contentType ?? post.postType ?? "social_post",
+    })),
+  };
+}
+
+function downloadJson(filename: string, payload: unknown) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function PostTimeline({ post }: { post: any }) {
@@ -188,6 +244,8 @@ export default function PostingQueue() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<"all" | "approved" | "export_ready" | "scheduled" | "failed">("all");
   const [artworkPost, setArtworkPost] = useState<any>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [bulkAction, setBulkAction] = useState<"mark-posted" | "workflow" | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(
     () => typeof window !== "undefined" && window.localStorage.getItem("posting-mock-banner-dismissed") === "1"
   );
@@ -274,7 +332,7 @@ export default function PostingQueue() {
         description: "Status was set to posted locally — nothing was sent to any platform.",
       });
     },
-    onError: () => toast({ title: "Failed to simulate mock post", variant: "destructive" }),
+    onError: () => toast({ title: "Failed to simulate post", variant: "destructive" }),
   });
 
   const markPostedMutation = useMutation({
@@ -290,9 +348,9 @@ export default function PostingQueue() {
     mutationFn: (postId: string) => webhookExportApi(clientId!, postId),
     onSuccess: () => {
       invalidate();
-      toast({ title: "Sent to configured webhook" });
+      toast({ title: "Sent to workflow" });
     },
-    onError: () => toast({ title: "Failed to webhook export", variant: "destructive" }),
+    onError: () => toast({ title: "Failed to send workflow", variant: "destructive" }),
   });
 
   const publishMutation = useMutation({
@@ -311,9 +369,27 @@ export default function PostingQueue() {
     },
   });
 
-  const queuePosts = (posts as any[]).filter((post) =>
-    QUEUE_STATUSES.includes(post.status) && (filter === "all" || post.status === filter)
-  );
+  const autoScheduleMutation = useMutation({
+    mutationFn: () => autoScheduleApi(clientId!),
+    onSuccess: (result) => {
+      invalidate();
+      toast({
+        title: result.count ? `Scheduled ${result.count} ready post${result.count === 1 ? "" : "s"}` : "Nothing to schedule",
+        description: result.count ? "Ready posts were assigned schedule times. Nothing was published." : result.message ?? "No ready posts need scheduling.",
+      });
+    },
+    onError: (err) => toast({
+      title: "Auto-schedule failed",
+      description: err instanceof Error ? err.message : "Could not schedule ready posts.",
+      variant: "destructive",
+    }),
+  });
+
+  const queuePosts = (posts as any[]).filter((post) => {
+    if (!QUEUE_STATUSES.includes(post.status)) return false;
+    if ((post.status === "posted" || post.status === "published") && !post.publishedAt) return false;
+    return filter === "all" || post.status === filter;
+  });
 
   const sortedPosts = [...queuePosts].sort((a, b) => {
     if (!a.scheduledAt && !b.scheduledAt) return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -321,6 +397,96 @@ export default function PostingQueue() {
     if (!b.scheduledAt) return -1;
     return new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime();
   });
+
+  const selectedPosts = sortedPosts.filter((post) => selectedIds.has(post.id));
+  const readyPosts = sortedPosts.filter((post) => ["approved", "export_ready"].includes(post.status) && !post.scheduledAt);
+  const clientName = clientData?.name ?? "Client";
+  const allVisibleSelected = sortedPosts.length > 0 && sortedPosts.every((post) => selectedIds.has(post.id));
+
+  const toggleSelected = (postId: string, checked: boolean) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(postId);
+      else next.delete(postId);
+      return next;
+    });
+  };
+
+  const toggleAllVisible = (checked: boolean) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      for (const post of sortedPosts) {
+        if (checked) next.add(post.id);
+        else next.delete(post.id);
+      }
+      return next;
+    });
+  };
+
+  const exportPosts = (items: any[], label = "selected") => {
+    if (items.length === 0) {
+      toast({ title: "No posts selected", description: "Select posts to export.", variant: "destructive" });
+      return;
+    }
+    downloadJson(`${clientName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${label}-publish-package.json`, buildExportPackage(clientName, items));
+    toast({ title: `Exported ${items.length} post${items.length === 1 ? "" : "s"}`, description: "JSON includes captions, artwork URLs, schedule, status, and content type." });
+  };
+
+  const copyCaptions = async (items: any[]) => {
+    if (items.length === 0) {
+      toast({ title: "No posts selected", description: "Select posts to copy captions.", variant: "destructive" });
+      return;
+    }
+    const text = items.map((post) => [
+      `[${PLATFORM_LABELS[post.platform] ?? post.platform ?? "Instagram"}] ${post.topic ?? "Untitled post"}`,
+      post.caption ?? "",
+      post.hashtags ?? "",
+    ].filter(Boolean).join("\n")).join("\n\n---\n\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: `Copied ${items.length} caption${items.length === 1 ? "" : "s"}` });
+    } catch {
+      toast({ title: "Copy failed", description: "Clipboard access is unavailable in this browser.", variant: "destructive" });
+    }
+  };
+
+  const runBulkMarkPosted = async () => {
+    if (!clientId || selectedPosts.length === 0) return;
+    setBulkAction("mark-posted");
+    try {
+      await Promise.all(selectedPosts.map((post) => markPostedApi(clientId, post.id)));
+      invalidate();
+      setSelectedIds(new Set());
+      toast({ title: `Marked ${selectedPosts.length} post${selectedPosts.length === 1 ? "" : "s"} as posted` });
+    } catch (err) {
+      invalidate();
+      toast({
+        title: "Bulk mark posted failed",
+        description: err instanceof Error ? err.message : "One or more posts could not be marked posted.",
+        variant: "destructive",
+      });
+    } finally {
+      setBulkAction(null);
+    }
+  };
+
+  const runBulkWorkflow = async () => {
+    if (!clientId || selectedPosts.length === 0) return;
+    setBulkAction("workflow");
+    try {
+      await Promise.all(selectedPosts.map((post) => webhookExportApi(clientId, post.id)));
+      invalidate();
+      toast({ title: `Sent ${selectedPosts.length} post${selectedPosts.length === 1 ? "" : "s"} to workflow` });
+    } catch (err) {
+      toast({
+        title: "Workflow send failed",
+        description: err instanceof Error ? err.message : "One or more posts could not be sent.",
+        variant: "destructive",
+      });
+    } finally {
+      setBulkAction(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -342,23 +508,40 @@ export default function PostingQueue() {
             </button>
           </div>
         )}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Publish Queue</h1>
             <p className="text-muted-foreground mt-1">Approved posts wait here before publishing, exporting, or marking as posted.</p>
           </div>
-          <Select value={filter} onValueChange={v => setFilter(v as typeof filter)}>
-            <SelectTrigger className="w-40 h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All posts</SelectItem>
-              <SelectItem value="approved">Ready to post</SelectItem>
-              <SelectItem value="export_ready">Ready to export</SelectItem>
-              <SelectItem value="scheduled">Scheduled</SelectItem>
-              <SelectItem value="failed">Failed</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => autoScheduleMutation.mutate()}
+              disabled={autoScheduleMutation.isPending || readyPosts.length === 0}
+              className="gap-1.5"
+              title={readyPosts.length === 0 ? "No unscheduled ready posts" : "Schedule ready posts without publishing"}
+            >
+              {autoScheduleMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CalendarPlus className="w-3.5 h-3.5" />}
+              Auto-schedule ready posts
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => exportPosts(sortedPosts, "queue")} disabled={sortedPosts.length === 0} className="gap-1.5">
+              <FileJson className="w-3.5 h-3.5" />
+              Export queue JSON
+            </Button>
+            <Select value={filter} onValueChange={v => setFilter(v as typeof filter)}>
+              <SelectTrigger className="w-40 h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All posts</SelectItem>
+                <SelectItem value="approved">Ready</SelectItem>
+                <SelectItem value="export_ready">Export ready</SelectItem>
+                <SelectItem value="scheduled">Scheduled</SelectItem>
+                <SelectItem value="failed">Failed</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         {isLoading ? (
@@ -377,6 +560,30 @@ export default function PostingQueue() {
           </Card>
         ) : (
           <div className="space-y-2.5">
+            <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+              <label className="flex items-center gap-2 font-medium">
+                <Checkbox checked={allVisibleSelected} onCheckedChange={(checked) => toggleAllVisible(checked === true)} />
+                {selectedPosts.length ? `${selectedPosts.length} selected` : "Select posts for bulk actions"}
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={() => exportPosts(selectedPosts)} disabled={!selectedPosts.length} className="h-8 gap-1.5">
+                  <Download className="w-3.5 h-3.5" />
+                  Export selected
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => copyCaptions(selectedPosts)} disabled={!selectedPosts.length} className="h-8 gap-1.5">
+                  <Copy className="w-3.5 h-3.5" />
+                  Copy captions
+                </Button>
+                <Button variant="outline" size="sm" onClick={runBulkWorkflow} disabled={!selectedPosts.length || bulkAction !== null} className="h-8 gap-1.5">
+                  {bulkAction === "workflow" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Workflow className="w-3.5 h-3.5" />}
+                  Send to workflow
+                </Button>
+                <Button variant="outline" size="sm" onClick={runBulkMarkPosted} disabled={!selectedPosts.length || bulkAction !== null} className="h-8 gap-1.5">
+                  {bulkAction === "mark-posted" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                  Mark posted
+                </Button>
+              </div>
+            </div>
             {sortedPosts.map((post: any, idx: number) => {
               const schedule = formatSchedule(post.scheduledAt);
               const isFailed = post.status === "failed";
@@ -399,6 +606,11 @@ export default function PostingQueue() {
                   isFailed && "border-red-200"
                 )}>
                   <CardContent className="flex items-center gap-4 p-4">
+                    <Checkbox
+                      checked={selectedIds.has(post.id)}
+                      onCheckedChange={(checked) => toggleSelected(post.id, checked === true)}
+                      aria-label={`Select ${post.topic}`}
+                    />
                     <div className="text-sm font-medium text-muted-foreground w-5 shrink-0 text-center">
                       {idx + 1}
                     </div>
@@ -417,13 +629,15 @@ export default function PostingQueue() {
                           post.status === "approved" && "bg-blue-50 text-blue-700",
                           post.status === "export_ready" && "bg-emerald-50 text-emerald-700",
                           post.status === "scheduled" && "bg-primary/10 text-primary",
+                          hasPublishedProof && "bg-green-50 text-green-700 border-green-200",
                           isFailed && "bg-red-50 text-red-700"
                         )}>
                           {postStatusLabel(post)}
                         </Badge>
                       </div>
                       <p className="text-sm font-medium truncate">{post.topic}</p>
-                      <p className="text-xs text-muted-foreground truncate">{post.caption?.slice(0, 80)}…</p>
+                      <p className="text-xs text-muted-foreground truncate">{post.caption?.slice(0, 110)}{post.caption?.length > 110 ? "..." : ""}</p>
+                      {post.hashtags && <p className="text-[11px] text-muted-foreground/80 truncate">{post.hashtags}</p>}
                       <PostTimeline post={post} />
                       {isFailed && post.publishError && (
                         <p className="text-xs text-red-600 flex items-center gap-1 mt-0.5">
@@ -504,11 +718,15 @@ export default function PostingQueue() {
                               </DropdownMenuItem>
                               <DropdownMenuItem onSelect={() => mockPostMutation.mutate(post.id)}>
                                 <PlayCircle className="w-3.5 h-3.5 mr-2" />
-                                Mock Post (Demo)
+                                Simulate post (for testing)
                               </DropdownMenuItem>
                               <DropdownMenuItem onSelect={() => webhookMutation.mutate(post.id)}>
-                                <WebhookIcon className="w-3.5 h-3.5 mr-2" />
-                                Webhook Export
+                                <Workflow className="w-3.5 h-3.5 mr-2" />
+                                Send to workflow
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => exportPosts([post], post.id)}>
+                                <FileJson className="w-3.5 h-3.5 mr-2" />
+                                Export JSON package
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>

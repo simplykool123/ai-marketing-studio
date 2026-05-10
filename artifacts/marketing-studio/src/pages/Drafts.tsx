@@ -517,7 +517,7 @@ export default function Drafts() {
         description: "Status was set to posted locally — nothing was sent to any platform.",
       });
     },
-    onError: () => toast({ title: "Failed to simulate mock post", variant: "destructive" }),
+    onError: () => toast({ title: "Failed to simulate post", variant: "destructive" }),
   });
 
   const markPostedMutation = useMutation({
@@ -532,9 +532,9 @@ export default function Drafts() {
   const webhookMutation = useMutation({
     mutationFn: ({ postId }: { postId: string }) => webhookExport(clientId!, postId),
     onSuccess: (data) => {
-      toast({ title: data.message ?? "Webhook export sent" });
+      toast({ title: data.message ?? "Sent to workflow" });
     },
-    onError: () => toast({ title: "Failed to webhook export", variant: "destructive" }),
+    onError: () => toast({ title: "Failed to send to workflow", variant: "destructive" }),
   });
 
   const handleReviewSelect = (postId: string) => {
@@ -850,7 +850,7 @@ export default function Drafts() {
         disabled={mockPostMutation.isPending}
         title="Simulates publishing — does not deliver to any platform"
       >
-        <PlayCircle className="w-3 h-3 mr-1" /> Mock Post (Demo)
+        <PlayCircle className="w-3 h-3 mr-1" /> Simulate post (for testing)
       </Button>
       <Button
         size="sm"
@@ -868,9 +868,9 @@ export default function Drafts() {
         className="h-7 text-xs px-2"
         onClick={() => webhookMutation.mutate({ postId: post.id })}
         disabled={webhookMutation.isPending}
-        title="Send post payload to your configured webhook URL"
+        title="Send post payload to your configured workflow endpoint"
       >
-        <Webhook className="w-3 h-3 mr-1" /> Webhook Export
+        <Webhook className="w-3 h-3 mr-1" /> Send to workflow
       </Button>
     </div>
   );
@@ -962,7 +962,7 @@ export default function Drafts() {
       <div className="rounded-md border border-border bg-card px-4 py-3">
         <p className="text-sm font-medium">Review → Publish Queue → AI Memory</p>
         <p className="text-xs text-muted-foreground mt-1">
-          Approval moves content to the Publish Queue. It is not posted until a publish, webhook, or manual action happens.
+          Approval moves content to the Publish Queue. It is not posted until a publish action, workflow export, or 'Mark as posted' happens.
         </p>
       </div>
 
@@ -1128,7 +1128,7 @@ export default function Drafts() {
               </p>
             </div>
             <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
-              This schedules the post inside the app. It will not publish until a social account/webhook/manual action is used.
+              This schedules the post inside the app. It will not publish until a social account, workflow, or manual action is used.
             </div>
           </div>
           <DialogFooter>

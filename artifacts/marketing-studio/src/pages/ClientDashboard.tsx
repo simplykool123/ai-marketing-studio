@@ -117,6 +117,19 @@ const PLATFORM_COLORS: Record<string, string> = {
   youtube: "bg-red-500/20 text-red-400",
 };
 
+function readableStatus(status: string): string {
+  const map: Record<string, string> = {
+    draft: "Draft",
+    approved: "Approved",
+    export_ready: "Ready to post",
+    scheduled: "Scheduled",
+    posted: "Published",
+    published: "Published",
+    failed: "Failed",
+  };
+  return map[status] ?? status;
+}
+
 function PlatformIcon({ platform, className }: { platform: string; className?: string }) {
   const icons: Record<string, ElementType> = {
     instagram: Instagram,
@@ -211,7 +224,7 @@ export default function ClientDashboard() {
     doneHint?: string;
   }> = [
     {
-      label: "Brand DNA completed",
+      label: "Brand Setup complete",
       done: dashboard.hasBrandDna,
       href: `/clients/${clientId}/brand-dna`,
     },
@@ -234,7 +247,7 @@ export default function ClientDashboard() {
       href: `/clients/${clientId}/create`,
     },
     {
-      label: "Approval / export ready",
+      label: "First post approved",
       done: dashboard.approvedCount > 0 || dashboard.publishedCount > 0,
       href: `/clients/${clientId}/drafts?tab=ready`,
     },
@@ -557,7 +570,7 @@ export default function ClientDashboard() {
           <CardHeader className="py-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <Sparkles className="w-4 h-4 text-primary" />
-              AI Recommendation
+              AI Ideas
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0 pb-3">
@@ -590,7 +603,7 @@ export default function ClientDashboard() {
                 {dashboard.todaysPosts.slice(0, 3).map(post => (
                   <div key={post.id} className="flex items-center gap-2 rounded-md bg-muted/30 px-2 py-1.5">
                     <Badge variant="outline" className="text-[10px] uppercase shrink-0">
-                      {post.status}
+                      {readableStatus(post.status)}
                     </Badge>
                     <p className="text-xs line-clamp-1 flex-1">{post.caption}</p>
                     {post.scheduledAt && (
@@ -661,7 +674,7 @@ export default function ClientDashboard() {
                       </div>
                     </div>
                     <Badge variant="secondary" className="text-[9px] uppercase shrink-0">
-                      {post.status}
+                      {readableStatus(post.status)}
                     </Badge>
                   </div>
                 ))}

@@ -5,7 +5,6 @@ import {
   Home,
   LayoutDashboard,
   Dna,
-  Sparkles,
   Calendar as CalendarIcon,
   Menu,
   X,
@@ -16,7 +15,6 @@ import {
   ChevronDown,
   ChevronRight,
   BrainCircuit,
-  Search,
   Newspaper,
   Mail,
   Share2,
@@ -84,10 +82,12 @@ export function Sidebar({ clientId }: { clientId?: string }) {
   const primaryItems: NavItem[] = clientId ? [
     { href: `/clients/${clientId}`, label: "Dashboard", icon: LayoutDashboard },
     { href: `/clients/${clientId}/brand-dna`, label: "Brand Setup", icon: Dna, help: "Set brand voice, audience, colors, and goals." },
-    { href: `/clients/${clientId}/create`, label: "Create Content", icon: Sparkles },
-    { href: `/clients/${clientId}/calendar`, label: "Calendar", icon: CalendarIcon },
+    { href: `/clients/${clientId}/campaigns/generate`, label: "Campaign Planner", icon: Flag, help: "Plan campaigns and generate approval-ready drafts." },
+    { href: `/clients/${clientId}/marketing-calendar`, label: "Marketing Calendar", icon: CalendarIcon, help: "Create occasion-based drafts." },
     { href: `/clients/${clientId}/drafts?tab=pending`, label: "Review", icon: CheckSquare, badge: pendingCount > 0 ? pendingCount : undefined, help: "Approve ready drafts or reject drafts to teach AI." },
     { href: `/clients/${clientId}/assets`, label: "Assets", icon: ImageIcon, help: "Images generated or uploaded for this client." },
+    { href: `/clients/${clientId}/queue`, label: "Publish Queue", icon: ListOrdered, help: "Approved posts wait here before publishing or exporting." },
+    { href: `/clients/${clientId}/memory`, label: "AI Memory", icon: Database, help: "Long-term learning for this client." },
   ] : [];
 
   const advancedSections: NavSection[] = clientId ? [
@@ -96,8 +96,7 @@ export function Sidebar({ clientId }: { clientId?: string }) {
       items: [
         { href: `/clients/${clientId}/brain`, label: "AI Ideas", icon: BrainCircuit, help: "AI suggests what to post next." },
         { href: `/clients/${clientId}/storylines`, label: "Storylines", icon: BookOpen, help: "Connect posts with a theme over weeks." },
-        { href: `/clients/${clientId}/campaigns/generate`, label: "Campaign Planner", icon: Flag, help: "Generate a full campaign for Review." },
-        { href: `/clients/${clientId}/marketing-calendar`, label: "Marketing Calendar", icon: CalendarIcon, help: "Create occasion-based drafts." },
+        { href: `/clients/${clientId}/calendar`, label: "Draft Calendar", icon: CalendarIcon, help: "Calendar view of saved drafts." },
       ],
     },
     {
@@ -113,15 +112,8 @@ export function Sidebar({ clientId }: { clientId?: string }) {
     {
       label: "Review",
       items: [
-        { href: `/clients/${clientId}/drafts?tab=drafts`, label: "Drafts view", icon: FileText },
-        { href: `/clients/${clientId}/queue`, label: "Publish Queue", icon: ListOrdered, help: "Approved posts wait here before publishing or exporting." },
+        { href: `/clients/${clientId}/drafts?tab=drafts`, label: "All Drafts", icon: FileText },
         { href: `/clients/${clientId}/social-accounts`, label: "Social Accounts", icon: Share2 },
-      ],
-    },
-    {
-      label: "Learn",
-      items: [
-        { href: `/clients/${clientId}/memory`, label: "AI Memory", icon: Database, help: "Long-term learning for this client." },
       ],
     },
   ] : [];

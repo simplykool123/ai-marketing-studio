@@ -218,8 +218,9 @@ export default function MarketingCalendar() {
         </Button>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
-        {featured.map((occasion) => (
+      {featured.length > 0 && (
+        <div className="grid gap-3 md:grid-cols-3">
+          {featured.map((occasion) => (
           <Card key={occasion.id}>
             <CardContent className="p-4">
               <div className="flex items-start justify-between gap-3">
@@ -235,15 +236,24 @@ export default function MarketingCalendar() {
               </div>
             </CardContent>
           </Card>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">Upcoming occasions</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
-          {upcoming.map((occasion) => {
+          {upcoming.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-14 text-center">
+              <CalendarDays className="w-10 h-10 text-muted-foreground mb-3" />
+              <p className="font-medium">No upcoming occasions found</p>
+              <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+                This page helps you create calendar-based drafts. Check back after occasions load, or use Campaign Planner to create campaign drafts now.
+              </p>
+            </div>
+          ) : upcoming.map((occasion) => {
             const isGenerating = generatingId === occasion.id;
             const generated = lastGenerated?.occasionId === occasion.id;
             return (

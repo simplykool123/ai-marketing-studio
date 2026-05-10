@@ -36,6 +36,13 @@ const STATUS_COLORS: Record<string, string> = {
   paused: "bg-amber-50 text-amber-700 border-amber-200",
 };
 
+const STATUS_LABELS: Record<string, string> = {
+  draft: "Draft",
+  active: "Active",
+  completed: "Completed",
+  paused: "Paused",
+};
+
 const PLATFORM_OPTIONS = ["instagram", "facebook", "twitter", "linkedin", "blog", "newsletter"];
 
 function getToken() { return localStorage.getItem("ams_token"); }
@@ -227,7 +234,7 @@ export default function CampaignPlanner() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <Badge variant="outline" className={cn("text-xs", STATUS_COLORS[c.status])}>{c.status}</Badge>
+                      <Badge variant="outline" className={cn("text-xs", STATUS_COLORS[c.status])}>{STATUS_LABELS[c.status] ?? c.status}</Badge>
                     </div>
                     <CardTitle className="text-base truncate">{c.name}</CardTitle>
                     {c.goal && <p className="text-xs text-muted-foreground mt-0.5 truncate">Goal: {c.goal}</p>}

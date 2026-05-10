@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { postsTable, clientsTable, postingLogsTable, campaignsTable } from "@workspace/db/schema";
+import type { Post } from "@workspace/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import {
   CreatePostBody,
@@ -26,6 +27,31 @@ async function campaignBelongsToClient(campaignId: string | undefined, clientId:
     .where(and(eq(campaignsTable.id, campaignId), eq(campaignsTable.clientId, clientId)))
     .limit(1);
   return !!campaign;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function finalArtworkUrlFor(post: Post): string {
+  const schema = asRecord(post.contentSchema);
+  return String(schema.finalArtworkUrl ?? post.selectedImageUrl ?? post.brandedImageUrl ?? schema.imageUrl ?? "");
+}
+
+function exportPost(clientName: string, post: Post) {
+  return {
+    clientName,
+    postId: post.id,
+    platform: post.platform ?? "instagram",
+    caption: post.caption,
+    hashtags: post.hashtags ?? "",
+    finalArtworkUrl: finalArtworkUrlFor(post),
+    selectedImageUrl: post.selectedImageUrl ?? "",
+    scheduledAt: post.scheduledAt?.toISOString() ?? "",
+    status: post.publishedAt ? "published" : post.status,
+    createdAt: post.createdAt.toISOString(),
+    contentType: post.contentType ?? post.postType ?? "social_post",
+  };
 }
 
 router.get("/clients/:clientId/posts", async (req, res) => {
@@ -89,17 +115,7 @@ router.get("/clients/:clientId/posts/export", async (req, res) => {
     const exportData = {
       clientName: client?.name ?? "Unknown",
       exportedAt: new Date().toISOString(),
-      posts: posts.map((p) => ({
-        id: p.id,
-        caption: p.caption,
-        hashtags: p.hashtags ?? "",
-        image_url: p.selectedImageUrl ?? "",
-        original_image_url: p.originalImageUrl ?? "",
-        branded_image_url: p.brandedImageUrl ?? "",
-        scheduled_at: p.scheduledAt?.toISOString() ?? "",
-        platform: p.platform ?? "instagram",
-        source_ai_idea_id: p.sourceAiIdeaId ?? "",
-      })),
+      posts: posts.map((p) => exportPost(client?.name ?? "Unknown", p)),
     };
     res.json(exportData);
   } catch (err) {
@@ -134,18 +150,11 @@ router.get("/clients/:clientId/export/approved", async (req, res) => {
       exportedAt: new Date().toISOString(),
       totalItems: posts.length,
       posts: posts.map((p) => ({
-        id: p.id,
+        ...exportPost(client.name, p),
         topic: p.topic,
-        caption: p.caption,
-        hashtags: p.hashtags ?? "",
-        selectedImageUrl: p.selectedImageUrl ?? "",
         originalImageUrl: p.originalImageUrl ?? "",
         brandedImageUrl: p.brandedImageUrl ?? "",
-        scheduledAt: p.scheduledAt?.toISOString() ?? "",
-        platform: p.platform ?? "instagram",
         sourceAiIdeaId: p.sourceAiIdeaId ?? "",
-        status: p.status,
-        createdAt: p.createdAt,
       })),
     };
 
@@ -455,18 +464,7 @@ router.post("/clients/:clientId/webhook/export", requireClientRole(APPROVE_CONTE
     const payload = {
       clientName: client.name,
       exportedAt: new Date().toISOString(),
-      posts: posts.map(p => ({
-        id: p.id,
-        caption: p.caption,
-        hashtags: p.hashtags ?? "",
-        image_url: p.selectedImageUrl ?? "",
-        original_image_url: p.originalImageUrl ?? "",
-        branded_image_url: p.brandedImageUrl ?? "",
-        scheduled_at: p.scheduledAt?.toISOString() ?? "",
-        platform: p.platform ?? "instagram",
-        source_ai_idea_id: p.sourceAiIdeaId ?? "",
-        status: p.status,
-      })),
+      posts: posts.map(p => exportPost(client.name, p)),
     };
 
     const storedWebhookUrl = (client as { webhookUrl?: string | null }).webhookUrl;

@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { postingRulesTable, postsTable } from "@workspace/db/schema";
-import { eq, and, isNull } from "drizzle-orm";
-import { addDays, startOfDay, setHours } from "date-fns";
+import { eq, and, isNull, inArray } from "drizzle-orm";
+import { addDays, startOfDay, setHours, setMinutes, setSeconds, setMilliseconds } from "date-fns";
 import { APPROVE_CONTENT_ROLES, MANAGE_CLIENT_ROLES, requireClientRole } from "../middleware/auth.js";
 
 const router = Router();
@@ -101,17 +101,23 @@ router.post("/clients/:clientId/posts/auto-schedule", requireClientRole(APPROVE_
       .limit(1);
 
     const maxPerDay = (rules?.maxPostsPerDay ?? {}) as Record<string, number>;
-    const preferredWindows = (rules?.preferredWindows ?? [9, 12, 15, 18]) as number[];
+    const preferredWindows = (rules?.preferredWindows?.length ? rules.preferredWindows : [9]) as number[];
     const blackoutDates = new Set<string>((rules?.blackoutDates ?? []) as string[]);
     const globalMaxPerDay = Object.values(maxPerDay).reduce((a, b) => a + b, 0) || 4;
 
     const unscheduled = await db
       .select()
       .from(postsTable)
-      .where(and(eq(postsTable.clientId, clientId), eq(postsTable.status, "in_review")));
+      .where(
+        and(
+          eq(postsTable.clientId, clientId),
+          inArray(postsTable.status, ["approved", "export_ready"]),
+          isNull(postsTable.scheduledAt)
+        )
+      );
 
     if (unscheduled.length === 0) {
-      res.json({ scheduled: [], count: 0, message: "No posts awaiting approval to schedule" });
+      res.json({ scheduled: [], count: 0, message: "No ready posts need scheduling" });
       return;
     }
 
@@ -144,7 +150,7 @@ router.post("/clients/:clientId/posts/auto-schedule", requireClientRole(APPROVE_
             ? preferredWindows
             : PLATFORM_BEST_HOURS[platform] ?? PLATFORM_BEST_HOURS.default;
           const hourIndex = platformUsed % availableHours.length;
-          const scheduledAt = setHours(day, availableHours[hourIndex]!);
+          const scheduledAt = setMilliseconds(setSeconds(setMinutes(setHours(day, availableHours[hourIndex]!), 0), 0), 0);
           schedule.push({ postId: post.id, scheduledAt });
           slotsPerPlatformPerDay.set(platformKey, platformUsed + 1);
           slotsPerDay.set(dayKey, totalUsed + 1);

@@ -105,7 +105,7 @@ export default function PostingRulesPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Posting Rules</h1>
         <p className="text-muted-foreground mt-1">
-          Set default posting cadence, schedule rules, and publishing preferences.
+          Configure posting cadence and schedule windows. These rules guide the auto-scheduler when assigning times to approved content — they do not affect manual queue actions.
         </p>
       </div>
 
