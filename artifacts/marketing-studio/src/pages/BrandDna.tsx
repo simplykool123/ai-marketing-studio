@@ -19,13 +19,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Save, Upload, Trash2, ImageIcon, Palette, FileText, Image, BookOpen, Layers } from "lucide-react";
+import { AlertCircle, Globe2, RefreshCw, Save, Sparkles, Upload, Trash2, ImageIcon, Palette, FileText, Image, BookOpen, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const brandDnaSchema = z.object({
@@ -49,6 +50,18 @@ const brandDnaSchema = z.object({
 });
 
 type BrandDnaFormValues = z.infer<typeof brandDnaSchema>;
+
+type WebsiteAnalysis = {
+  brandTone: string;
+  targetAudience: string;
+  productsServices: string;
+  usp: string;
+  contentPillars: string;
+  colorStyleHints: string;
+  keywords: string;
+  imageStyleNotes: string;
+  confidenceNotes: string;
+};
 
 const ASSET_TYPE_LABELS: Record<string, string> = {
   logo: "Logo",
@@ -102,6 +115,11 @@ async function getUploadErrorMessage(res: Response): Promise<string> {
   return data?.error ?? `Upload failed with status ${res.status}`;
 }
 
+async function getJsonErrorMessage(res: Response): Promise<string> {
+  const data = await res.json().catch(() => null) as { error?: string } | null;
+  return data?.error ?? `Request failed with status ${res.status}`;
+}
+
 export default function BrandDna() {
   const { clientId } = useParams<{ clientId: string }>();
   const { token } = useAuth();
@@ -114,6 +132,11 @@ export default function BrandDna() {
   const [assetNotes, setAssetNotes] = useState("");
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [isUploadingAsset, setIsUploadingAsset] = useState(false);
+  const [websiteUrl, setWebsiteUrl] = useState("");
+  const [isAnalyzingWebsite, setIsAnalyzingWebsite] = useState(false);
+  const [websiteAnalysis, setWebsiteAnalysis] = useState<WebsiteAnalysis | null>(null);
+  const [analysisSourceUrl, setAnalysisSourceUrl] = useState("");
+  const [replaceFilledFields, setReplaceFilledFields] = useState(false);
 
   const { data: brandDna, isLoading } = useGetBrandDna(clientId || "");
   const { data: client } = useGetClient(clientId || "");
@@ -230,6 +253,91 @@ export default function BrandDna() {
     );
   };
 
+  const handleAnalyzeWebsite = async () => {
+    if (!clientId || !websiteUrl.trim()) return;
+    setIsAnalyzingWebsite(true);
+    setWebsiteAnalysis(null);
+    try {
+      const res = await fetch(`/api/clients/${clientId}/brand-dna/analyze-website`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ websiteUrl }),
+      });
+      if (res.status === 401) {
+        throw new Error("Session expired. Please sign in again.");
+      }
+      if (!res.ok) throw new Error(await getJsonErrorMessage(res));
+      const data = await res.json() as { websiteUrl: string; analysis: WebsiteAnalysis };
+      setWebsiteAnalysis(data.analysis);
+      setAnalysisSourceUrl(data.websiteUrl);
+      toast({ title: "Website analysis ready", description: "Review the suggestions before applying them to Brand Setup." });
+    } catch (err) {
+      toast({
+        title: "Could not analyze website",
+        description: err instanceof Error ? err.message : "Check the URL and try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsAnalyzingWebsite(false);
+    }
+  };
+
+  const setSuggestedValue = (field: keyof BrandDnaFormValues, value: string) => {
+    if (!value || value === "Not clear from the page") return;
+    const current = form.getValues(field);
+    if (replaceFilledFields || !current?.trim()) {
+      form.setValue(field, value, { shouldDirty: true });
+    }
+  };
+
+  const handleApplyAnalysis = async () => {
+    if (!clientId || !websiteAnalysis) return;
+    const context = [
+      websiteAnalysis.productsServices ? `Products/services: ${websiteAnalysis.productsServices}` : null,
+      websiteAnalysis.usp ? `USP: ${websiteAnalysis.usp}` : null,
+      websiteAnalysis.keywords ? `Keywords: ${websiteAnalysis.keywords}` : null,
+    ].filter(Boolean).join("\n");
+
+    setSuggestedValue("voiceTone", websiteAnalysis.brandTone);
+    setSuggestedValue("targetAudience", websiteAnalysis.targetAudience);
+    setSuggestedValue("contentThemes", websiteAnalysis.contentPillars);
+    setSuggestedValue("visualStyle", websiteAnalysis.colorStyleHints);
+    setSuggestedValue("designNotes", websiteAnalysis.imageStyleNotes);
+    setSuggestedValue("additionalContext", context);
+
+    const memoryEntries = [
+      {
+        key: "Brand DNA / Website import",
+        value: `Imported from ${analysisSourceUrl || websiteUrl}. ${websiteAnalysis.confidenceNotes || "Use as directional brand context."}`,
+      },
+      websiteAnalysis.imageStyleNotes ? {
+        key: "Image Style Memory / Website import",
+        value: websiteAnalysis.imageStyleNotes,
+      } : null,
+      websiteAnalysis.keywords ? {
+        key: "SEO Memory / Website keywords",
+        value: websiteAnalysis.keywords,
+      } : null,
+    ].filter(Boolean) as Array<{ key: string; value: string }>;
+
+    await Promise.all(memoryEntries.map((entry) => fetch(`/api/clients/${clientId}/memory`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(entry),
+    }).catch(() => null)));
+
+    toast({
+      title: "Suggestions applied",
+      description: replaceFilledFields ? "Brand fields were updated. Review and save Brand DNA." : "Empty Brand Setup fields were filled. Existing filled fields were preserved.",
+    });
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -251,8 +359,85 @@ export default function BrandDna() {
       </div>
 
       <div className="rounded-md border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-        Brand Setup → Campaign Planner / Marketing Calendar → Review → Publish Queue → AI Memory
+        Brand Setup → AI Ideas / Storyline → Campaign Planner / Marketing Calendar → Review → Publish Queue → AI Memory
       </div>
+
+      <Card className="border-primary/20 bg-gradient-to-br from-primary/5 via-background to-background">
+        <CardHeader className="pb-3">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-primary/10 p-2">
+              <Globe2 className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <CardTitle className="text-base">Website Brand Importer</CardTitle>
+              <CardDescription>
+                Paste the client website and let AI draft brand tone, audience, pillars, keywords, and image style notes. Nothing is saved until you apply and save.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              value={websiteUrl}
+              onChange={(event) => setWebsiteUrl(event.target.value)}
+              placeholder="https://clientwebsite.com"
+              className="flex-1"
+            />
+            <Button type="button" onClick={handleAnalyzeWebsite} disabled={!websiteUrl.trim() || isAnalyzingWebsite} className="gap-2">
+              {isAnalyzingWebsite ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              Analyze Website
+            </Button>
+          </div>
+
+          {websiteAnalysis && (
+            <div className="rounded-lg border bg-background p-4 space-y-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold">Brand suggestions ready</p>
+                  <p className="text-xs text-muted-foreground">
+                    Source: {analysisSourceUrl}. Review before applying; this is a one-page import, not a full crawler.
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Checkbox checked={replaceFilledFields} onCheckedChange={(checked) => setReplaceFilledFields(checked === true)} />
+                  Replace filled fields
+                </label>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {[
+                  ["Tone", websiteAnalysis.brandTone],
+                  ["Audience", websiteAnalysis.targetAudience],
+                  ["Products / Services", websiteAnalysis.productsServices],
+                  ["USP", websiteAnalysis.usp],
+                  ["Content Pillars", websiteAnalysis.contentPillars],
+                  ["Style Hints", websiteAnalysis.colorStyleHints],
+                  ["Keywords", websiteAnalysis.keywords],
+                  ["Image Style", websiteAnalysis.imageStyleNotes],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-md bg-muted/35 p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+                    <p className="text-sm mt-1 leading-relaxed">{value || "Not clear from the page"}</p>
+                  </div>
+                ))}
+              </div>
+
+              {websiteAnalysis.confidenceNotes && (
+                <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                  <span>{websiteAnalysis.confidenceNotes}</span>
+                </div>
+              )}
+
+              <Button type="button" onClick={handleApplyAnalysis} className="gap-2">
+                <Save className="w-4 h-4" />
+                Apply suggestions to Brand Setup
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Logo upload */}
       <Card>

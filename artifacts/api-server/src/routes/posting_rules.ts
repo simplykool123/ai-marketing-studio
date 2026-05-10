@@ -4,6 +4,7 @@ import { postingRulesTable, postsTable } from "@workspace/db/schema";
 import { eq, and, isNull, inArray } from "drizzle-orm";
 import { addDays, startOfDay, setHours, setMinutes, setSeconds, setMilliseconds } from "date-fns";
 import { APPROVE_CONTENT_ROLES, MANAGE_CLIENT_ROLES, requireClientRole } from "../middleware/auth.js";
+import { schedulePost } from "../lib/publishing-destinations.js";
 
 const router = Router();
 
@@ -163,10 +164,7 @@ router.post("/clients/:clientId/posts/auto-schedule", requireClientRole(APPROVE_
 
     if (!dryRun) {
       for (const { postId, scheduledAt } of schedule) {
-        await db
-          .update(postsTable)
-          .set({ status: "scheduled", scheduledAt, updatedAt: new Date() })
-          .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)));
+        await schedulePost(postId, clientId, scheduledAt);
       }
     }
 

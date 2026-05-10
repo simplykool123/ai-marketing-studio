@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { postsTable, clientsTable, postingLogsTable, campaignsTable } from "@workspace/db/schema";
-import type { Post } from "@workspace/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import {
   CreatePostBody,
@@ -16,6 +15,12 @@ import {
   requireClientRole,
 } from "../middleware/auth.js";
 import { writeClientMemory } from "../lib/client-memory-packet.js";
+import {
+  buildPublishPackage,
+  buildPublishPayloadPost,
+  getPublishingReadiness,
+  markPublished,
+} from "../lib/publishing-destinations.js";
 
 const router = Router();
 
@@ -27,31 +32,6 @@ async function campaignBelongsToClient(campaignId: string | undefined, clientId:
     .where(and(eq(campaignsTable.id, campaignId), eq(campaignsTable.clientId, clientId)))
     .limit(1);
   return !!campaign;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function finalArtworkUrlFor(post: Post): string {
-  const schema = asRecord(post.contentSchema);
-  return String(schema.finalArtworkUrl ?? post.selectedImageUrl ?? post.brandedImageUrl ?? schema.imageUrl ?? "");
-}
-
-function exportPost(clientName: string, post: Post) {
-  return {
-    clientName,
-    postId: post.id,
-    platform: post.platform ?? "instagram",
-    caption: post.caption,
-    hashtags: post.hashtags ?? "",
-    finalArtworkUrl: finalArtworkUrlFor(post),
-    selectedImageUrl: post.selectedImageUrl ?? "",
-    scheduledAt: post.scheduledAt?.toISOString() ?? "",
-    status: post.publishedAt ? "published" : post.status,
-    createdAt: post.createdAt.toISOString(),
-    contentType: post.contentType ?? post.postType ?? "social_post",
-  };
 }
 
 router.get("/clients/:clientId/posts", async (req, res) => {
@@ -72,6 +52,14 @@ router.get("/clients/:clientId/posts", async (req, res) => {
     res.json(posts);
   } catch (err) {
     res.status(500).json({ error: "Failed to list posts" });
+  }
+});
+
+router.get("/clients/:clientId/publishing/readiness", async (req, res): Promise<void> => {
+  try {
+    res.json(await getPublishingReadiness(req.params.clientId));
+  } catch {
+    res.status(500).json({ error: "Failed to get publishing readiness" });
   }
 });
 
@@ -107,16 +95,12 @@ router.get("/clients/:clientId/posts/export", async (req, res) => {
       .where(
         and(
           eq(postsTable.clientId, req.params.clientId),
-          inArray(postsTable.status, ["approved", "export_ready"])
+          inArray(postsTable.status, ["approved", "export_ready", "scheduled"])
         )
       )
       .orderBy(postsTable.scheduledAt);
 
-    const exportData = {
-      clientName: client?.name ?? "Unknown",
-      exportedAt: new Date().toISOString(),
-      posts: posts.map((p) => exportPost(client?.name ?? "Unknown", p)),
-    };
+    const exportData = buildPublishPackage(client?.name ?? "Unknown", posts);
     res.json(exportData);
   } catch (err) {
     res.status(500).json({ error: "Failed to export posts" });
@@ -140,17 +124,15 @@ router.get("/clients/:clientId/export/approved", async (req, res) => {
       .where(
         and(
           eq(postsTable.clientId, req.params.clientId),
-          inArray(postsTable.status, ["approved", "export_ready"])
+          inArray(postsTable.status, ["approved", "export_ready", "scheduled"])
         )
       )
       .orderBy(postsTable.scheduledAt);
 
     const exportData = {
-      clientName: client.name,
-      exportedAt: new Date().toISOString(),
-      totalItems: posts.length,
+      ...buildPublishPackage(client.name, posts),
       posts: posts.map((p) => ({
-        ...exportPost(client.name, p),
+        ...buildPublishPayloadPost(client.name, p),
         topic: p.topic,
         originalImageUrl: p.originalImageUrl ?? "",
         brandedImageUrl: p.brandedImageUrl ?? "",
@@ -407,23 +389,9 @@ router.post("/clients/:clientId/posts/:postId/mock-post", requireClientRole(APPR
 router.post("/clients/:clientId/posts/:postId/mark-posted", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const { clientId, postId } = req.params;
-    const publishedAt = new Date();
-
-    const [updated] = await db
-      .update(postsTable)
-      .set({ status: "posted", publishedAt, updatedAt: publishedAt })
-      .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
-      .returning();
+    const updated = await markPublished(postId, clientId);
 
     if (!updated) { res.status(404).json({ error: "Post not found" }); return; }
-
-    await db.insert(postingLogsTable).values({
-      clientId,
-      postId,
-      action: "mark_posted_manually",
-      status: "success",
-      provider: "manual",
-    });
 
     await writeClientMemory(clientId, "Performance Memory / Posted manually", `User marked ${updated.platform ?? "social"} post "${updated.topic}" as posted. Treat this as an accepted final content direction.`);
 
@@ -461,11 +429,7 @@ router.post("/clients/:clientId/webhook/export", requireClientRole(APPROVE_CONTE
         .where(and(eq(postsTable.clientId, clientId), inArray(postsTable.status, ["approved", "export_ready"])));
     }
 
-    const payload = {
-      clientName: client.name,
-      exportedAt: new Date().toISOString(),
-      posts: posts.map(p => exportPost(client.name, p)),
-    };
+    const payload = buildPublishPackage(client.name, posts);
 
     const storedWebhookUrl = (client as { webhookUrl?: string | null }).webhookUrl;
 

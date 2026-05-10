@@ -496,7 +496,7 @@ export default function CampaignGenerator() {
       setCreatedDrafts(data.createdDrafts ?? []);
       toast({
         title: "Campaign generated",
-        description: `${data.createdDrafts?.length ?? 0} approval-ready drafts created`,
+        description: `${data.createdDrafts?.length ?? 0} drafts created in Review.`,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -524,12 +524,12 @@ export default function CampaignGenerator() {
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
       {/* Header */}
-      <div>
+      <div className="rounded-xl border bg-gradient-to-br from-primary/10 via-background to-background p-5">
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Flag className="w-6 h-6 text-primary" /> Campaign Planner
         </h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Generate a full campaign of draft posts, images, blogs, and ideas for Review.
+          Build a campaign from Brand DNA, AI Memory, and the active Storyline, then send the drafts into Review.
         </p>
       </div>
 
@@ -587,9 +587,9 @@ export default function CampaignGenerator() {
               <Select value={form.qualityMode} onValueChange={v => setForm(f => ({ ...f, qualityMode: v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="cheap">Cheap / Fast</SelectItem>
+                  <SelectItem value="cheap">Fast draft</SelectItem>
                   <SelectItem value="balanced">Balanced</SelectItem>
-                  <SelectItem value="best_quality">Best Quality</SelectItem>
+                  <SelectItem value="best_quality">Premium quality</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -608,6 +608,9 @@ export default function CampaignGenerator() {
                 ))}
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">
+              Storylines keep the campaign narrative consistent across posts and calendar moments.
+            </p>
           </div>
 
           {/* Date range */}
@@ -690,7 +693,7 @@ export default function CampaignGenerator() {
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-5 h-5 text-green-600" />
             <h2 className="text-lg font-semibold">{output.campaignName}</h2>
-            <Badge variant="outline" className="text-green-700 border-green-300 bg-green-50">Ready</Badge>
+            <Badge variant="outline" className="text-green-700 border-green-300 bg-green-50">Drafts created</Badge>
           </div>
 
           {output.brief && <BriefSection brief={output.brief} />}
@@ -699,14 +702,14 @@ export default function CampaignGenerator() {
             <CardContent className="py-4">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
                 <div>
-                  <p className="text-sm font-semibold">Drafts ready for Review</p>
+                  <p className="text-sm font-semibold">{createdDrafts.length} drafts created in Review.</p>
                   <p className="text-xs text-muted-foreground">
-                    Saved to posts under campaign {generatedCampaignId?.slice(0, 8) ?? ""}
+                    Review the drafts, edit artwork where needed, then move approved posts to the Publish Queue.
                   </p>
                 </div>
                 <Link href={`/clients/${clientId}/drafts${generatedCampaignId ? `?campaignId=${generatedCampaignId}` : ""}`}>
                   <Button size="sm">
-                    <ExternalLink className="w-4 h-4 mr-2" /> Open Review
+                    <ExternalLink className="w-4 h-4 mr-2" /> Review drafts
                   </Button>
                 </Link>
               </div>

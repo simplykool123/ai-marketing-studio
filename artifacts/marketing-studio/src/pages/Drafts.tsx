@@ -363,8 +363,8 @@ export default function Drafts() {
   const filteredDrafts = drafts.filter(matchesContentFilter);
   const filteredApproved = approved.filter(matchesContentFilter);
   const filteredHistory = history.filter(matchesContentFilter);
-  const lowQualityDrafts = drafts.filter((post) => post.qualityScore != null && post.qualityScore < 0.5);
-  const contentTypeCount = new Set(drafts.map((post) => contentGroup(post))).size;
+  const readyToApprove = needsReview.filter((post) => post.qualityScore == null || post.qualityScore >= 0.5);
+  const scheduledQueued = allPosts.filter((post) => post.status === "export_ready" || post.status === "scheduled");
   const campaignDraftCount = campaignIdFilter
     ? drafts.filter((post) => post.campaignId === campaignIdFilter).length
     : drafts.filter((post) => !!post.campaignId).length;
@@ -881,7 +881,7 @@ export default function Drafts() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Review</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            Approve drafts that are ready. Reject drafts to teach AI what to avoid.
+            Approve to teach AI what works. Reject to teach AI what to avoid. Edit artwork before posts move into the publishing workflow.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -925,20 +925,20 @@ export default function Drafts() {
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs font-medium text-muted-foreground">{campaignIdFilter ? "Campaign-filtered drafts" : "Campaign-linked drafts"}</p>
+            <p className="text-xs font-medium text-muted-foreground">Ready to approve</p>
+            <p className="text-2xl font-semibold mt-1">{readyToApprove.length}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xs font-medium text-muted-foreground">Scheduled / queued</p>
+            <p className="text-2xl font-semibold mt-1">{scheduledQueued.length}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xs font-medium text-muted-foreground">Campaign drafts</p>
             <p className="text-2xl font-semibold mt-1">{campaignDraftCount}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-medium text-muted-foreground">Needs improvement</p>
-            <p className="text-2xl font-semibold mt-1">{lowQualityDrafts.length}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-medium text-muted-foreground">Content types</p>
-            <p className="text-2xl font-semibold mt-1">{contentTypeCount}</p>
           </CardContent>
         </Card>
       </div>
@@ -960,9 +960,9 @@ export default function Drafts() {
       </div>
 
       <div className="rounded-md border border-border bg-card px-4 py-3">
-        <p className="text-sm font-medium">Review → Publish Queue → AI Memory</p>
+        <p className="text-sm font-medium">Review → Edit Artwork → Publish Queue → AI Memory</p>
         <p className="text-xs text-muted-foreground mt-1">
-          Approval moves content to the Publish Queue. It is not posted until a publish action, workflow export, or 'Mark as posted' happens.
+          AI used Brand DNA + Memory to create these drafts. Your approval and rejection choices become the next layer of memory.
         </p>
       </div>
 
@@ -1032,7 +1032,7 @@ export default function Drafts() {
                 <CheckCircle className="w-12 h-12 text-muted-foreground mb-4" />
                 <h3 className="text-xl font-semibold mb-2">{approved.length === 0 ? "No approved posts" : "No approved posts match this filter"}</h3>
                 <p className="text-muted-foreground max-w-md">
-                  Approve drafts to see them here and take publishing actions.
+                  Approve drafts to see them here, edit final artwork, then move them through the publishing workflow.
                 </p>
               </CardContent>
             </Card>

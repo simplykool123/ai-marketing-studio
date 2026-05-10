@@ -1,6 +1,10 @@
+import { toast } from "@/hooks/use-toast";
+
 const TOKEN_KEY = "ams_token";
+const USER_KEY = "ams_user";
 
 let installed = false;
+let lastSessionExpiredToastAt = 0;
 
 function getRequestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
@@ -36,13 +40,27 @@ export function installApiAuthFetch(): void {
   installed = true;
 
   const nativeFetch = window.fetch.bind(window);
-  window.fetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
+  window.fetch = async (input: RequestInfo | URL, init: RequestInit = {}) => {
     if (!shouldAttachAuth(input)) return nativeFetch(input, init);
 
     const headers = mergeAuthHeader(
       init.headers ?? (input instanceof Request ? input.headers : undefined),
     );
 
-    return nativeFetch(input, { ...init, headers });
+    const response = await nativeFetch(input, { ...init, headers });
+    if (response.status === 401) {
+      window.localStorage.removeItem(TOKEN_KEY);
+      window.localStorage.removeItem(USER_KEY);
+      window.dispatchEvent(new CustomEvent("ams:session-expired"));
+      const now = Date.now();
+      if (now - lastSessionExpiredToastAt > 3000) {
+        lastSessionExpiredToastAt = now;
+        toast({
+          title: "Session expired. Please sign in again.",
+          variant: "destructive",
+        });
+      }
+    }
+    return response;
   };
 }

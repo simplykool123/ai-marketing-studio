@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
-import { useParams, useLocation } from "wouter";
+import { Link, useParams, useLocation } from "wouter";
 import {
   Brain, Sparkles, ArrowRight, Bookmark, Trash2, RefreshCw,
   Calendar, Lightbulb, Image as ImageIcon, AlertTriangle,
-  Link2, Target, Heart, TrendingUp, Shield, BookOpen, Zap,
+  Link2, Target, Heart, TrendingUp, Shield, BookOpen, Zap, Flag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { useListStorylines } from "@workspace/api-client-react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -169,11 +170,12 @@ function IdeaCard({
 }) {
   const r = idea.rationale.toLowerCase();
   const basis = [
-    idea.storylineConnection                                                       ? "Storyline"          : null,
-    r.includes("brand") || r.includes("tone") || r.includes("audience")           ? "Brand DNA"          : null,
-    r.includes("gap") || r.includes("recent") || r.includes("missing")            ? "Past gap"           : null,
-    r.includes("reject") || r.includes("dismiss") || r.includes("avoid")          ? "Rejection memory"   : null,
-    r.includes("performance") || r.includes("worked") || r.includes("successful") ? "Performance memory" : null,
+    "Brand DNA",
+    "AI Memory",
+    idea.storylineConnection                                                       ? "Active Storyline"   : null,
+    r.includes("gap") || r.includes("recent") || r.includes("missing")            ? "Past posts"         : null,
+    r.includes("reject") || r.includes("dismiss") || r.includes("avoid")          ? "Rejected memory"    : null,
+    r.includes("performance") || r.includes("worked") || r.includes("successful") ? "Approved memory"    : null,
   ].filter(Boolean);
 
   return (
@@ -258,7 +260,7 @@ function IdeaCard({
           {idea.storylineConnection && (
             <span className="flex items-center gap-1">
               <Link2 className="w-3 h-3" />
-              {idea.storylineConnection}
+              Storyline: {idea.storylineConnection}
             </span>
           )}
         </div>
@@ -266,7 +268,7 @@ function IdeaCard({
         {/* ── Actions (pinned to bottom) */}
         <div className="flex items-center gap-2 pt-1 border-t border-border/40 mt-auto">
           <Button size="sm" className="h-7 text-xs gap-1.5 flex-1" onClick={() => onUse(idea)}>
-            Use this idea
+            Create Draft
             <ArrowRight className="w-3 h-3" />
           </Button>
           {!saved && (
@@ -281,7 +283,7 @@ function IdeaCard({
             onClick={() => onDismiss(idea)}
           >
             <Trash2 className="w-3 h-3" />
-            Dismiss
+            Not useful
           </Button>
         </div>
       </CardContent>
@@ -336,6 +338,8 @@ export default function AiBrainPage() {
 
   const [dismissTarget, setDismissTarget] = useState<AiIdea | null>(null);
   const [dismissReason, setDismissReason] = useState("");
+  const { data: storylines } = useListStorylines(clientId || "");
+  const activeStoryline = storylines?.find((storyline) => storyline.isActive);
 
   const token = localStorage.getItem("ams_token");
   const authHeaders = {
@@ -486,11 +490,46 @@ export default function AiBrainPage() {
         </div>
 
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">AI Brain</h1>
+          <h1 className="text-2xl font-bold tracking-tight">AI Ideas</h1>
           <p className="text-sm text-muted-foreground mt-1 max-w-sm mx-auto">
-            AI suggests what to post next using your brand, storyline, and past content.
+            What should we post next, and why? Ideas combine Brand DNA, AI Memory, the active Storyline, past posts, approvals, and rejections.
           </p>
         </div>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 w-full max-w-2xl">
+          {["Brand DNA", "AI Memory", "Storyline", "Past posts", "Approvals / rejects"].map((signal) => (
+            <div key={signal} className="rounded-lg border bg-background px-3 py-2 text-xs font-medium text-muted-foreground">
+              {signal}
+            </div>
+          ))}
+        </div>
+
+        <Card className="w-full max-w-2xl text-left border-violet-200 bg-violet-50/70">
+          <CardContent className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 rounded-lg bg-white p-2 text-violet-700">
+                <Flag className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">
+                  {activeStoryline ? "Active storyline" : "No active storyline"}
+                </p>
+                <p className="text-sm font-semibold text-foreground mt-0.5">
+                  {activeStoryline?.title ?? "Set a monthly theme for stronger ideas"}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  AI Ideas uses the active storyline together with Brand DNA and AI Memory.
+                </p>
+              </div>
+            </div>
+            <Link href={`/clients/${clientId}/storylines`}>
+              <Button variant="outline" size="sm" className="bg-white">
+                Storylines
+                <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
 
         {/* Strategic mode toggle */}
         <div className="flex items-center gap-3 bg-muted/50 border border-border/50 rounded-lg px-4 py-2.5">
@@ -502,12 +541,12 @@ export default function AiBrainPage() {
           />
           <div className="text-left">
             <Label htmlFor="strategic-mode" className="text-sm font-medium cursor-pointer">
-              Strategic mode {strategic ? "ON" : "OFF"}
+              Strategic mode
             </Label>
             <p className="text-xs text-muted-foreground">
               {strategic
-                ? "Fewer, deeper ideas tied to specific business outcomes"
-                : "Broader mix — 8 ideas across formats and platforms"}
+                ? "Deeper, targeted ideas — each tied to a specific business outcome"
+                : "Broad mix of 8 ideas across formats and platforms"}
             </p>
           </div>
           {strategic && (
@@ -550,7 +589,7 @@ export default function AiBrainPage() {
           <Brain className="w-10 h-10 text-muted-foreground/30" />
           <p className="text-sm font-medium">No ideas yet</p>
           <p className="text-xs max-w-xs">
-            Click the button above and the AI will read your brand DNA, history, and storyline to suggest content ideas.
+            Click the button above and the AI will read Brand DNA, AI Memory, past posts, and your active Storyline to suggest the next best content moves.
           </p>
         </div>
       ) : (
@@ -577,7 +616,7 @@ export default function AiBrainPage() {
           <TabsContent value="suggested" className="mt-4">
             {suggested.length === 0 ? (
               <p className="text-center py-12 text-muted-foreground text-sm">
-                No suggested ideas. Generate new ones above.
+                No suggested ideas. Generate new ideas to get strategy-backed draft starters.
               </p>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -595,7 +634,7 @@ export default function AiBrainPage() {
           <TabsContent value="saved" className="mt-4">
             {saved.length === 0 ? (
               <p className="text-center py-12 text-muted-foreground text-sm">
-                No saved ideas yet. Click "Save" on any suggestion to keep it here.
+                No saved ideas yet. Save strong angles here before turning them into drafts.
               </p>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -619,13 +658,13 @@ export default function AiBrainPage() {
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Dismiss this idea?</DialogTitle>
+            <DialogTitle>Mark this idea not useful?</DialogTitle>
             <DialogDescription>
-              The AI remembers dismissed ideas and avoids repeating them. Tell it why to make future suggestions more relevant.
+              The AI remembers ideas marked not useful and avoids repeating them. Tell it why to improve future recommendations.
             </DialogDescription>
           </DialogHeader>
           <Textarea
-            placeholder="Why are you dismissing this? (optional — e.g. too salesy, already done, wrong platform)"
+            placeholder="Why is this not useful? (optional — e.g. too salesy, already done, wrong platform)"
             value={dismissReason}
             onChange={(e) => setDismissReason(e.target.value)}
             className="min-h-[80px] text-sm"
@@ -635,7 +674,7 @@ export default function AiBrainPage() {
               Cancel
             </Button>
             <Button variant="destructive" size="sm" onClick={handleDismissConfirm}>
-              Dismiss idea
+              Mark not useful
             </Button>
           </DialogFooter>
         </DialogContent>

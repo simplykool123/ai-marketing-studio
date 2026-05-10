@@ -203,11 +203,11 @@ export default function MarketingCalendar() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-3 rounded-xl border bg-gradient-to-br from-primary/10 via-background to-background p-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Marketing Calendar</h1>
           <p className="text-muted-foreground mt-1">
-            Create occasion-based drafts for festivals, national days, and social moments.
+            Turn timely occasions into brand-safe drafts using Brand DNA, AI Memory, and the active Storyline.
           </p>
         </div>
         <Button asChild variant="outline">
@@ -250,7 +250,7 @@ export default function MarketingCalendar() {
               <CalendarDays className="w-10 h-10 text-muted-foreground mb-3" />
               <p className="font-medium">No upcoming occasions found</p>
               <p className="text-sm text-muted-foreground mt-1 max-w-sm">
-                This page helps you create calendar-based drafts. Check back after occasions load, or use Campaign Planner to create campaign drafts now.
+                This page creates occasion-based drafts for Review. Use Campaign Planner while no upcoming moments are available.
               </p>
             </div>
           ) : upcoming.map((occasion) => {
@@ -389,7 +389,7 @@ export default function MarketingCalendar() {
                   <div>
                     <div className="text-sm font-medium">Generate images now</div>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Uses image credits. You can also generate images later in Review.
+                      Uses image credits. You can also create or refine final artwork later from Review.
                     </p>
                   </div>
                   <Switch
@@ -399,7 +399,7 @@ export default function MarketingCalendar() {
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  This does not post automatically. Review before publishing.
+                  This creates drafts only. Approve in Review to teach AI what works, then finish in Publish Queue.
                 </p>
 
                 <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

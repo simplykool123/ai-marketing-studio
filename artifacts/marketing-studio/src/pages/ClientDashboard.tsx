@@ -26,6 +26,10 @@ import {
   Image as ImageIcon,
   Circle,
   AlertCircle,
+  Database,
+  Flag,
+  ListOrdered,
+  Workflow,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -172,6 +176,30 @@ function ActivityThumbnail({
   );
 }
 
+function StatusPill({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <span className={cn(
+      "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
+      ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-800",
+    )}>
+      {ok ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+      {label}
+    </span>
+  );
+}
+
+function PipelineStep({ label, count, icon: Icon }: { label: string; count: number; icon: ElementType }) {
+  return (
+    <div className="rounded-lg border bg-background/80 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        <Icon className="w-4 h-4 text-primary" />
+      </div>
+      <div className="mt-2 text-2xl font-semibold">{count}</div>
+    </div>
+  );
+}
+
 export default function ClientDashboard() {
   const { clientId } = useParams<{ clientId: string }>();
 
@@ -257,7 +285,9 @@ export default function ClientDashboard() {
   const collapsedSetup = setupComplete >= 3;
   const visibleSetupSteps = collapsedSetup ? setupSteps.filter((step) => !step.done) : setupSteps;
   const hasSocialAccount = !!dashboard.connectedAccounts?.length;
+  const hasWorkflow = !!(client as { webhookUrl?: string | null }).webhookUrl;
   const readyPostCount = dashboard.approvedCount + dashboard.scheduledCount;
+  const publishingReady = hasSocialAccount || hasWorkflow;
   const activityItems = (() => {
     const published = (recentlyPublished ?? []).slice(0, 2).map((post: Post) => ({ type: "published" as const, post }));
     const publishedIds = new Set(published.map(({ post }) => post.id));
@@ -292,12 +322,12 @@ export default function ClientDashboard() {
         button: "Review drafts",
       };
     }
-    if (readyPostCount > 0 && !hasSocialAccount) {
+    if (readyPostCount > 0 && !publishingReady) {
       return {
-        title: "Connect account",
-        detail: "AI is ready. Approved/scheduled posts need a destination before publishing.",
-        href: `/clients/${clientId}/social-accounts`,
-        button: "Connect account",
+      title: "Choose publishing destination",
+      detail: "Approved posts are ready, but no social account or workflow URL is connected. Export still works.",
+      href: `/clients/${clientId}/social-accounts`,
+      button: "Check destinations",
       };
     }
     if (readyPostCount > 0) {
@@ -310,10 +340,10 @@ export default function ClientDashboard() {
     }
     if (!hasSocialAccount) {
       return {
-        title: "Connect a social account",
-        detail: "AI is ready. Approved/scheduled posts need a destination before publishing.",
-        href: `/clients/${clientId}/social-accounts`,
-        button: "Connect account",
+      title: "Connect a destination",
+      detail: "Set up a social account or workflow URL, or keep using manual export packages.",
+      href: `/clients/${clientId}/social-accounts`,
+      button: "Check destinations",
       };
     }
     return {
@@ -361,22 +391,24 @@ export default function ClientDashboard() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
+      <div className="flex items-center justify-between flex-wrap gap-4 rounded-xl border bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 p-6 text-white shadow-sm">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
-          <p className="text-muted-foreground mt-1">What needs attention for {client.name}.</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/50">Agency Command Center</p>
+          <h1 className="text-3xl font-semibold tracking-tight mt-2">{client.name}</h1>
+          <p className="text-white/70 mt-1 max-w-2xl">
+            One operating view for strategy, draft production, review, publishing readiness, and AI learning.
+          </p>
         </div>
-        <Link href={`/clients/${clientId}/create`}>
-          <Button variant="outline" className="gap-2">
-            <Sparkles className="w-4 h-4" />
-            Create Next Post
-          </Button>
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <StatusPill ok={dashboard.aiProviderConfigured} label={dashboard.aiProviderConfigured ? "AI ready" : "AI setup needed"} />
+          <StatusPill ok={dashboard.hasBrandDna} label={dashboard.hasBrandDna ? "Brand ready" : "Brand incomplete"} />
+          <StatusPill ok={publishingReady} label={publishingReady ? "Destination ready" : "Export/manual only"} />
+        </div>
       </div>
 
-      <Card className="border-primary/30 bg-primary/5 shadow-sm">
+      <Card className="border-primary/30 bg-gradient-to-br from-primary/10 via-background to-background shadow-sm">
         <CardContent className="flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-primary">Next step</p>
@@ -392,10 +424,18 @@ export default function ClientDashboard() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-5">
+        <PipelineStep label="Drafts" count={dashboard.draftCount} icon={FileText} />
+        <PipelineStep label="Review" count={dashboard.pendingApprovals} icon={CheckCircle2} />
+        <PipelineStep label="Ready" count={dashboard.approvedCount} icon={Send} />
+        <PipelineStep label="Scheduled" count={dashboard.scheduledCount} icon={Clock} />
+        <PipelineStep label="Published" count={dashboard.publishedCount} icon={Globe} />
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-3">
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI readiness</p>
             <p className="mt-1 text-sm font-medium">
               {dashboard.aiProviderConfigured ? "AI is ready" : "AI needs setup"}
             </p>
@@ -408,30 +448,46 @@ export default function ClientDashboard() {
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Review</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Brand Setup</p>
             <p className="mt-1 text-sm font-medium">
-              {dashboard.pendingApprovals + dashboard.draftCount > 0 ? "Drafts are waiting" : "No drafts waiting"}
+              {dashboard.hasBrandDna ? "Brand DNA is active" : "Brand inputs missing"}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Approve ready drafts or reject weak ones.
+              Brand voice, pillars, and visuals improve every AI suggestion.
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Publishing</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Publishing readiness</p>
             <p className="mt-1 text-sm font-medium">
-              {readyPostCount > 0 && !hasSocialAccount
-                ? "Ready posts blocked"
-                : hasSocialAccount
-                  ? "Destination connected"
-                  : "No destination connected"}
+              {publishingReady ? "Destination connected" : "Manual export only"}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Approved posts wait in the Publish Queue.
+              {hasSocialAccount ? "Social account connected." : hasWorkflow ? "Workflow URL configured." : "No social account or workflow URL connected yet."}
             </p>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        {[
+          { label: "Campaign Planner", href: `/clients/${clientId}/campaigns/generate`, icon: Flag },
+          { label: "Marketing Calendar", href: `/clients/${clientId}/marketing-calendar`, icon: CalendarDays },
+          { label: "Review", href: `/clients/${clientId}/drafts?tab=pending`, icon: CheckCircle2 },
+          { label: "Publish Queue", href: `/clients/${clientId}/queue`, icon: ListOrdered },
+          { label: "AI Memory", href: `/clients/${clientId}/memory`, icon: Database },
+        ].map((action) => {
+          const Icon = action.icon;
+          return (
+            <Link key={action.label} href={action.href}>
+              <Button variant="outline" className="h-11 w-full justify-start gap-2 bg-background">
+                <Icon className="w-4 h-4 text-primary" />
+                {action.label}
+              </Button>
+            </Link>
+          );
+        })}
       </div>
 
       {/* Setup checklist */}
@@ -507,23 +563,24 @@ export default function ClientDashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-3">
-        <Card className={cn("bg-card", !hasSocialAccount && "border-amber-200 bg-amber-50/40")}>
+        <Card className={cn("bg-card", !publishingReady && "border-amber-200 bg-amber-50/40")}>
           <CardHeader className="flex flex-row items-center justify-between py-3">
             <CardTitle className="flex items-center gap-2 text-base">
-              {hasSocialAccount ? <Globe className="w-4 h-4 text-primary" /> : <AlertCircle className="w-4 h-4 text-amber-600" />}
-              Social Accounts
+              {publishingReady ? <Workflow className="w-4 h-4 text-primary" /> : <AlertCircle className="w-4 h-4 text-amber-600" />}
+              Publishing Destination
             </CardTitle>
             <Link href={`/clients/${clientId}/social-accounts`} className="text-xs text-primary hover:underline flex items-center">
               Manage <ArrowRight className="w-3 h-3 ml-1" />
             </Link>
           </CardHeader>
           <CardContent className="pt-0 pb-3">
-            {!hasSocialAccount ? (
+            {!publishingReady ? (
               <p className="text-sm text-muted-foreground">
-                No account connected. Approved posts can wait in the queue, but need a destination before publishing.
+                No social account or workflow URL connected. Export packages and manual mark-posted are still available.
               </p>
             ) : (
               <div className="flex flex-wrap gap-2">
+                {hasWorkflow && <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">Workflow URL</Badge>}
                 {dashboard.connectedAccounts.slice(0, 4).map((account) => (
                   <div key={account.id} className="flex items-center gap-2 rounded-md border bg-background px-2 py-1.5">
                     <PlatformIcon platform={account.platform} className="w-3.5 h-3.5" />
@@ -622,7 +679,7 @@ export default function ClientDashboard() {
       <div className="rounded-md border bg-card px-4 py-3">
         <p className="text-sm font-medium">Main workflow</p>
         <p className="text-xs text-muted-foreground mt-1">
-          Brand Setup → Campaign Planner / Marketing Calendar → Review → Publish Queue.
+          Brand Setup → AI Ideas / Storyline → Campaign Planner / Marketing Calendar → Review → Edit Artwork → Publish Queue → AI Memory.
         </p>
       </div>
 

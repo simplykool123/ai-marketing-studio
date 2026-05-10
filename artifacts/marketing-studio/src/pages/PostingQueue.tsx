@@ -22,7 +22,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { format, isToday, isTomorrow, isPast } from "date-fns";
 import {
   CheckCircle2, Clock, CalendarCheck, ListOrdered, PenLine,
-  Send, Loader2, AlertCircle, PlayCircle, Workflow, Info, X, Link as LinkIcon, MoreHorizontal,
+  Loader2, AlertCircle, Workflow, Info, X, MoreHorizontal,
   Download, Copy, CalendarPlus, FileJson,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -45,6 +45,28 @@ const PLATFORM_LABELS: Record<string, string> = {
 const QUEUE_STATUSES = ["approved", "export_ready", "scheduled", "failed", "posted", "published"];
 
 const BASE = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
+
+type PublishingDestination = {
+  type: "manual" | "workflow" | "native_meta_placeholder" | "postiz_placeholder" | "ayrshare_placeholder";
+  label: string;
+  status: "available" | "configured" | "not_configured" | "coming_next";
+  description: string;
+  actionLabel: string;
+  enabled: boolean;
+};
+
+type PublishingReadiness = {
+  destinations: PublishingDestination[];
+  manualAvailable: boolean;
+  workflowConfigured: boolean;
+  nativeMetaConnected: boolean;
+  externalConnectorConnected: boolean;
+  activeSocialAccountCount: number;
+  canSendWorkflow: boolean;
+  canExportManual: boolean;
+  canPublishNatively: boolean;
+  blockedReason: string | null;
+};
 
 function asRecord(value: unknown): Record<string, any> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
@@ -90,15 +112,6 @@ function QueueImage({ post }: { post: any }) {
   );
 }
 
-async function mockPostApi(clientId: string, postId: string) {
-  const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/mock-post`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-  });
-  if (!res.ok) throw new Error("Failed to simulate mock post");
-  return res.json();
-}
-
 async function markPostedApi(clientId: string, postId: string) {
   const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/mark-posted`, {
     method: "POST",
@@ -129,19 +142,9 @@ async function autoScheduleApi(clientId: string) {
   return data as { count: number; message?: string };
 }
 
-async function publishApi(clientId: string, postId: string) {
-  const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/publish`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? "Publish failed");
-  return data;
-}
-
-async function fetchSocialAccounts(clientId: string): Promise<Array<{ platform: string; isActive: boolean }>> {
-  const res = await fetch(`${BASE}/api/clients/${clientId}/social-accounts`);
-  if (!res.ok) return [];
+async function fetchPublishingReadiness(clientId: string): Promise<PublishingReadiness> {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/publishing/readiness`);
+  if (!res.ok) throw new Error("Failed to load publishing destinations");
   return res.json();
 }
 
@@ -174,8 +177,8 @@ function postStatusLabel(post: any): string {
   if (post.status === "scheduled") return "Scheduled";
   if (isNoAccountFailure(post)) return "Failed: no account connected";
   if (post.status === "failed") return "Failed";
-  if (post.status === "approved" || post.status === "export_ready") return "Ready to post";
-  if (post.status === "posted" || post.status === "published") return "Ready to post";
+  if (post.status === "approved" || post.status === "export_ready") return "Ready";
+  if (post.status === "posted" || post.status === "published") return "Ready";
   return "Not posted yet";
 }
 
@@ -198,10 +201,24 @@ function buildExportPackage(clientName: string, posts: any[]) {
       selectedImageUrl: post.selectedImageUrl ?? "",
       scheduledAt: post.scheduledAt ?? "",
       status: exportableStatus(post),
-      createdAt: post.createdAt ?? "",
       contentType: post.contentType ?? post.postType ?? "social_post",
+      createdAt: post.createdAt ?? "",
+      ...(post.publishedAt ? { publishedAt: post.publishedAt } : {}),
     })),
   };
+}
+
+function destinationBadgeClass(destination: PublishingDestination): string {
+  if (destination.status === "available" || destination.status === "configured") return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (destination.status === "coming_next") return "bg-blue-50 text-blue-700 border-blue-200";
+  return "bg-amber-50 text-amber-800 border-amber-200";
+}
+
+function destinationStatusLabel(destination: PublishingDestination): string {
+  if (destination.status === "available") return "Available";
+  if (destination.status === "configured") return "Configured";
+  if (destination.status === "coming_next") return "Coming next";
+  return "Not configured";
 }
 
 function downloadJson(filename: string, payload: unknown) {
@@ -261,15 +278,16 @@ export default function PostingQueue() {
 
   const { data: posts = [], isLoading } = useListPosts(clientId ?? "");
   const { data: clientData } = useGetClient(clientId ?? "");
-  const { data: socialAccounts = [] } = useQuery({
-    queryKey: ["social-accounts", clientId],
-    queryFn: () => fetchSocialAccounts(clientId!),
+  const { data: publishingReadiness } = useQuery({
+    queryKey: ["publishing-readiness", clientId],
+    queryFn: () => fetchPublishingReadiness(clientId!),
     enabled: !!clientId,
   });
   const invalidate = () => {
     if (!clientId) return;
     queryClient.invalidateQueries({ queryKey: getListPostsQueryKey(clientId) });
     queryClient.invalidateQueries({ queryKey: ["enhanced-dashboard", clientId] });
+    queryClient.invalidateQueries({ queryKey: ["publishing-readiness", clientId] });
   };
 
   const handleSaveArtwork = async (blob: Blob, layers: ArtworkLayers) => {
@@ -323,18 +341,6 @@ export default function PostingQueue() {
     toast({ title: "Final artwork saved" });
   };
 
-  const mockPostMutation = useMutation({
-    mutationFn: (postId: string) => mockPostApi(clientId!, postId),
-    onSuccess: () => {
-      invalidate();
-      toast({
-        title: "Demo post simulated",
-        description: "Status was set to posted locally — nothing was sent to any platform.",
-      });
-    },
-    onError: () => toast({ title: "Failed to simulate post", variant: "destructive" }),
-  });
-
   const markPostedMutation = useMutation({
     mutationFn: (postId: string) => markPostedApi(clientId!, postId),
     onSuccess: () => {
@@ -351,22 +357,6 @@ export default function PostingQueue() {
       toast({ title: "Sent to workflow" });
     },
     onError: () => toast({ title: "Failed to send workflow", variant: "destructive" }),
-  });
-
-  const publishMutation = useMutation({
-    mutationFn: (postId: string) => publishApi(clientId!, postId),
-    onSuccess: () => {
-      invalidate();
-      toast({ title: "Publish retry complete" });
-    },
-    onError: (err) => {
-      invalidate();
-      toast({
-        title: "Publish retry failed",
-        description: err instanceof Error ? err.message : "Connect an account and try again.",
-        variant: "destructive",
-      });
-    },
   });
 
   const autoScheduleMutation = useMutation({
@@ -401,6 +391,11 @@ export default function PostingQueue() {
   const selectedPosts = sortedPosts.filter((post) => selectedIds.has(post.id));
   const readyPosts = sortedPosts.filter((post) => ["approved", "export_ready"].includes(post.status) && !post.scheduledAt);
   const clientName = clientData?.name ?? "Client";
+  const hasWorkflow = !!publishingReadiness?.workflowConfigured;
+  const manualDestination = publishingReadiness?.destinations.find((destination) => destination.type === "manual");
+  const workflowDestination = publishingReadiness?.destinations.find((destination) => destination.type === "workflow");
+  const metaDestination = publishingReadiness?.destinations.find((destination) => destination.type === "native_meta_placeholder");
+  const externalDestinations = publishingReadiness?.destinations.filter((destination) => destination.type === "postiz_placeholder" || destination.type === "ayrshare_placeholder") ?? [];
   const allVisibleSelected = sortedPosts.length > 0 && sortedPosts.every((post) => selectedIds.has(post.id));
 
   const toggleSelected = (postId: string, checked: boolean) => {
@@ -544,6 +539,64 @@ export default function PostingQueue() {
           </div>
         </div>
 
+        <Card className="border-primary/15 bg-gradient-to-br from-primary/5 via-background to-background">
+          <CardContent className="p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-sm font-semibold">Publishing destination</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  AI Marketing Studio stays the source of truth. Export, send to workflow, or mark posts after manual publishing.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline" className={cn(manualDestination && destinationBadgeClass(manualDestination))}>
+                  Manual posting available
+                </Badge>
+                <Badge variant="outline" className={cn(workflowDestination && destinationBadgeClass(workflowDestination))}>
+                  {hasWorkflow ? "Workflow configured" : "Workflow not configured"}
+                </Badge>
+                <Badge variant="outline" className={cn(metaDestination && destinationBadgeClass(metaDestination))}>
+                  Meta not connected yet
+                </Badge>
+                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                  External connector not connected yet
+                </Badge>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-2 md:grid-cols-2 lg:grid-cols-4">
+              {(publishingReadiness?.destinations ?? []).map((destination) => (
+                <div key={destination.type} className="rounded-md border bg-background p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold">{destination.label}</p>
+                    <Badge variant="outline" className={cn("text-[10px]", destinationBadgeClass(destination))}>
+                      {destinationStatusLabel(destination)}
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{destination.description}</p>
+                  <p className="text-[11px] font-medium text-foreground mt-2">{destination.actionLabel}</p>
+                </div>
+              ))}
+            </div>
+            {!hasWorkflow && (
+              <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                <span>Automated delivery is blocked until a workflow URL or future connector is configured. Export JSON, copy captions, and manual posting remain available.</span>
+              </div>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => exportPosts(sortedPosts, "queue")} disabled={sortedPosts.length === 0}>
+                Export manually
+              </Button>
+              <Link href={`/clients/${clientId}/settings`}>
+                <Button variant="outline" size="sm">Setup workflow</Button>
+              </Link>
+              <Button variant="outline" size="sm" disabled title="Native Meta connector is coming next">
+                Connect Meta later
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
         {isLoading ? (
           <div className="space-y-3">
             {[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-20" />)}
@@ -574,7 +627,7 @@ export default function PostingQueue() {
                   <Copy className="w-3.5 h-3.5" />
                   Copy captions
                 </Button>
-                <Button variant="outline" size="sm" onClick={runBulkWorkflow} disabled={!selectedPosts.length || bulkAction !== null} className="h-8 gap-1.5">
+                <Button variant="outline" size="sm" onClick={runBulkWorkflow} disabled={!selectedPosts.length || bulkAction !== null || !hasWorkflow} className="h-8 gap-1.5">
                   {bulkAction === "workflow" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Workflow className="w-3.5 h-3.5" />}
                   Send to workflow
                 </Button>
@@ -589,15 +642,10 @@ export default function PostingQueue() {
               const isFailed = post.status === "failed";
               const isPublished = post.status === "posted" || post.status === "published";
               const hasPublishedProof = isPublished && !!post.publishedAt;
-              const noAccountFailure = isNoAccountFailure(post);
-              const platform = post.platform ?? "instagram";
-              const hasMatchingAccount = socialAccounts.some((account) => account.isActive && account.platform === platform);
               const canAct = ["approved", "export_ready", "scheduled", "failed"].includes(post.status);
               const isBusy =
-                (mockPostMutation.isPending && mockPostMutation.variables === post.id) ||
                 (markPostedMutation.isPending && markPostedMutation.variables === post.id) ||
-                (webhookMutation.isPending && webhookMutation.variables === post.id) ||
-                (publishMutation.isPending && publishMutation.variables === post.id);
+                (webhookMutation.isPending && webhookMutation.variables === post.id);
 
               return (
                 <Card key={post.id} className={cn(
@@ -662,30 +710,6 @@ export default function PostingQueue() {
                     <div className="flex gap-1.5 shrink-0 flex-wrap justify-end max-w-[220px]">
                       {canAct && (
                         <>
-                          {(noAccountFailure || !hasMatchingAccount) && (
-                            <Link href={`/clients/${clientId}/social-accounts`}>
-                              <Button size="sm" variant="default" className="h-7 text-xs px-2">
-                                <LinkIcon className="w-3.5 h-3.5 mr-1" />
-                                Connect account
-                              </Button>
-                            </Link>
-                          )}
-
-                          {hasMatchingAccount && !hasPublishedProof && (
-                            <Button
-                              size="sm"
-                              variant={isFailed ? "outline" : "default"}
-                              className="h-7 text-xs px-2"
-                              onClick={() => publishMutation.mutate(post.id)}
-                              disabled={isBusy}
-                            >
-                              {publishMutation.isPending && publishMutation.variables === post.id
-                                ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-                                : <Send className="w-3.5 h-3.5 mr-1" />}
-                              {isFailed ? "Retry Publish" : "Publish Now"}
-                            </Button>
-                          )}
-
                           <Button
                             size="sm"
                             variant="outline"
@@ -695,7 +719,7 @@ export default function PostingQueue() {
                           >
                             {markPostedMutation.isPending && markPostedMutation.variables === post.id
                               ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-                              : <Send className="w-3.5 h-3.5 mr-1" />}
+                              : <CheckCircle2 className="w-3.5 h-3.5 mr-1" />}
                             Mark posted
                           </Button>
 
@@ -716,13 +740,23 @@ export default function PostingQueue() {
                                   Edit in Review
                                 </Link>
                               </DropdownMenuItem>
-                              <DropdownMenuItem onSelect={() => mockPostMutation.mutate(post.id)}>
-                                <PlayCircle className="w-3.5 h-3.5 mr-2" />
-                                Simulate post (for testing)
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onSelect={() => webhookMutation.mutate(post.id)}>
+                              <DropdownMenuItem disabled={!hasWorkflow} onSelect={() => webhookMutation.mutate(post.id)}>
                                 <Workflow className="w-3.5 h-3.5 mr-2" />
-                                Send to workflow
+                                {hasWorkflow ? "Send to workflow" : "Setup workflow first"}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem disabled>
+                                <Info className="w-3.5 h-3.5 mr-2" />
+                                Future: Connect Meta
+                              </DropdownMenuItem>
+                              {externalDestinations.length > 0 && (
+                                <DropdownMenuItem disabled>
+                                  <Info className="w-3.5 h-3.5 mr-2" />
+                                  Future: Postiz / Ayrshare
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem onSelect={() => copyCaptions([post])}>
+                                <Copy className="w-3.5 h-3.5 mr-2" />
+                                Copy caption
                               </DropdownMenuItem>
                               <DropdownMenuItem onSelect={() => exportPosts([post], post.id)}>
                                 <FileJson className="w-3.5 h-3.5 mr-2" />

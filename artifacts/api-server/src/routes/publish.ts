@@ -7,6 +7,7 @@ import { resolveAccessToken } from "../lib/scheduler.js";
 import { publishToPlatform } from "../lib/publishers/index.js";
 import { APPROVE_CONTENT_ROLES, requireClientRole } from "../middleware/auth.js";
 import { writeClientMemory } from "../lib/client-memory-packet.js";
+import { markFailed } from "../lib/publishing-destinations.js";
 
 const router = Router();
 
@@ -55,14 +56,7 @@ router.post("/clients/:clientId/posts/:postId/publish", requireClientRole(APPROV
       .limit(1);
 
     if (!account?.accessToken) {
-      await db
-        .update(postsTable)
-        .set({
-          status: "failed",
-          publishError: `No active ${platform} account connected. Connect one in Social Accounts.`,
-          updatedAt: new Date(),
-        })
-        .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)));
+      await markFailed(postId, clientId, `No active ${platform} account connected. Connect one in Social Accounts.`);
 
       res.status(422).json({
         error: `No active ${platform} account connected`,
@@ -103,15 +97,7 @@ router.post("/clients/:clientId/posts/:postId/publish", requireClientRole(APPROV
     res.json(updated);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Publish failed";
-    await db
-      .update(postsTable)
-      .set({
-        status: "failed",
-        publishError: message,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(postsTable.id, req.params.postId), eq(postsTable.clientId, req.params.clientId)))
-      .catch(() => {});
+    await markFailed(req.params.postId, req.params.clientId, message).catch(() => {});
 
     res.status(500).json({ error: message });
   }

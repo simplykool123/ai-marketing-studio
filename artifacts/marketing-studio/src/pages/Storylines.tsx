@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams } from "wouter";
+import { Link, useParams } from "wouter";
 import { 
   useListStorylines, 
   useCreateStoryline, 
@@ -18,7 +18,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, BookOpen, Trash2 } from "lucide-react";
+import { ArrowRight, CalendarDays, Flag, Plus, BookOpen, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 
 export default function Storylines() {
@@ -36,6 +36,7 @@ export default function Storylines() {
   const [title, setTitle] = useState("");
   const [narrative, setNarrative] = useState("");
   const [isActive, setIsActive] = useState(true);
+  const activeStoryline = storylines?.find((storyline) => storyline.isActive);
 
   const handleCreate = () => {
     if (!title.trim() || !narrative.trim() || !clientId) return;
@@ -107,11 +108,11 @@ export default function Storylines() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Storylines</h1>
           <p className="text-muted-foreground mt-1">
-            Create a theme that connects posts over weeks, so content does not feel random.
+            Connect posts into a campaign arc. AI Ideas and Campaign Planner use the active storyline as strategic direction.
           </p>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -163,13 +164,55 @@ export default function Storylines() {
         </Dialog>
       </div>
 
+      <Card className="border-primary/20 bg-gradient-to-br from-primary/10 via-background to-background">
+        <CardContent className="p-5">
+          {activeStoryline ? (
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge className="bg-primary/15 text-primary border-primary/20 hover:bg-primary/20">Active storyline</Badge>
+                  <span className="text-xs text-muted-foreground">Current monthly theme / chapter</span>
+                </div>
+                <h2 className="text-xl font-semibold">{activeStoryline.title}</h2>
+                <p className="text-sm text-muted-foreground max-w-3xl leading-relaxed">{activeStoryline.narrative}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Link href={`/clients/${clientId}/campaigns/generate`}>
+                  <Button className="gap-2">
+                    <Flag className="w-4 h-4" />
+                    Generate campaign
+                  </Button>
+                </Link>
+                <Link href={`/clients/${clientId}/marketing-calendar`}>
+                  <Button variant="outline" className="gap-2">
+                    <CalendarDays className="w-4 h-4" />
+                    Use with calendar
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-semibold">No active storyline yet</p>
+                <p className="text-sm text-muted-foreground mt-1">Create one monthly theme so AI Ideas and campaigns feel connected instead of one-off.</p>
+              </div>
+              <Button onClick={() => setIsOpen(true)} className="gap-2 sm:self-auto self-start">
+                <Plus className="w-4 h-4" />
+                Create active storyline
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {storylines?.length === 0 ? (
         <Card className="border-dashed bg-card/50">
           <CardContent className="flex flex-col items-center justify-center py-20 text-center">
             <BookOpen className="w-12 h-12 text-muted-foreground mb-4" />
-            <h3 className="text-xl font-semibold mb-2">No storylines</h3>
+            <h3 className="text-xl font-semibold mb-2">No storylines yet</h3>
             <p className="text-muted-foreground max-w-md mb-6">
-              Storylines help the AI maintain consistency across multiple posts. Create your first campaign narrative.
+              Storylines give the AI a monthly theme, chapter, and point of view so campaigns feel intentionally sequenced.
             </p>
             <Button onClick={() => setIsOpen(true)} variant="outline">Create Storyline</Button>
           </CardContent>
@@ -209,6 +252,20 @@ export default function Storylines() {
               </CardHeader>
               <CardContent>
                 <p className="text-sm whitespace-pre-wrap">{storyline.narrative}</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Link href={`/clients/${clientId}/campaigns/generate`}>
+                    <Button size="sm" variant={storyline.isActive ? "default" : "outline"} className="gap-1.5">
+                      Generate campaign
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </Button>
+                  </Link>
+                  <Link href={`/clients/${clientId}/marketing-calendar`}>
+                    <Button size="sm" variant="outline" className="gap-1.5">
+                      Marketing Calendar
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </Button>
+                  </Link>
+                </div>
               </CardContent>
             </Card>
           ))}

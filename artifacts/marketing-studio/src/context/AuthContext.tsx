@@ -44,6 +44,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    const handleSessionExpired = () => clearSession();
+    window.addEventListener("ams:session-expired", handleSessionExpired);
     const storedToken = localStorage.getItem(TOKEN_KEY);
     const storedUser = localStorage.getItem(USER_KEY);
     if (storedToken && storedUser) {
@@ -62,6 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     setIsLoading(false);
+    return () => window.removeEventListener("ams:session-expired", handleSessionExpired);
   }, [clearSession]);
 
   const login = useCallback(async (email: string, password: string) => {

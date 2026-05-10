@@ -137,14 +137,14 @@ function brandFacts(brandDna: BrandDna | undefined): string[] {
 }
 
 const EMPTY_STATE: Partial<Record<SectionId, string>> = {
-  brand:       "Complete Brand Setup to populate Brand DNA.",
-  story:       "Create a storyline to unlock narrative content planning.",
-  rules:       "Add manual rules for strict brand requirements.",
-  performance: "Approve drafts to teach AI what works.",
-  rejection:   "Reject drafts to teach AI what to avoid.",
-  image:       "Generate images to build up your visual style memory.",
-  video:       "Create video concepts to build your video style memory.",
-  seo:         "Generate blog posts to build your SEO keyword memory.",
+  brand:       "Complete Brand Setup or import a website to populate brand facts.",
+  story:       "Create an active storyline so campaigns have a running narrative.",
+  rules:       "Add strict rules the AI should always follow.",
+  performance: "Approve drafts and mark posted content to teach AI what works.",
+  rejection:   "Reject drafts to teach AI which angles, tones, or formats to avoid.",
+  image:       "Save final artwork or import website style notes to build visual memory.",
+  video:       "Video memory is reserved for a later sprint.",
+  seo:         "Use the website importer or blog drafts to build keyword memory.",
 };
 
 export default function Memory() {
@@ -236,7 +236,7 @@ export default function Memory() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">AI Memory</h1>
         <p className="text-muted-foreground mt-1">
-          The AI's long-term learning for this client: approvals, rejections, rules, and style.
+          The client knowledge base behind every suggestion: Brand DNA, storyline, approvals, rejections, rules, keywords, and visual style.
         </p>
       </div>
 
@@ -259,14 +259,14 @@ export default function Memory() {
       <div className="rounded-lg border border-primary/15 bg-primary/5 px-4 py-3">
         <p className="text-xs font-semibold text-primary mb-2 flex items-center gap-1.5">
           <BrainCircuit className="w-3.5 h-3.5" />
-          How memory helps
+          How memory powers the agency workflow
         </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
           {[
-            { icon: Lightbulb, text: "Suggests better ideas" },
-            { icon: BarChart3, text: "Avoids weak angles" },
-            { icon: MessageSquareX, text: "Learns from approvals and rejections" },
-            { icon: Image, text: "Keeps style consistent" },
+            { icon: Lightbulb, text: "Generates on-brand ideas" },
+            { icon: BarChart3, text: "Avoids angles that fell flat" },
+            { icon: MessageSquareX, text: "Learns from every approval and rejection" },
+            { icon: Image, text: "Keeps tone and style consistent" },
           ].map(({ icon: Icon, text }) => (
             <div key={text} className="flex items-start gap-2 text-[11px] text-muted-foreground leading-relaxed">
               <Icon className="w-3 h-3 mt-0.5 shrink-0 text-primary/60" />
