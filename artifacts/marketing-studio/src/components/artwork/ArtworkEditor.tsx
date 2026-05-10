@@ -14,7 +14,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ArtworkLayers, LayerId, LogoColorMode } from "./types";
-import { applyPreset, defaultLayers, DEFAULT_LAYER_ORDER, PRESET_LABELS, type PresetId } from "./presets";
+import {
+  applyPreset, applyTemplate, defaultLayers, DEFAULT_LAYER_ORDER,
+  PRESET_LABELS, TEMPLATE_META,
+  type PresetId, type TemplateId,
+} from "./presets";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -124,13 +128,124 @@ function layerLabel(id: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Template thumbnails — schematic SVG previews (108×108 canvas units = 1080÷10)
+// ---------------------------------------------------------------------------
+
+const W = 108, H = 108;
+
+function TemplateThumbnail({ id }: { id: TemplateId }) {
+  switch (id) {
+    case "festival_greeting":
+      return (
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full">
+          <rect width={W} height={H} fill="#1e293b" />
+          {/* center panel */}
+          <rect x="6" y="28" width="96" height="52" fill="#0f172a" opacity="0.88" rx="2" />
+          {/* logo centered top */}
+          <rect x="46" y="8" width="16" height="5" fill="white" opacity="0.55" rx="1" />
+          {/* headline */}
+          <rect x="18" y="35" width="72" height="7" fill="white" opacity="0.9" rx="1" />
+          {/* subline */}
+          <rect x="26" y="46" width="56" height="4" fill="white" opacity="0.6" rx="1" />
+          {/* supporting */}
+          <rect x="34" y="64" width="40" height="3" fill="white" opacity="0.38" rx="1" />
+          {/* gold frame */}
+          <rect x="2" y="2" width="104" height="104" fill="none" stroke="#d4af37" strokeWidth="2" />
+        </svg>
+      );
+    case "product_highlight":
+      return (
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full">
+          <rect width={W} height={H} fill="#1e293b" />
+          {/* logo top-right */}
+          <rect x="88" y="6" width="14" height="5" fill="white" opacity="0.55" rx="1" />
+          {/* bottom panel */}
+          <rect x="0" y="68" width="108" height="40" fill="#0f172a" opacity="0.92" />
+          {/* headline */}
+          <rect x="6" y="71" width="76" height="7" fill="white" opacity="0.9" rx="1" />
+          {/* subline */}
+          <rect x="6" y="81" width="56" height="4" fill="white" opacity="0.6" rx="1" />
+          {/* supporting */}
+          <rect x="6" y="88" width="40" height="3" fill="white" opacity="0.38" rx="1" />
+        </svg>
+      );
+    case "quote_thought":
+      return (
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full">
+          <rect width={W} height={H} fill="#1e293b" />
+          {/* large headline centered — no panel */}
+          <rect x="8" y="34" width="92" height="8" fill="white" opacity="0.9" rx="1" />
+          {/* subline */}
+          <rect x="16" y="46" width="76" height="4" fill="white" opacity="0.6" rx="1" />
+          {/* supporting */}
+          <rect x="28" y="53" width="52" height="3" fill="white" opacity="0.38" rx="1" />
+          {/* logo bottom center */}
+          <rect x="34" y="94" width="40" height="5" fill="white" opacity="0.5" rx="1" />
+        </svg>
+      );
+    case "announcement":
+      return (
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full">
+          <rect width={W} height={H} fill="#1e293b" />
+          {/* top panel */}
+          <rect x="0" y="0" width="108" height="48" fill="#0f172a" opacity="0.92" />
+          {/* headline */}
+          <rect x="6" y="8" width="96" height="9" fill="white" opacity="0.9" rx="1" />
+          {/* subline */}
+          <rect x="6" y="21" width="80" height="4" fill="white" opacity="0.6" rx="1" />
+          {/* supporting */}
+          <rect x="6" y="28" width="60" height="3" fill="white" opacity="0.38" rx="1" />
+          {/* logo bottom-right */}
+          <rect x="88" y="92" width="14" height="5" fill="white" opacity="0.5" rx="1" />
+          {/* indigo frame */}
+          <rect x="1.5" y="1.5" width="105" height="105" fill="none" stroke="#6366f1" strokeWidth="1.5" />
+        </svg>
+      );
+    case "minimal_brand":
+      return (
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full">
+          <rect width={W} height={H} fill="#1e293b" />
+          {/* logo top-left */}
+          <rect x="6" y="6" width="15" height="5" fill="white" opacity="0.55" rx="1" />
+          {/* headline bottom-left */}
+          <rect x="6" y="82" width="72" height="8" fill="white" opacity="0.9" rx="1" />
+          {/* subline */}
+          <rect x="6" y="93" width="56" height="4" fill="white" opacity="0.6" rx="1" />
+          {/* supporting */}
+          <rect x="6" y="100" width="44" height="3" fill="white" opacity="0.38" rx="1" />
+        </svg>
+      );
+    case "carousel_cover":
+      return (
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full">
+          <rect width={W} height={H} fill="#1e293b" />
+          {/* full overlay */}
+          <rect width={W} height={H} fill="#0f172a" opacity="0.72" />
+          {/* logo centered top */}
+          <rect x="44" y="8" width="20" height="6" fill="white" opacity="0.55" rx="1" />
+          {/* big display headline */}
+          <rect x="6" y="31" width="96" height="14" fill="white" opacity="0.9" rx="1" />
+          {/* subline */}
+          <rect x="16" y="48" width="76" height="5" fill="white" opacity="0.7" rx="1" />
+          {/* supporting */}
+          <rect x="26" y="56" width="56" height="3" fill="white" opacity="0.38" rx="1" />
+          {/* white frame */}
+          <rect x="1.5" y="1.5" width="105" height="105" fill="none" stroke="white" strokeWidth="1.5" />
+        </svg>
+      );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Sidebar primitives
 // ---------------------------------------------------------------------------
 
-function SidebarSection({ title, children }: { title: string; children: React.ReactNode }) {
+function SidebarSection({ title, children }: { title?: string; children: React.ReactNode }) {
   return (
-    <div className="space-y-3">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
+    <div className="space-y-2.5">
+      {title && (
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
+      )}
       {children}
     </div>
   );
@@ -139,9 +254,26 @@ function SidebarSection({ title, children }: { title: string; children: React.Re
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2">
-      <Label className="text-xs w-20 shrink-0 text-muted-foreground">{label}</Label>
+      <Label className="text-xs w-16 shrink-0 text-muted-foreground">{label}</Label>
       <div className="flex-1">{children}</div>
     </div>
+  );
+}
+
+function ColorRow({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const hex = hexToOpaque(value);
+  return (
+    <Row label={label}>
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          value={hex}
+          onChange={e => onChange(e.target.value)}
+          className="h-7 w-10 rounded border cursor-pointer flex-none"
+        />
+        <span className="text-[10px] font-mono text-muted-foreground uppercase">{hex.slice(1)}</span>
+      </div>
+    </Row>
   );
 }
 
@@ -498,31 +630,39 @@ export default function ArtworkEditor({
     const isHidden = hiddenSet.has(id);
     const isLocked = lockedSet.has(id);
     return (
-      <div className="flex items-center gap-1 mb-3 pb-2.5 border-b flex-wrap">
-        <span className="text-[11px] font-semibold flex-1 text-foreground">{layerLabel(id)}</span>
-        <div className="flex gap-0.5">
-          <Button size="sm" variant="outline" className="h-6 w-6 p-0" title="Send to back"
+      <div className="flex items-center gap-2 mb-3 pb-2.5 border-b">
+        <span className="text-[11px] font-semibold flex-1 text-foreground min-w-0 truncate">{layerLabel(id)}</span>
+        {/* Z-order group */}
+        <div className="flex gap-0.5 items-center">
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground" title="Send to back"
             disabled={idx === 0} onClick={() => sendToBack(id)}>
             <ChevronsDown className="w-3 h-3" />
           </Button>
-          <Button size="sm" variant="outline" className="h-6 w-6 p-0" title="Send backward"
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground" title="Send backward"
             disabled={idx === 0} onClick={() => sendBackward(id)}>
             <ChevronDown className="w-3 h-3" />
           </Button>
-          <Button size="sm" variant="outline" className="h-6 w-6 p-0" title="Bring forward"
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground" title="Bring forward"
             disabled={idx === effectiveOrder.length - 1} onClick={() => bringForward(id)}>
             <ChevronUp className="w-3 h-3" />
           </Button>
-          <Button size="sm" variant="outline" className="h-6 w-6 p-0" title="Bring to front"
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground" title="Bring to front"
             disabled={idx === effectiveOrder.length - 1} onClick={() => bringToFront(id)}>
             <ChevronsUp className="w-3 h-3" />
           </Button>
-          <Button size="sm" variant="outline" className={cn("h-6 w-6 p-0", isHidden && "text-muted-foreground")}
-            title={isHidden ? "Show" : "Hide"} onClick={() => toggleHidden(id)}>
+        </div>
+        {/* Divider */}
+        <div className="w-px h-4 bg-border flex-none" />
+        {/* Visibility + lock */}
+        <div className="flex gap-0.5 items-center">
+          <Button size="sm" variant="ghost"
+            className={cn("h-6 w-6 p-0", isHidden ? "text-muted-foreground/40" : "text-muted-foreground hover:text-foreground")}
+            title={isHidden ? "Show layer" : "Hide layer"} onClick={() => toggleHidden(id)}>
             {isHidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
           </Button>
-          <Button size="sm" variant="outline" className={cn("h-6 w-6 p-0", isLocked && "text-amber-600")}
-            title={isLocked ? "Unlock" : "Lock"} onClick={() => toggleLocked(id)}>
+          <Button size="sm" variant="ghost"
+            className={cn("h-6 w-6 p-0", isLocked ? "text-amber-500" : "text-muted-foreground hover:text-foreground")}
+            title={isLocked ? "Unlock layer" : "Lock layer"} onClick={() => toggleLocked(id)}>
             {isLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
           </Button>
         </div>
@@ -533,7 +673,7 @@ export default function ArtworkEditor({
   function renderTextControls(id: TextLayerId) {
     const tl = layers[id];
     return (
-      <SidebarSection title="">
+      <SidebarSection>
         <OrderBar id={id} />
         <Row label="Text">
           <textarea
@@ -545,13 +685,15 @@ export default function ArtworkEditor({
         </Row>
         <Row label="Font">
           <Select value={tl.fontFamily} onValueChange={v => upd(id, { fontFamily: v })}>
-            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-7 text-xs">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               {FONT_GROUPS.map(group => (
                 <SelectGroup key={group.label}>
                   <SelectLabel className="text-[10px] uppercase tracking-wider">{group.label}</SelectLabel>
                   {group.fonts.map(f => (
-                    <SelectItem key={f} value={f} style={{ fontFamily: f }}>{f}</SelectItem>
+                    <SelectItem key={f} value={f} style={{ fontFamily: f, fontSize: 13 }}>{f}</SelectItem>
                   ))}
                 </SelectGroup>
               ))}
@@ -562,36 +704,32 @@ export default function ArtworkEditor({
           <div className="flex items-center gap-2">
             <Slider min={12} max={120} step={2} value={[tl.fontSize]}
               onValueChange={([v]) => upd(id, { fontSize: v })} className="flex-1" />
-            <span className="text-xs w-8 text-right tabular-nums">{tl.fontSize}</span>
+            <span className="text-xs w-7 text-right tabular-nums font-medium">{tl.fontSize}</span>
           </div>
         </Row>
-        <Row label="Weight">
+        <Row label="Style">
           <div className="flex gap-1">
-            {[400, 700, 900].map(w => (
+            {([400, 700] as const).map(w => (
               <Button key={w} size="sm" variant={tl.fontWeight === w ? "default" : "outline"}
                 className="h-7 text-xs flex-1" style={{ fontWeight: w }}
                 onClick={() => upd(id, { fontWeight: w })}>
-                {w === 400 ? "Reg" : w === 700 ? "Bold" : "Black"}
+                {w === 400 ? "Regular" : "Bold"}
               </Button>
             ))}
+            <div className="flex gap-1">
+              {ALIGN_OPTIONS.map(({ v, label: al }) => (
+                <Button key={v} size="sm" variant={tl.align === v ? "default" : "outline"}
+                  className="h-7 w-8 text-xs" onClick={() => upd(id, { align: v })}>
+                  {al}
+                </Button>
+              ))}
+            </div>
           </div>
         </Row>
-        <Row label="Color">
-          <input type="color" value={hexToOpaque(tl.color)}
-            onChange={e => upd(id, { color: e.target.value })}
-            className="h-7 w-full rounded border cursor-pointer" />
-        </Row>
-        <Row label="Align">
-          <div className="flex gap-1">
-            {ALIGN_OPTIONS.map(({ v, label: al }) => (
-              <Button key={v} size="sm" variant={tl.align === v ? "default" : "outline"}
-                className="h-7 text-xs flex-1" onClick={() => upd(id, { align: v })}>
-                {al}
-              </Button>
-            ))}
-          </div>
-        </Row>
-        <p className="text-[10px] text-muted-foreground">Double-click on canvas to edit · Side handles to resize</p>
+        <ColorRow label="Color" value={tl.color} onChange={v => upd(id, { color: v })} />
+        <p className="text-[10px] text-muted-foreground pt-0.5">
+          Double-click canvas to edit in place · Drag side handles to resize
+        </p>
       </SidebarSection>
     );
   }
@@ -599,34 +737,36 @@ export default function ArtworkEditor({
   function renderSidebar() {
     if (!selectedId) {
       return (
-        <div className="text-center py-8 text-muted-foreground text-xs">
-          <p className="font-medium">Click a layer to edit it</p>
-          <p className="mt-1 text-[10px] leading-relaxed">Drag to reposition · Handles to resize</p>
+        <div className="rounded-lg border border-dashed border-border px-4 py-5 text-center text-muted-foreground space-y-1">
+          <p className="text-xs font-medium text-foreground/70">Select a layer to edit</p>
+          <p className="text-[10px] leading-relaxed">
+            Click on the canvas or use a tab above.<br />
+            Or choose a template below to start fresh.
+          </p>
         </div>
       );
     }
 
     if (selectedId === "background") {
       return (
-        <SidebarSection title="">
+        <SidebarSection>
           <OrderBar id="background" />
-          <Row label="Image URL">
+          <Row label="URL">
             <Input value={layers.background.url}
               onChange={e => upd("background", { url: e.target.value })}
               placeholder="https://…" className="text-xs h-7" />
           </Row>
-          <Row label="Fallback">
-            <input type="color" value={hexToOpaque(layers.background.color)}
-              onChange={e => upd("background", { color: e.target.value })}
-              className="h-7 w-full rounded border cursor-pointer" />
-          </Row>
+          <ColorRow label="Fill" value={layers.background.color}
+            onChange={v => upd("background", { color: v })} />
           <Row label="Zoom">
             <div className="flex items-center gap-2">
               <Slider min={80} max={300} step={5}
                 value={[Math.round(layers.background.scale * 100)]}
                 onValueChange={([v]) => upd("background", { scale: v / 100 })}
                 className="flex-1" />
-              <span className="text-xs w-10 text-right tabular-nums">{Math.round(layers.background.scale * 100)}%</span>
+              <span className="text-xs w-9 text-right tabular-nums font-medium">
+                {Math.round(layers.background.scale * 100)}%
+              </span>
             </div>
           </Row>
           <Button variant="outline" size="sm" className="w-full h-7 text-xs"
@@ -639,23 +779,22 @@ export default function ArtworkEditor({
 
     if (selectedId === "panel") {
       return (
-        <SidebarSection title="">
+        <SidebarSection>
           <OrderBar id="panel" />
           <Row label="Visible">
             <Switch checked={layers.panel.enabled} onCheckedChange={v => upd("panel", { enabled: v })} />
           </Row>
-          <Row label="Color">
-            <input type="color" value={hexToOpaque(layers.panel.color)}
-              onChange={e => upd("panel", { color: e.target.value })}
-              className="h-7 w-full rounded border cursor-pointer" />
-          </Row>
+          <ColorRow label="Color" value={layers.panel.color}
+            onChange={v => upd("panel", { color: v })} />
           <Row label="Opacity">
             <div className="flex items-center gap-2">
               <Slider min={0} max={100} step={1}
                 value={[Math.round(layers.panel.opacity * 100)]}
                 onValueChange={([v]) => upd("panel", { opacity: v / 100 })}
                 className="flex-1" />
-              <span className="text-xs w-10 text-right tabular-nums">{Math.round(layers.panel.opacity * 100)}%</span>
+              <span className="text-xs w-9 text-right tabular-nums font-medium">
+                {Math.round(layers.panel.opacity * 100)}%
+              </span>
             </div>
           </Row>
           <p className="text-[10px] text-muted-foreground">Drag to move · Corner handles to resize</p>
@@ -665,16 +804,13 @@ export default function ArtworkEditor({
 
     if (selectedId === "frame") {
       return (
-        <SidebarSection title="">
+        <SidebarSection>
           <OrderBar id="frame" />
           <Row label="Visible">
             <Switch checked={layers.frame.enabled} onCheckedChange={v => upd("frame", { enabled: v })} />
           </Row>
-          <Row label="Color">
-            <input type="color" value={hexToOpaque(layers.frame.color)}
-              onChange={e => upd("frame", { color: e.target.value })}
-              className="h-7 w-full rounded border cursor-pointer" />
-          </Row>
+          <ColorRow label="Color" value={layers.frame.color}
+            onChange={v => upd("frame", { color: v })} />
           <Row label="Width">
             <Select value={String(layers.frame.width)} onValueChange={v => upd("frame", { width: Number(v) })}>
               <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
@@ -697,7 +833,7 @@ export default function ArtworkEditor({
       const { logo } = layers;
       const colorMode = logo.colorMode ?? "original";
       return (
-        <SidebarSection title="">
+        <SidebarSection>
           <OrderBar id="logo" />
           <Row label="Visible">
             <Switch checked={logo.enabled} onCheckedChange={v => upd("logo", { enabled: v })} />
@@ -719,11 +855,8 @@ export default function ArtworkEditor({
             </div>
           </Row>
           {(colorMode === "brand" || colorMode === "accent") && (
-            <Row label="Tint">
-              <input type="color" value={logo.tintColor ?? "#6366f1"}
-                onChange={e => upd("logo", { tintColor: e.target.value })}
-                className="h-7 w-full rounded border cursor-pointer" />
-            </Row>
+            <ColorRow label="Tint" value={logo.tintColor ?? "#6366f1"}
+              onChange={v => upd("logo", { tintColor: v })} />
           )}
           <p className="text-[10px] text-muted-foreground">Drag to move · Handles to resize</p>
         </SidebarSection>
@@ -737,12 +870,25 @@ export default function ArtworkEditor({
   // Render
   // ---------------------------------------------------------------------------
 
+  const LAYER_TABS: Array<{ id: LayerId; label: string; title: string }> = [
+    { id: "background",    label: "BG",       title: "Background image" },
+    { id: "panel",         label: "Panel",    title: "Overlay panel" },
+    { id: "frame",         label: "Frame",    title: "Border frame" },
+    { id: "headline",      label: "Headline", title: "Primary headline text" },
+    { id: "subline",       label: "Subline",  title: "Secondary text" },
+    { id: "supportingLine",label: "Caption",  title: "Caption / supporting text" },
+    { id: "logo",          label: "Logo",     title: "Logo image" },
+  ];
+
   return (
     <div className="flex gap-5 items-start">
-      {/* Canvas column */}
-      <div className="flex-none space-y-3">
-        <div className="border border-border rounded-lg overflow-hidden shadow-sm"
-          style={{ width: CANVAS_DISPLAY, height: CANVAS_DISPLAY }}>
+      {/* ── Canvas column ── */}
+      <div className="flex-none space-y-2.5">
+        {/* Canvas */}
+        <div
+          className="border border-border rounded-xl overflow-hidden shadow-lg ring-1 ring-black/5"
+          style={{ width: CANVAS_DISPLAY, height: CANVAS_DISPLAY }}
+        >
           <Stage
             ref={stageRef}
             width={CANVAS_DISPLAY}
@@ -763,7 +909,7 @@ export default function ArtworkEditor({
                   selectedId === "headline" || selectedId === "subline" || selectedId === "supportingLine"
                     ? ["middle-left", "middle-right"]
                     : ["top-left", "top-right", "bottom-left", "bottom-right",
-                      "middle-left", "middle-right", "top-center", "bottom-center"]
+                       "middle-left", "middle-right", "top-center", "bottom-center"]
                 }
                 boundBoxFunc={(_, newBox) => ({
                   ...newBox,
@@ -775,33 +921,18 @@ export default function ArtworkEditor({
           </Stage>
         </div>
 
-        {/* Preset buttons */}
-        <div className="flex flex-wrap gap-1.5">
-          {(Object.keys(PRESET_LABELS) as PresetId[]).map(pid => (
-            <Button key={pid} size="sm" variant="outline" className="h-7 text-[11px] px-2.5"
-              onClick={() => onChange(applyPreset(pid, layers))}>
-              {PRESET_LABELS[pid]}
-            </Button>
-          ))}
-          <Button size="sm" variant="ghost" className="h-7 text-[11px] px-2.5 text-muted-foreground"
-            onClick={() => onChange(defaultLayers({
-              backgroundUrl: initialBgUrl, logoUrl: initialLogoUrl,
-              headline: initialHeadline, subline: initialSubline, supportingLine: initialSupportingLine,
-            }))}>
-            Reset layout
-          </Button>
-        </div>
-
-        {/* Frame quick-toggle (below canvas, always visible) */}
-        <div className="flex items-center gap-3 px-0.5">
+        {/* Frame quick-toggle */}
+        <div className="flex items-center gap-2.5 px-0.5">
           <Switch id="frame-toggle" checked={layers.frame.enabled}
             onCheckedChange={v => upd("frame", { enabled: v })} />
-          <Label htmlFor="frame-toggle" className="text-xs cursor-pointer">Frame border</Label>
+          <Label htmlFor="frame-toggle" className="text-xs cursor-pointer text-muted-foreground">
+            Frame border
+          </Label>
           {layers.frame.enabled && (
             <>
               <input type="color" value={hexToOpaque(layers.frame.color)}
                 onChange={e => upd("frame", { color: e.target.value })}
-                className="h-6 w-10 rounded border cursor-pointer" />
+                className="h-6 w-8 rounded border cursor-pointer flex-none" />
               <Select value={String(layers.frame.width)}
                 onValueChange={v => upd("frame", { width: Number(v) })}>
                 <SelectTrigger className="h-6 text-xs w-16"><SelectValue /></SelectTrigger>
@@ -816,39 +947,101 @@ export default function ArtworkEditor({
         </div>
       </div>
 
-      {/* Properties sidebar */}
-      <div className="flex-1 min-w-0 pt-1 space-y-1">
-        <div className="flex flex-wrap gap-1 mb-4">
-          {([
-            { id: "background" as LayerId, label: "BG" },
-            { id: "panel" as LayerId, label: "Panel" },
-            { id: "frame" as LayerId, label: "Frame" },
-            { id: "headline" as LayerId, label: "H1" },
-            { id: "subline" as LayerId, label: "H2" },
-            { id: "supportingLine" as LayerId, label: "H3" },
-            { id: "logo" as LayerId, label: "Logo" },
-          ]).map(({ id, label }) => {
-            const isHidden = hiddenSet.has(id);
-            const isLocked = lockedSet.has(id);
-            return (
-              <Button
-                key={id}
-                size="sm"
-                variant={selectedId === id ? "default" : "outline"}
-                className={cn(
-                  "h-7 text-xs px-2",
-                  selectedId === id && "ring-2 ring-primary/30",
-                  isHidden && "opacity-40",
-                  isLocked && "border-amber-400",
-                )}
-                onClick={() => setSelectedId(id)}
-              >
-                {label}
-              </Button>
-            );
-          })}
+      {/* ── Right panel ── */}
+      <div className="flex-1 min-w-0 flex flex-col gap-4 pt-0.5">
+
+        {/* Layer selector tabs */}
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+            Layer
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {LAYER_TABS.map(({ id, label, title }) => {
+              const isHidden = hiddenSet.has(id);
+              const isLocked = lockedSet.has(id);
+              return (
+                <Button
+                  key={id}
+                  size="sm"
+                  title={title}
+                  variant={selectedId === id ? "default" : "outline"}
+                  className={cn(
+                    "h-7 text-[11px] px-2.5 transition-all",
+                    selectedId === id && "shadow-sm",
+                    isHidden && "opacity-40",
+                    isLocked && "border-amber-400/80",
+                  )}
+                  onClick={() => setSelectedId(id)}
+                >
+                  {label}
+                  {isLocked && <span className="ml-1 opacity-60">·</span>}
+                </Button>
+              );
+            })}
+          </div>
         </div>
-        {renderSidebar()}
+
+        {/* Layer-specific controls */}
+        <div className="min-h-[80px]">
+          {renderSidebar()}
+        </div>
+
+        {/* ── Divider ── */}
+        <div className="border-t border-border/60" />
+
+        {/* Template grid */}
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+            Templates
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            {(Object.keys(TEMPLATE_META) as TemplateId[]).map(tid => (
+              <button
+                key={tid}
+                title={TEMPLATE_META[tid].description}
+                onClick={() => onChange(applyTemplate(tid, layers))}
+                className={cn(
+                  "flex flex-col items-center gap-1.5 rounded-xl border border-border p-1.5",
+                  "hover:border-primary/60 hover:bg-accent/50 hover:shadow-sm",
+                  "active:scale-[0.97] transition-all cursor-pointer",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                )}
+              >
+                <div className="w-full aspect-square rounded-lg overflow-hidden bg-slate-900 shadow-sm">
+                  <TemplateThumbnail id={tid} />
+                </div>
+                <span className="text-[10px] font-medium text-center leading-tight text-foreground/80 w-full">
+                  {TEMPLATE_META[tid].label}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Layout adjustments */}
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+            Adjust layout
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {(Object.keys(PRESET_LABELS) as PresetId[]).map(pid => (
+              <Button key={pid} size="sm" variant="outline" className="h-7 text-[11px] px-2.5"
+                onClick={() => onChange(applyPreset(pid, layers))}>
+                {PRESET_LABELS[pid]}
+              </Button>
+            ))}
+            <Button
+              size="sm" variant="ghost"
+              className="h-7 text-[11px] px-2.5 text-muted-foreground ml-auto"
+              onClick={() => onChange(defaultLayers({
+                backgroundUrl: initialBgUrl, logoUrl: initialLogoUrl,
+                headline: initialHeadline, subline: initialSubline, supportingLine: initialSupportingLine,
+              }))}>
+              Reset all
+            </Button>
+          </div>
+        </div>
+
       </div>
 
       {/* Floating textarea for in-canvas text editing */}
@@ -864,14 +1057,15 @@ export default function ArtworkEditor({
             minHeight: 32,
             fontSize: textEdit.fontSize,
             color: textEdit.color,
-            background: "rgba(0,0,0,0.25)",
+            background: "rgba(0,0,0,0.3)",
             border: "1.5px dashed rgba(255,255,255,0.7)",
             outline: "none",
-            padding: "2px 4px",
+            padding: "2px 6px",
             zIndex: 9999,
             fontFamily: layers[textEdit.layerId].fontFamily,
             resize: "none",
             lineHeight: 1.3,
+            borderRadius: 4,
           }}
           onBlur={e => commitTextEdit(e.currentTarget.value)}
           onKeyDown={e => { if (e.key === "Escape") commitTextEdit(e.currentTarget.value); }}
