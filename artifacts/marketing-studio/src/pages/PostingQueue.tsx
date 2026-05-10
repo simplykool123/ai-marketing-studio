@@ -38,6 +38,45 @@ const QUEUE_STATUSES = ["approved", "export_ready", "scheduled", "failed"];
 
 const BASE = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
 
+function asRecord(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
+}
+
+function postImageUrl(post: any): string | null {
+  const schema = asRecord(post.contentSchema);
+  return (
+    schema.finalArtworkUrl ||
+    post.selectedImageUrl ||
+    post.brandedImageUrl ||
+    post.originalImageUrl ||
+    schema.imageUrl ||
+    schema.artworkUrl ||
+    schema.generatedImageUrl ||
+    schema.backgroundImageUrl ||
+    null
+  );
+}
+
+function QueueImage({ post }: { post: any }) {
+  const [failed, setFailed] = useState(false);
+  const imageUrl = postImageUrl(post);
+  if (imageUrl && !failed) {
+    return (
+      <img
+        src={imageUrl}
+        alt=""
+        className="w-12 h-12 rounded-lg object-cover shrink-0 border border-border/50"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return (
+    <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center shrink-0">
+      <CalendarCheck className="w-5 h-5 text-muted-foreground" />
+    </div>
+  );
+}
+
 async function mockPostApi(clientId: string, postId: string) {
   const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/mock-post`, {
     method: "POST",
@@ -290,13 +329,7 @@ export default function PostingQueue() {
                       {idx + 1}
                     </div>
 
-                    {post.selectedImageUrl ? (
-                      <img src={post.selectedImageUrl} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0 border border-border/50" />
-                    ) : (
-                      <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center shrink-0">
-                        <CalendarCheck className="w-5 h-5 text-muted-foreground" />
-                      </div>
-                    )}
+                    <QueueImage post={post} />
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5 flex-wrap">
@@ -386,7 +419,7 @@ export default function PostingQueue() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem asChild>
-                                <Link href={`/clients/${clientId}/drafts`} className="flex items-center">
+                                <Link href={`/clients/${clientId}/drafts?tab=ready&postId=${post.id}`} className="flex items-center">
                                   <PenLine className="w-3.5 h-3.5 mr-2" />
                                   Edit in Review
                                 </Link>

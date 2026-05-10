@@ -96,9 +96,9 @@ function AssetImage({ img }: { img: ImageItem }) {
     return (
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-muted/80 px-4 text-center">
         <ImageIcon className="w-7 h-7 text-muted-foreground/40" />
-        <p className="text-xs font-semibold text-foreground/70">Image expired</p>
+        <p className="text-xs font-semibold text-foreground/70">Image expired — regenerate or save to storage</p>
         <p className="text-[10px] text-muted-foreground leading-snug">
-          Regenerate in Image Studio to get a fresh copy
+          The stored image could not be loaded.
         </p>
       </div>
     );

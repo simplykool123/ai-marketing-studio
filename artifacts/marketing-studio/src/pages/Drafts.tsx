@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, useSearch } from "wouter";
 import {
   useListPosts,
@@ -96,6 +96,7 @@ type Post = {
   skillId?: string | null;
   contentType?: string | null;
   contentSchema?: unknown;
+  generationMetadata?: unknown;
   title?: string | null;
   longFormBody?: string | null;
   imagePrompt?: string | null;
@@ -148,6 +149,53 @@ function getReviewTab(value: string | null): ReviewTab {
 
 function asRecord(value: unknown): Record<string, any> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
+}
+
+function postImageUrl(post: Post): string | null {
+  const schema = asRecord(post.contentSchema);
+  return (
+    schema.finalArtworkUrl ||
+    post.selectedImageUrl ||
+    schema.backgroundImageUrl ||
+    post.originalImageUrl ||
+    schema.imageUrl ||
+    post.brandedImageUrl ||
+    schema.artworkUrl ||
+    schema.generatedImageUrl ||
+    null
+  );
+}
+
+function postImagePrompt(post: Post): string {
+  const schema = asRecord(post.contentSchema);
+  return [schema.imagePrompt, schema.creativeDirection, schema.artworkDirection, schema.prompt, post.imagePrompt]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function dateFromIsoDay(value: unknown): Date | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const dateOnly = value.trim().slice(0, 10);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(dateOnly)
+    ? new Date(`${dateOnly}T00:00:00`)
+    : new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function occasionScheduleDate(post: Post): Date | undefined {
+  const schema = asRecord(post.contentSchema);
+  const metadata = asRecord(post.generationMetadata);
+  return dateFromIsoDay(schema.occasionDate) ?? dateFromIsoDay(metadata.occasionDate);
+}
+
+function suggestedScheduleDate(post: Post): Date {
+  const occasionDate = occasionScheduleDate(post);
+  if (occasionDate) return occasionDate;
+  const now = new Date();
+  const date = new Date(now);
+  if (now.getHours() >= 18) date.setDate(date.getDate() + 1);
+  date.setHours(0, 0, 0, 0);
+  return date;
 }
 
 function contentTypeLabel(post: Post): string {
@@ -228,6 +276,7 @@ export default function Drafts() {
   const search = useSearch();
   const searchParams = new URLSearchParams(search);
   const campaignIdFilter = searchParams.get("campaignId") ?? undefined;
+  const postIdFilter = searchParams.get("postId") ?? undefined;
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -261,6 +310,11 @@ export default function Drafts() {
   const [editHashtags, setEditHashtags] = useState("");
   const [editPlatform, setEditPlatform] = useState("instagram");
   const [isEditSaving, setIsEditSaving] = useState(false);
+  const [artworkPost, setArtworkPost] = useState<Post | null>(null);
+  const [artworkHeadline, setArtworkHeadline] = useState("");
+  const [artworkSubline, setArtworkSubline] = useState("");
+  const [artworkLogoEnabled, setArtworkLogoEnabled] = useState(true);
+  const [isArtworkSaving, setIsArtworkSaving] = useState(false);
 
   const [regeneratingPostId, setRegeneratingPostId] = useState<string | null>(null);
   const [generatingImagePostIds, setGeneratingImagePostIds] = useState<Set<string>>(() => new Set());
@@ -312,12 +366,48 @@ export default function Drafts() {
     return activeReviewPosts[0] ?? filteredNeedsReview[0] ?? filteredDrafts[0] ?? filteredApproved[0] ?? filteredHistory[0] ?? null;
   }, [activeReviewPosts, filteredApproved, filteredDrafts, filteredHistory, filteredNeedsReview, posts, previewPostId]);
 
+  useEffect(() => {
+    if (!postIdFilter || !allPosts.length) return;
+    const post = allPosts.find((item) => item.id === postIdFilter);
+    if (!post) return;
+    setPreviewPostId(post.id);
+    setPreviewFocusPostId(post.id);
+    const nextTab: ReviewTab =
+      post.status === "rejected" || hasPublishedProof(post)
+        ? "history"
+        : ["approved", "export_ready", "scheduled", "failed"].includes(post.status)
+          ? "ready"
+          : post.status === "draft"
+            ? "drafts"
+            : "pending";
+    setActiveReviewTab(nextTab);
+    window.requestAnimationFrame(() => {
+      previewPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }, [allPosts, postIdFilter]);
+
+  const openApprove = (post: Post) => {
+    setSelectedPostId(post.id);
+    setApprovePlatform(post.platform || "instagram");
+    setDate(suggestedScheduleDate(post));
+    setApproveTime("09:00");
+    setIsApproveOpen(true);
+  };
+
   const openEdit = (post: Post) => {
     setEditingPost(post);
     setEditTopic(post.topic || "");
     setEditCaption(post.caption || "");
     setEditHashtags(post.hashtags || "");
     setEditPlatform(post.platform || "instagram");
+  };
+
+  const openArtworkEditor = (post: Post) => {
+    const schema = asRecord(post.contentSchema);
+    setArtworkPost(post);
+    setArtworkHeadline(typeof schema.headline === "string" ? schema.headline : "");
+    setArtworkSubline(typeof schema.subline === "string" ? schema.subline : "");
+    setArtworkLogoEnabled(schema.logoEnabled !== false);
   };
 
   const handleSaveEdit = async () => {
@@ -346,6 +436,46 @@ export default function Drafts() {
       toast({ title: "Failed to update post", variant: "destructive" });
     } finally {
       setIsEditSaving(false);
+    }
+  };
+
+  const handleSaveArtwork = async () => {
+    if (!clientId || !artworkPost) return;
+    const schema = asRecord(artworkPost.contentSchema);
+    const nextSchema = {
+      ...schema,
+      headline: artworkHeadline,
+      subline: artworkSubline,
+      logoEnabled: artworkLogoEnabled,
+      artworkLayers: {
+        ...(asRecord(schema.artworkLayers)),
+        headline: artworkHeadline,
+        subline: artworkSubline,
+        logo: { enabled: artworkLogoEnabled },
+      },
+    };
+    setIsArtworkSaving(true);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        updatePost.mutate(
+          {
+            clientId,
+            postId: artworkPost.id,
+            data: {
+              contentSchema: nextSchema,
+              contentSchemaVersion: artworkPost.contentSchema ? 1 : undefined,
+            },
+          },
+          { onSuccess: () => resolve(), onError: reject }
+        );
+      });
+      invalidatePosts();
+      setArtworkPost(null);
+      toast({ title: "Artwork notes saved" });
+    } catch {
+      toast({ title: "Failed to save artwork notes", variant: "destructive" });
+    } finally {
+      setIsArtworkSaving(false);
     }
   };
 
@@ -390,9 +520,9 @@ export default function Drafts() {
 
   const buildScheduledAt = () => {
     if (!date) return undefined;
-    const [hours, minutes] = (approveTime || "10:00").split(":").map(Number);
+    const [hours, minutes] = (approveTime || "09:00").split(":").map(Number);
     const scheduledAt = new Date(date);
-    scheduledAt.setHours(hours || 10, minutes || 0, 0, 0);
+    scheduledAt.setHours(hours || 9, minutes || 0, 0, 0);
     return scheduledAt;
   };
 
@@ -626,11 +756,7 @@ export default function Drafts() {
               isSelected={previewPost?.id === post.id}
               onSelect={() => handleReviewSelect(post.id)}
               onEdit={() => openEdit(post)}
-              onApprove={canReview(post) ? () => {
-                setSelectedPostId(post.id);
-                setApprovePlatform(post.platform || "instagram");
-                setIsApproveOpen(true);
-              } : undefined}
+              onApprove={canReview(post) ? () => openApprove(post) : undefined}
               onReject={canReview(post) ? () => openReject(post) : undefined}
               onDelete={() => handleDelete(post.id)}
               onRegenerateCopy={() => handleRegenerateCopy(post.id)}
@@ -650,11 +776,7 @@ export default function Drafts() {
         >
           <DraftPreviewPanel
             post={previewPost}
-            onApprove={canReview(previewPost) ? () => {
-              setSelectedPostId(previewPost.id);
-              setApprovePlatform(previewPost.platform || "instagram");
-              setIsApproveOpen(true);
-            } : undefined}
+            onApprove={canReview(previewPost) ? () => openApprove(previewPost) : undefined}
             onReject={canReview(previewPost) ? () => openReject(previewPost) : undefined}
           />
         </div>
@@ -943,6 +1065,9 @@ export default function Drafts() {
             <DialogTitle>Approve to Queue</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            <p className="text-xs text-muted-foreground">
+              Default schedule is suggested. You can change it before approving.
+            </p>
             <div className="space-y-1.5">
               <Label>Platform</Label>
               <Select value={approvePlatform} onValueChange={setApprovePlatform}>
@@ -977,7 +1102,7 @@ export default function Drafts() {
                 disabled={!date}
               />
               <p className="text-xs text-muted-foreground">
-                If you pick a date without a time, it defaults to 10:00 AM local time.
+                If you pick a date without a time, it defaults to 9:00 AM local time.
               </p>
             </div>
             <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
@@ -1043,6 +1168,41 @@ export default function Drafts() {
             <DialogTitle>Edit Post</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            {editingPost && (
+              <div className="space-y-3 rounded-md border bg-muted/20 p-3">
+                <div className="aspect-square max-h-[260px] overflow-hidden rounded-md border bg-muted">
+                  <DraftImagePreview post={editingPost} large />
+                </div>
+                {postImagePrompt(editingPost) && (
+                  <p className="line-clamp-2 text-xs text-muted-foreground">{postImagePrompt(editingPost)}</p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleGenerateImage(editingPost.id)}
+                    disabled={generatingImagePostIds.has(editingPost.id)}
+                  >
+                    {generatingImagePostIds.has(editingPost.id) ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <ImagePlus className="mr-2 h-4 w-4" />
+                    )}
+                    Change Image
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => openArtworkEditor(editingPost)}
+                  >
+                    <PenLine className="mr-2 h-4 w-4" />
+                    Edit Artwork
+                  </Button>
+                </div>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label>Topic</Label>
               <Input value={editTopic} onChange={(e) => setEditTopic(e.target.value)} placeholder="Post topic" />
@@ -1080,6 +1240,54 @@ export default function Drafts() {
             <Button variant="ghost" onClick={() => setEditingPost(null)}>Cancel</Button>
             <Button onClick={handleSaveEdit} disabled={isEditSaving || !editCaption.trim()}>
               {isEditSaving ? "Saving…" : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Artwork Entry Dialog */}
+      <Dialog open={!!artworkPost} onOpenChange={(open) => { if (!open) setArtworkPost(null); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Artwork</DialogTitle>
+          </DialogHeader>
+          {artworkPost && (
+            <div className="space-y-4 py-2">
+              <div className="aspect-square overflow-hidden rounded-md border bg-muted">
+                <DraftImagePreview post={artworkPost} large />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Headline</Label>
+                <Input value={artworkHeadline} onChange={(event) => setArtworkHeadline(event.target.value)} placeholder="Artwork headline" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Subline</Label>
+                <Input value={artworkSubline} onChange={(event) => setArtworkSubline(event.target.value)} placeholder="Short supporting line" />
+              </div>
+              <label className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm">
+                <span>
+                  <span className="font-medium">Show logo when available</span>
+                  <span className="block text-xs text-muted-foreground">Saved as an artwork layer for the next editor pass.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={artworkLogoEnabled}
+                  onChange={(event) => setArtworkLogoEnabled(event.target.checked)}
+                  className="h-4 w-4"
+                />
+              </label>
+              {postImagePrompt(artworkPost) && (
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs font-medium">Image prompt</p>
+                  <p className="mt-1 line-clamp-4 text-xs text-muted-foreground">{postImagePrompt(artworkPost)}</p>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setArtworkPost(null)}>Cancel</Button>
+            <Button onClick={handleSaveArtwork} disabled={isArtworkSaving}>
+              {isArtworkSaving ? "Saving…" : "Save Artwork"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1158,6 +1366,37 @@ function ListBlock({ title, items }: { title: string; items?: unknown[] }) {
   );
 }
 
+function DraftImagePreview({ post, large = false }: { post: Post; large?: boolean }) {
+  const [failed, setFailed] = useState(false);
+  const imageUrl = postImageUrl(post);
+  const prompt = postImagePrompt(post);
+
+  if (imageUrl && !failed) {
+    return (
+      <img
+        src={imageUrl}
+        alt=""
+        className="w-full h-full object-cover"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+
+  return (
+    <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-muted px-4 text-center">
+      <ImagePlus className={cn(large ? "w-8 h-8" : "w-6 h-6", "text-muted-foreground/35")} />
+      <p className={cn("font-medium text-muted-foreground", large ? "text-sm" : "text-xs")}>
+        {imageUrl ? "Image expired or unavailable" : "No image yet"}
+      </p>
+      {prompt && (
+        <p className={cn("text-muted-foreground line-clamp-3", large ? "text-xs" : "text-[10px]")}>
+          {prompt}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function DraftPreviewContent({ post }: { post: Post }) {
   const schema = asRecord(post.contentSchema);
   const type = contentGroup(post);
@@ -1208,13 +1447,19 @@ function DraftPreviewContent({ post }: { post: Post }) {
   if (type === "image") {
     return (
       <div className="space-y-4">
+        <div className="aspect-square overflow-hidden rounded-lg border bg-muted">
+          <DraftImagePreview post={post} large />
+        </div>
+        <TextBlock title="Headline">{schema.headline}</TextBlock>
+        <TextBlock title="Subline">{schema.subline}</TextBlock>
         <TextBlock title="Prompt">{schema.prompt || post.imagePrompt || post.caption}</TextBlock>
+        <TextBlock title="Creative direction">{schema.creativeDirection || schema.artworkDirection}</TextBlock>
         <TextBlock title="Style">{schema.style}</TextBlock>
         <TextBlock title="Details">{schema.rationale}</TextBlock>
-        {(schema.imageUrl || post.selectedImageUrl) && (
+        {postImageUrl(post) && (
           <TextBlock title="Image URL">
-            <a className="text-primary underline break-all" href={schema.imageUrl || post.selectedImageUrl || ""} target="_blank" rel="noreferrer">
-              {schema.imageUrl || post.selectedImageUrl}
+            <a className="text-primary underline break-all" href={postImageUrl(post) || ""} target="_blank" rel="noreferrer">
+              {postImageUrl(post)}
             </a>
           </TextBlock>
         )}
@@ -1237,9 +1482,14 @@ function DraftPreviewContent({ post }: { post: Post }) {
 
   return (
     <div className="space-y-4">
+      {(postImageUrl(post) || postImagePrompt(post)) && (
+        <div className="aspect-square overflow-hidden rounded-lg border bg-muted">
+          <DraftImagePreview post={post} large />
+        </div>
+      )}
       <TextBlock title="Caption">{schema.caption || schema.captionAngle || post.caption}</TextBlock>
       <TextBlock title="Hashtags">{schema.hashtags || post.hashtags}</TextBlock>
-      <TextBlock title="Image prompt">{schema.imagePrompt || post.imagePrompt}</TextBlock>
+      <TextBlock title="Image prompt">{postImagePrompt(post)}</TextBlock>
     </div>
   );
 }
@@ -1344,6 +1594,7 @@ function PostCard({
   const isFailed = post.status === "failed";
   const isPublished = hasPublishedProof(post);
   const platformClass = PLATFORM_COLORS[post.platform || ""] || "bg-muted text-muted-foreground";
+  const imageUrl = postImageUrl(post);
 
   const statusBadgeClass = ((post.status === "posted" || post.status === "published") && !post.publishedAt)
     ? "bg-muted text-muted-foreground border border-border"
@@ -1361,13 +1612,7 @@ function PostCard({
   return (
     <Card className={cn("overflow-hidden flex flex-col group", isSelected && "ring-2 ring-primary")}>
       <div className="aspect-square bg-muted relative">
-        {post.selectedImageUrl ? (
-          <img src={post.selectedImageUrl} alt="" className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <FileText className="w-10 h-10 text-muted-foreground/20" />
-          </div>
-        )}
+        <DraftImagePreview post={post} />
         <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={onEdit}
@@ -1517,7 +1762,7 @@ function PostCard({
                     title="Generate AI image for this post"
                   >
                     {isGeneratingImage ? <Loader2 className="w-3 h-3 animate-spin" /> : <ImagePlus className="w-3 h-3" />}
-                    {post.selectedImageUrl ? "New Image" : "Gen Image"}
+                    {imageUrl ? "New Image" : "Gen Image"}
                   </Button>
                 )}
               </div>
