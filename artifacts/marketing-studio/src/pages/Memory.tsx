@@ -236,7 +236,7 @@ export default function Memory() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Client Memory Center</h1>
         <p className="text-muted-foreground mt-1">
-          Brain, campaign generation, drafts, and approvals use this memory to keep content consistent.
+          The AI's long-term learning for this client: approvals, rejections, rules, and style.
         </p>
       </div>
 

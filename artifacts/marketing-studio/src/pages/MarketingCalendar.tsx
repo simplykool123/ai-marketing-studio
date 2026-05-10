@@ -207,7 +207,7 @@ export default function MarketingCalendar() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Marketing Calendar</h1>
           <p className="text-muted-foreground mt-1">
-            Marketing calendar includes curated Indian occasions and can be expanded yearly.
+            Create occasion-based drafts for festivals, national days, and social moments.
           </p>
         </div>
         <Button asChild variant="outline">

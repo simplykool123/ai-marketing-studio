@@ -529,7 +529,7 @@ export default function CampaignGenerator() {
           <Flag className="w-6 h-6 text-primary" /> Campaign Generator
         </h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Generate a complete multi-platform campaign and save every output as approval-ready drafts.
+          Generate a full campaign of draft posts, images, blogs, and ideas for Review.
         </p>
       </div>
 

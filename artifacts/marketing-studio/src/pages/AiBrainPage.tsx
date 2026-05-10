@@ -488,8 +488,7 @@ export default function AiBrainPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">AI Brain</h1>
           <p className="text-sm text-muted-foreground mt-1 max-w-sm mx-auto">
-            Your digital marketing strategist. Analyses brand DNA, audience, history and storyline
-            to suggest what to create — and why.
+            AI suggests what to post next using your brand, storyline, and past content.
           </p>
         </div>
 

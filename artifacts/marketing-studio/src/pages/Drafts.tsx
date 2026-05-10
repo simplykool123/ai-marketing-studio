@@ -852,7 +852,7 @@ export default function Drafts() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Review</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            Review pending content, approve ready posts, and inspect draft history.
+            Approve drafts that are ready. Reject drafts to teach AI what to avoid.
           </p>
         </div>
         <div className="flex gap-2">
@@ -938,7 +938,7 @@ export default function Drafts() {
       </div>
 
       <div className="rounded-md border border-border bg-card px-4 py-3">
-        <p className="text-sm font-medium">Draft → Approved/Ready → Publish Queue → Published/Failed</p>
+        <p className="text-sm font-medium">Brand Setup → Campaign Planner / Marketing Calendar → Review → Publish Queue → AI Memory</p>
         <p className="text-xs text-muted-foreground mt-1">
           Approval moves content to the Publish Queue. It is not posted until a publish, webhook, or manual action happens.
         </p>

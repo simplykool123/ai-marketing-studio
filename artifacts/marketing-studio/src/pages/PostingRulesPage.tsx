@@ -105,7 +105,7 @@ export default function PostingRulesPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Posting Rules</h1>
         <p className="text-muted-foreground mt-1">
-          Configure scheduling rules and preferred times for this client.
+          Set default posting cadence, schedule rules, and publishing preferences.
         </p>
       </div>
 

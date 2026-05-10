@@ -246,8 +246,12 @@ export default function BrandDna() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Brand DNA</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Define voice, visuals, and brand colors. The AI uses all of this when generating content.
+          Set your brand voice, audience, colors, and goals. AI uses this before generating content.
         </p>
+      </div>
+
+      <div className="rounded-md border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+        Brand Setup → Campaign Planner / Marketing Calendar → Review → Publish Queue → AI Memory
       </div>
 
       {/* Logo upload */}

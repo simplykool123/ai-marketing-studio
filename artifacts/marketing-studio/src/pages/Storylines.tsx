@@ -111,7 +111,7 @@ export default function Storylines() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Storylines</h1>
           <p className="text-muted-foreground mt-1">
-            Manage overarching narratives and campaigns for this brand.
+            Create a theme that connects posts over weeks, so content does not feel random.
           </p>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>

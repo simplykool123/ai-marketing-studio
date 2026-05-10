@@ -200,7 +200,7 @@ export default function AssetLibrary() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Asset Library</h1>
-        <p className="text-muted-foreground mt-1">Generated and uploaded images for this client. Attach images to draft posts from here.</p>
+        <p className="text-muted-foreground mt-1">Images generated or uploaded for this client. Use them in drafts before publishing.</p>
       </div>
 
       <div className="flex items-start gap-2.5 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">

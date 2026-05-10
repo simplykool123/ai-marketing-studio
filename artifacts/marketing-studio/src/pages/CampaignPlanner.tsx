@@ -195,7 +195,7 @@ export default function CampaignPlanner() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Campaign Planner</h1>
-          <p className="text-muted-foreground mt-1">Organise posts into focused campaigns</p>
+          <p className="text-muted-foreground mt-1">Generate a full campaign of draft posts, images, blogs, and ideas for Review.</p>
         </div>
         <Button onClick={() => handleOpen()} className="gap-1.5">
           <Plus className="w-4 h-4" /> New Campaign

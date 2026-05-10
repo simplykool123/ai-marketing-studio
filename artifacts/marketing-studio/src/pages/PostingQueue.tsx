@@ -271,7 +271,7 @@ export default function PostingQueue() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Publish Queue</h1>
-            <p className="text-muted-foreground mt-1">Approved drafts appear here before publishing.</p>
+            <p className="text-muted-foreground mt-1">Approved posts wait here before publishing, exporting, or marking as posted.</p>
           </div>
           <Select value={filter} onValueChange={v => setFilter(v as typeof filter)}>
             <SelectTrigger className="w-40 h-8 text-xs">
