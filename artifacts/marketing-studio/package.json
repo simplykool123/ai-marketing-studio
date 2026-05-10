@@ -10,6 +10,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@fontsource/bebas-neue": "^5.2.7",
+    "@fontsource/lora": "^5.2.8",
+    "@fontsource/merriweather": "^5.2.11",
+    "@fontsource/montserrat": "^5.2.8",
+    "@fontsource/playfair-display": "^5.2.8",
+    "@fontsource/poppins": "^5.2.7",
     "@hookform/resolvers": "^3.10.0",
     "@radix-ui/react-accordion": "^1.2.4",
     "@radix-ui/react-alert-dialog": "^1.1.7",
@@ -56,6 +62,7 @@
     "embla-carousel-react": "^8.6.0",
     "framer-motion": "catalog:",
     "input-otp": "^1.4.2",
+    "konva": "^9.3.16",
     "lucide-react": "catalog:",
     "next-themes": "^0.4.6",
     "react": "catalog:",
@@ -63,6 +70,7 @@
     "react-dom": "catalog:",
     "react-hook-form": "^7.55.0",
     "react-icons": "^5.4.0",
+    "react-konva": "^19.0.1",
     "react-resizable-panels": "^2.1.7",
     "recharts": "^2.15.2",
     "sonner": "^2.0.7",

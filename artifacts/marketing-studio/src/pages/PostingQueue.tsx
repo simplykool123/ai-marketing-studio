@@ -3,7 +3,13 @@ import { useParams, Link } from "wouter";
 import {
   useListPosts,
   getListPostsQueryKey,
+  useUploadPostImage,
+  useSaveImage,
+  useUpdatePost,
+  useGetClient,
 } from "@workspace/api-client-react";
+import ArtworkEditorDialog from "@/components/artwork/ArtworkEditorDialog";
+import type { ArtworkLayers } from "@/components/artwork/types";
 import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
@@ -121,6 +127,17 @@ async function fetchSocialAccounts(clientId: string): Promise<Array<{ platform: 
   return res.json();
 }
 
+function artworkBaseImageUrl(post: any): string | null {
+  const schema = asRecord(post.contentSchema);
+  return schema.backgroundImageUrl || post.selectedImageUrl || schema.imageUrl || post.originalImageUrl || null;
+}
+
+function postImagePrompt(post: any): string {
+  const schema = asRecord(post.contentSchema);
+  return [schema.imagePrompt, schema.creativeDirection, schema.artworkDirection, schema.prompt, post.imagePrompt]
+    .filter(Boolean).join(" ");
+}
+
 function formatSchedule(dateStr?: string): { label: string; urgent: boolean } {
   if (!dateStr) return { label: "Ready — no date set yet", urgent: false };
   const d = new Date(dateStr);
@@ -170,6 +187,7 @@ export default function PostingQueue() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<"all" | "approved" | "export_ready" | "scheduled" | "failed">("all");
+  const [artworkPost, setArtworkPost] = useState<any>(null);
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(
     () => typeof window !== "undefined" && window.localStorage.getItem("posting-mock-banner-dismissed") === "1"
   );
@@ -179,7 +197,12 @@ export default function PostingQueue() {
     try { window.localStorage.setItem("posting-mock-banner-dismissed", "1"); } catch {}
   };
 
+  const uploadPostImage = useUploadPostImage();
+  const saveImage = useSaveImage();
+  const updatePost = useUpdatePost();
+
   const { data: posts = [], isLoading } = useListPosts(clientId ?? "");
+  const { data: clientData } = useGetClient(clientId ?? "");
   const { data: socialAccounts = [] } = useQuery({
     queryKey: ["social-accounts", clientId],
     queryFn: () => fetchSocialAccounts(clientId!),
@@ -189,6 +212,57 @@ export default function PostingQueue() {
     if (!clientId) return;
     queryClient.invalidateQueries({ queryKey: getListPostsQueryKey(clientId) });
     queryClient.invalidateQueries({ queryKey: ["enhanced-dashboard", clientId] });
+  };
+
+  const handleSaveArtwork = async (blob: Blob, layers: ArtworkLayers) => {
+    if (!clientId || !artworkPost) return;
+    const post = artworkPost;
+    const schema = asRecord(post.contentSchema);
+    const uploaded = await new Promise<{ url: string }>((resolve, reject) => {
+      uploadPostImage.mutate(
+        { clientId, data: { file: new File([blob], `artwork-${post.id}-${Date.now()}.png`, { type: "image/png" }) } },
+        { onSuccess: resolve, onError: reject }
+      );
+    });
+    await new Promise<void>((resolve, reject) => {
+      saveImage.mutate(
+        {
+          clientId,
+          postId: post.id,
+          data: {
+            url: uploaded.url,
+            originalImageUrl: artworkBaseImageUrl(post) ?? undefined,
+            brandedImageUrl: uploaded.url,
+            provider: "openai",
+            status: "selected",
+            prompt: postImagePrompt(post) || "Final artwork rendered in Publish Queue",
+          },
+        },
+        { onSuccess: () => resolve(), onError: reject }
+      );
+    });
+    const nextSchema = {
+      ...schema,
+      backgroundImageUrl: schema.backgroundImageUrl || artworkBaseImageUrl(post) || undefined,
+      artworkLayers: layers,
+      finalArtworkUrl: uploaded.url,
+    };
+    await new Promise<void>((resolve, reject) => {
+      updatePost.mutate(
+        {
+          clientId,
+          postId: post.id,
+          data: {
+            selectedImageUrl: uploaded.url,
+            contentSchema: nextSchema,
+            contentSchemaVersion: post.contentSchema ? 1 : undefined,
+          },
+        },
+        { onSuccess: () => resolve(), onError: reject }
+      );
+    });
+    invalidate();
+    toast({ title: "Final artwork saved" });
   };
 
   const mockPostMutation = useMutation({
@@ -418,6 +492,10 @@ export default function PostingQueue() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              <DropdownMenuItem onSelect={() => setArtworkPost(post)}>
+                                <PenLine className="w-3.5 h-3.5 mr-2" />
+                                Edit Artwork
+                              </DropdownMenuItem>
                               <DropdownMenuItem asChild>
                                 <Link href={`/clients/${clientId}/drafts?tab=ready&postId=${post.id}`} className="flex items-center">
                                   <PenLine className="w-3.5 h-3.5 mr-2" />
@@ -450,6 +528,15 @@ export default function PostingQueue() {
             })}
           </div>
         )}
+
+      <ArtworkEditorDialog
+        open={!!artworkPost}
+        onClose={() => setArtworkPost(null)}
+        clientId={clientId || ""}
+        clientLogoUrl={clientData?.logoUrl}
+        post={artworkPost}
+        onSave={handleSaveArtwork}
+      />
     </div>
   );
 }

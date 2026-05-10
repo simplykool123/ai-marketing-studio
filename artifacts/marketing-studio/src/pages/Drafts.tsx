@@ -10,6 +10,7 @@ import {
   usePublishPost,
   useUploadPostImage,
   useSaveImage,
+  useGetClient,
   getListPostsQueryKey,
   type UpdatePostBodyPlatform,
   type ApprovePostBodyPlatform,
@@ -53,6 +54,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
+import ArtworkEditorDialog from "@/components/artwork/ArtworkEditorDialog";
+import type { ArtworkLayers } from "@/components/artwork/types";
 
 const PLATFORMS = [
   { value: "instagram", label: "Instagram" },
@@ -187,157 +190,6 @@ function firstString(...values: unknown[]): string | null {
   return null;
 }
 
-function asHexColor(value: unknown, fallback: string): string {
-  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim() : fallback;
-}
-
-function artworkLogoUrl(post: Post): string | null {
-  const schema = asRecord(post.contentSchema);
-  const logo = asRecord(schema.logo);
-  const layers = asRecord(schema.artworkLayers);
-  return firstString(layers.logoUrl, logo.url, schema.logoUrl, schema.brandLogoUrl);
-}
-
-function artworkBrandName(post: Post): string | null {
-  const schema = asRecord(post.contentSchema);
-  return firstString(schema.brandName, schema.clientName);
-}
-
-function artworkFrameColor(post: Post): string {
-  const schema = asRecord(post.contentSchema);
-  const layers = asRecord(schema.artworkLayers);
-  const colors = Array.isArray(schema.brandColorsUsed) ? schema.brandColorsUsed : [];
-  return asHexColor(layers.frameColor, asHexColor(colors[2], asHexColor(colors[0], "#f59e0b")));
-}
-
-function artworkPanelColor(post: Post): string {
-  const schema = asRecord(post.contentSchema);
-  const layers = asRecord(schema.artworkLayers);
-  const colors = Array.isArray(schema.brandColorsUsed) ? schema.brandColorsUsed : [];
-  return asHexColor(layers.panelColor, asHexColor(colors[0], "#111827"));
-}
-
-function loadCanvasImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.crossOrigin = "anonymous";
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("Could not load image for artwork render"));
-    image.src = url;
-  });
-}
-
-function drawCover(ctx: CanvasRenderingContext2D, image: HTMLImageElement, size: number) {
-  const scale = Math.max(size / image.naturalWidth, size / image.naturalHeight);
-  const width = image.naturalWidth * scale;
-  const height = image.naturalHeight * scale;
-  ctx.drawImage(image, (size - width) / 2, (size - height) / 2, width, height);
-}
-
-function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
-  ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.lineTo(x + width - radius, y);
-  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
-  ctx.lineTo(x + width, y + height - radius);
-  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
-  ctx.lineTo(x + radius, y + height);
-  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
-  ctx.lineTo(x, y + radius);
-  ctx.quadraticCurveTo(x, y, x + radius, y);
-  ctx.closePath();
-}
-
-function wrapCanvasLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number) {
-  const words = text.split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let current = "";
-  for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (ctx.measureText(next).width > maxWidth && current) {
-      lines.push(current);
-      current = word;
-      if (lines.length >= maxLines) break;
-    } else {
-      current = next;
-    }
-  }
-  if (current && lines.length < maxLines) lines.push(current);
-  return lines;
-}
-
-async function renderArtworkPng(params: {
-  post: Post;
-  headline: string;
-  subline: string;
-  logoEnabled: boolean;
-  frameColor: string;
-}) {
-  const size = 1080;
-  const sourceUrl = artworkBaseImageUrl(params.post);
-  if (!sourceUrl) throw new Error("No background image is available for this artwork.");
-
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not render artwork.");
-
-  const background = await loadCanvasImage(sourceUrl);
-  drawCover(ctx, background, size);
-  ctx.fillStyle = "rgba(0,0,0,0.18)";
-  ctx.fillRect(0, 0, size, size);
-
-  ctx.lineWidth = 12;
-  ctx.strokeStyle = params.frameColor;
-  roundedRect(ctx, 42, 42, 996, 996, 34);
-  ctx.stroke();
-
-  ctx.fillStyle = artworkPanelColor(params.post);
-  ctx.globalAlpha = 0.92;
-  roundedRect(ctx, 76, 644, 928, 326, 30);
-  ctx.fill();
-  ctx.globalAlpha = 1;
-
-  const logoUrl = artworkLogoUrl(params.post);
-  if (params.logoEnabled && logoUrl) {
-    try {
-      const logo = await loadCanvasImage(logoUrl);
-      const boxWidth = 150;
-      const boxHeight = 84;
-      const scale = Math.min(boxWidth / logo.naturalWidth, boxHeight / logo.naturalHeight);
-      const width = logo.naturalWidth * scale;
-      const height = logo.naturalHeight * scale;
-      ctx.drawImage(logo, 76 + (boxWidth - width) / 2, 76 + (boxHeight - height) / 2, width, height);
-    } catch {
-      // If the logo cannot be loaded cross-origin, keep the final artwork renderable.
-    }
-  } else if (params.logoEnabled) {
-    const brandName = artworkBrandName(params.post);
-    if (brandName) {
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "700 34px Inter, Arial, sans-serif";
-      ctx.fillText(brandName, 76, 122);
-    }
-  }
-
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "800 76px Inter, Arial, sans-serif";
-  const headlineLines = wrapCanvasLines(ctx, params.headline, 840, 2);
-  headlineLines.forEach((line, index) => ctx.fillText(line, 120, 740 + index * 82));
-
-  ctx.font = "400 34px Inter, Arial, sans-serif";
-  const sublineStart = 780 + Math.max(0, headlineLines.length - 1) * 82;
-  const sublineLines = wrapCanvasLines(ctx, params.subline, 820, 3);
-  sublineLines.forEach((line, index) => ctx.fillText(line, 120, sublineStart + index * 42));
-
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob);
-      else reject(new Error("Could not export artwork PNG."));
-    }, "image/png");
-  });
-}
 
 function dateFromIsoDay(value: unknown): Date | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
@@ -448,6 +300,7 @@ export default function Drafts() {
 
   const listParams = campaignIdFilter ? { campaignId: campaignIdFilter } : undefined;
   const { data: posts, isLoading } = useListPosts(clientId || "", listParams);
+  const { data: clientData } = useGetClient(clientId || "");
   const approvePost = useApprovePost();
   const deletePost = useDeletePost();
   const updatePost = useUpdatePost();
@@ -479,11 +332,6 @@ export default function Drafts() {
   const [editPlatform, setEditPlatform] = useState("instagram");
   const [isEditSaving, setIsEditSaving] = useState(false);
   const [artworkPost, setArtworkPost] = useState<Post | null>(null);
-  const [artworkHeadline, setArtworkHeadline] = useState("");
-  const [artworkSubline, setArtworkSubline] = useState("");
-  const [artworkLogoEnabled, setArtworkLogoEnabled] = useState(true);
-  const [artworkFrameColorValue, setArtworkFrameColorValue] = useState("#f59e0b");
-  const [isArtworkSaving, setIsArtworkSaving] = useState(false);
 
   const [regeneratingPostId, setRegeneratingPostId] = useState<string | null>(null);
   const [generatingImagePostIds, setGeneratingImagePostIds] = useState<Set<string>>(() => new Set());
@@ -572,13 +420,7 @@ export default function Drafts() {
   };
 
   const openArtworkEditor = (post: Post) => {
-    const schema = asRecord(post.contentSchema);
-    const layers = asRecord(schema.artworkLayers);
     setArtworkPost(post);
-    setArtworkHeadline(firstString(layers.headline, schema.headline) ?? "");
-    setArtworkSubline(firstString(layers.subline, schema.subline) ?? "");
-    setArtworkLogoEnabled(layers.logoEnabled !== false && schema.logoEnabled !== false);
-    setArtworkFrameColorValue(artworkFrameColor(post));
   };
 
   const handleSaveEdit = async () => {
@@ -610,90 +452,60 @@ export default function Drafts() {
     }
   };
 
-  const handleSaveArtwork = async () => {
+  const handleSaveArtworkFromDialog = async (blob: Blob, layers: ArtworkLayers) => {
     if (!clientId || !artworkPost) return;
-    setIsArtworkSaving(true);
-    try {
-      const schema = asRecord(artworkPost.contentSchema);
-      const frameColor = asHexColor(artworkFrameColorValue, artworkFrameColor(artworkPost));
-      const finalArtworkBlob = await renderArtworkPng({
-        post: artworkPost,
-        headline: artworkHeadline,
-        subline: artworkSubline,
-        logoEnabled: artworkLogoEnabled,
-        frameColor,
-      });
-      const uploaded = await new Promise<{ url: string }>((resolve, reject) => {
-        uploadPostImage.mutate(
-          {
-            clientId,
-            data: {
-              file: new File([finalArtworkBlob], `final-artwork-${artworkPost.id}.png`, { type: "image/png" }),
-            },
-          },
-          { onSuccess: resolve, onError: reject }
-        );
-      });
-      const nextSchema = {
-        ...schema,
-        headline: artworkHeadline,
-        subline: artworkSubline,
-        logoEnabled: artworkLogoEnabled,
-        finalArtworkUrl: uploaded.url,
-        artworkLayers: {
-          ...(asRecord(schema.artworkLayers)),
-          headline: artworkHeadline,
-          subline: artworkSubline,
-          logoEnabled: artworkLogoEnabled,
-          frameColor,
-          panelColor: artworkPanelColor(artworkPost),
-          logo: { enabled: artworkLogoEnabled, url: artworkLogoUrl(artworkPost) },
+    const post = artworkPost;
+    const schema = asRecord(post.contentSchema);
+    const uploaded = await new Promise<{ url: string }>((resolve, reject) => {
+      uploadPostImage.mutate(
+        {
+          clientId,
+          data: { file: new File([blob], `artwork-${post.id}-${Date.now()}.png`, { type: "image/png" }) },
         },
-      };
-      await new Promise<void>((resolve, reject) => {
-        saveImage.mutate(
-          {
-            clientId,
-            postId: artworkPost.id,
-            data: {
-              url: uploaded.url,
-              originalImageUrl: artworkBaseImageUrl(artworkPost) ?? undefined,
-              brandedImageUrl: uploaded.url,
-              provider: "openai",
-              status: "selected",
-              prompt: postImagePrompt(artworkPost) || "Final artwork rendered in Review",
-            },
+        { onSuccess: resolve, onError: reject }
+      );
+    });
+    await new Promise<void>((resolve, reject) => {
+      saveImage.mutate(
+        {
+          clientId,
+          postId: post.id,
+          data: {
+            url: uploaded.url,
+            originalImageUrl: artworkBaseImageUrl(post) ?? undefined,
+            brandedImageUrl: uploaded.url,
+            provider: "openai",
+            status: "selected",
+            prompt: postImagePrompt(post) || "Final artwork rendered in Review",
           },
-          { onSuccess: () => resolve(), onError: reject }
-        );
-      });
-      await new Promise<void>((resolve, reject) => {
-        updatePost.mutate(
-          {
-            clientId,
-            postId: artworkPost.id,
-            data: {
-              selectedImageUrl: uploaded.url,
-              contentSchema: nextSchema,
-              contentSchemaVersion: artworkPost.contentSchema ? 1 : undefined,
-            },
+        },
+        { onSuccess: () => resolve(), onError: reject }
+      );
+    });
+    // Preserve backgroundImageUrl so future edits can reload the bg image
+    const nextSchema = {
+      ...schema,
+      backgroundImageUrl: schema.backgroundImageUrl || artworkBaseImageUrl(post) || undefined,
+      artworkLayers: layers,
+      finalArtworkUrl: uploaded.url,
+    };
+    await new Promise<void>((resolve, reject) => {
+      updatePost.mutate(
+        {
+          clientId,
+          postId: post.id,
+          data: {
+            selectedImageUrl: uploaded.url,
+            contentSchema: nextSchema,
+            contentSchemaVersion: post.contentSchema ? 1 : undefined,
           },
-          { onSuccess: () => resolve(), onError: reject }
-        );
-      });
-      invalidatePosts();
-      queryClient.invalidateQueries({ queryKey: ["client-images", clientId] });
-      setArtworkPost(null);
-      toast({ title: "Final artwork saved" });
-    } catch (err) {
-      toast({
-        title: "Failed to save final artwork",
-        description: err instanceof Error ? err.message : undefined,
-        variant: "destructive",
-      });
-    } finally {
-      setIsArtworkSaving(false);
-    }
+        },
+        { onSuccess: () => resolve(), onError: reject }
+      );
+    });
+    invalidatePosts();
+    queryClient.invalidateQueries({ queryKey: ["client-images", clientId] });
+    toast({ title: "Final artwork saved" });
   };
 
   const mockPostMutation = useMutation({
@@ -1455,75 +1267,14 @@ export default function Drafts() {
         </DialogContent>
       </Dialog>
 
-      {/* Artwork Entry Dialog */}
-      <Dialog open={!!artworkPost} onOpenChange={(open) => { if (!open) setArtworkPost(null); }}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Edit Artwork</DialogTitle>
-          </DialogHeader>
-          {artworkPost && (
-            <div className="space-y-4 py-2">
-              <div className="aspect-square overflow-hidden rounded-md border bg-muted">
-                <ArtworkLayerPreview
-                  post={artworkPost}
-                  headline={artworkHeadline}
-                  subline={artworkSubline}
-                  logoEnabled={artworkLogoEnabled}
-                  frameColor={artworkFrameColorValue}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Headline</Label>
-                <Input value={artworkHeadline} onChange={(event) => setArtworkHeadline(event.target.value)} placeholder="Artwork headline" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Subline</Label>
-                <Input value={artworkSubline} onChange={(event) => setArtworkSubline(event.target.value)} placeholder="Short supporting line" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Frame color</Label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="color"
-                    value={asHexColor(artworkFrameColorValue, artworkFrameColor(artworkPost))}
-                    onChange={(event) => setArtworkFrameColorValue(event.target.value)}
-                    className="h-10 w-14 p-1"
-                  />
-                  <Input
-                    value={artworkFrameColorValue}
-                    onChange={(event) => setArtworkFrameColorValue(event.target.value)}
-                    className="font-mono text-sm"
-                  />
-                </div>
-              </div>
-              <label className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm">
-                <span>
-                  <span className="font-medium">Show logo when available</span>
-                  <span className="block text-xs text-muted-foreground">Uses the logo URL saved with this draft when available.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={artworkLogoEnabled}
-                  onChange={(event) => setArtworkLogoEnabled(event.target.checked)}
-                  className="h-4 w-4"
-                />
-              </label>
-              {postImagePrompt(artworkPost) && (
-                <div className="rounded-md border bg-muted/30 p-3">
-                  <p className="text-xs font-medium">Image prompt</p>
-                  <p className="mt-1 line-clamp-4 text-xs text-muted-foreground">{postImagePrompt(artworkPost)}</p>
-                </div>
-              )}
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setArtworkPost(null)}>Cancel</Button>
-            <Button onClick={handleSaveArtwork} disabled={isArtworkSaving}>
-              {isArtworkSaving ? "Rendering…" : "Save Final Artwork"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ArtworkEditorDialog
+        open={!!artworkPost}
+        onClose={() => setArtworkPost(null)}
+        clientId={clientId || ""}
+        clientLogoUrl={clientData?.logoUrl}
+        post={artworkPost}
+        onSave={handleSaveArtworkFromDialog}
+      />
     </div>
   );
 }
@@ -1629,55 +1380,6 @@ function DraftImagePreview({ post, large = false }: { post: Post; large?: boolea
   );
 }
 
-function ArtworkLayerPreview({
-  post,
-  headline,
-  subline,
-  logoEnabled,
-  frameColor,
-}: {
-  post: Post;
-  headline: string;
-  subline: string;
-  logoEnabled: boolean;
-  frameColor: string;
-}) {
-  const [failed, setFailed] = useState(false);
-  const imageUrl = artworkBaseImageUrl(post);
-  const logoUrl = artworkLogoUrl(post);
-  const brandName = artworkBrandName(post);
-  const panelColor = artworkPanelColor(post);
-
-  return (
-    <div className="relative h-full w-full overflow-hidden bg-muted">
-      {imageUrl && !failed ? (
-        <img src={imageUrl} alt="" className="h-full w-full object-cover" onError={() => setFailed(true)} />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
-          No background image available
-        </div>
-      )}
-      <div className="absolute inset-0 bg-black/20" />
-      <div
-        className="absolute inset-4 rounded-md border-4"
-        style={{ borderColor: asHexColor(frameColor, artworkFrameColor(post)) }}
-      />
-      {logoEnabled && (logoUrl || brandName) && (
-        <div className="absolute left-7 top-7 flex h-12 max-w-[45%] items-center">
-          {logoUrl ? (
-            <img src={logoUrl} alt="" className="max-h-full max-w-full object-contain" />
-          ) : (
-            <span className="truncate text-sm font-semibold text-white drop-shadow">{brandName}</span>
-          )}
-        </div>
-      )}
-      <div className="absolute inset-x-7 bottom-7 rounded-md px-5 py-4 text-white" style={{ backgroundColor: panelColor }}>
-        <p className="line-clamp-2 text-2xl font-bold leading-tight">{headline || "Headline"}</p>
-        <p className="mt-2 line-clamp-3 text-sm opacity-90">{subline || "Subline"}</p>
-      </div>
-    </div>
-  );
-}
 
 function DraftPreviewContent({ post }: { post: Post }) {
   const schema = asRecord(post.contentSchema);
