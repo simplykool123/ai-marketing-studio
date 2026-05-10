@@ -26,6 +26,11 @@ import BulkGenerate from "@/pages/BulkGenerate";
 import AssetLibrary from "@/pages/AssetLibrary";
 import ApprovalQueue from "@/pages/ApprovalQueue";
 import PostingRulesPage from "@/pages/PostingRulesPage";
+import AiBrainPage from "@/pages/AiBrainPage";
+import CampaignGenerator from "@/pages/CampaignGenerator";
+import BlogStudio from "@/pages/BlogStudio";
+import ImageStudio from "@/pages/ImageStudio";
+import VideoStudio from "@/pages/VideoStudio";
 
 const queryClient = new QueryClient();
 
@@ -158,13 +163,22 @@ function Router() {
       </Route>
 
       <Route path="/clients/:clientId/brain">
-        {() => <ProtectedClientRoute><PlaceholderPage title="Content Brain" /></ProtectedClientRoute>}
+        {() => <ProtectedClientRoute><AiBrainPage /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/research">
         {() => <ProtectedClientRoute><PlaceholderPage title="Research Engine" /></ProtectedClientRoute>}
       </Route>
+      <Route path="/clients/:clientId/campaigns/generate">
+        {() => <ProtectedClientRoute><CampaignGenerator /></ProtectedClientRoute>}
+      </Route>
       <Route path="/clients/:clientId/blog">
-        {() => <ProtectedClientRoute><PlaceholderPage title="Blog" /></ProtectedClientRoute>}
+        {() => <ProtectedClientRoute><BlogStudio /></ProtectedClientRoute>}
+      </Route>
+      <Route path="/clients/:clientId/image-studio">
+        {() => <ProtectedClientRoute><ImageStudio /></ProtectedClientRoute>}
+      </Route>
+      <Route path="/clients/:clientId/video-studio">
+        {() => <ProtectedClientRoute><VideoStudio /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/newsletters">
         {() => <ProtectedClientRoute><PlaceholderPage title="Newsletters" /></ProtectedClientRoute>}

@@ -26,6 +26,8 @@ import {
   Flag,
   FileText,
   Database,
+  Video,
+  Palette,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useState, useEffect, useRef } from "react";
@@ -48,6 +50,7 @@ async function fetchDashboardPendingCount(clientId: string): Promise<number> {
 }
 
 type NavItem = { href: string; label: string; icon: React.ElementType; badge?: number };
+type NavSection = { label: string; items: NavItem[] };
 
 export function Sidebar({ clientId }: { clientId?: string }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -72,7 +75,7 @@ export function Sidebar({ clientId }: { clientId?: string }) {
       const diff = pendingCount - prevCountRef.current;
       toast({
         title: `${diff} new post${diff > 1 ? "s" : ""} ready for review`,
-        description: "Check the Approval Queue to review them.",
+        description: "Open Review to approve them.",
       });
     }
     prevCountRef.current = pendingCount;
@@ -83,22 +86,43 @@ export function Sidebar({ clientId }: { clientId?: string }) {
     { href: `/clients/${clientId}/brand-dna`, label: "Brand Setup", icon: Dna },
     { href: `/clients/${clientId}/create`, label: "Create Content", icon: Sparkles },
     { href: `/clients/${clientId}/calendar`, label: "Calendar", icon: CalendarIcon },
-    { href: `/clients/${clientId}/approvals`, label: "Approvals", icon: CheckSquare, badge: pendingCount > 0 ? pendingCount : undefined },
+    { href: `/clients/${clientId}/drafts?tab=pending`, label: "Review", icon: CheckSquare, badge: pendingCount > 0 ? pendingCount : undefined },
     { href: `/clients/${clientId}/assets`, label: "Assets", icon: ImageIcon },
   ] : [];
 
-  const advancedItems: NavItem[] = clientId ? [
-    { href: `/clients/${clientId}/brain`, label: "Brain", icon: BrainCircuit },
-    { href: `/clients/${clientId}/research`, label: "Search", icon: Search },
-    { href: `/clients/${clientId}/storylines`, label: "Storylines", icon: BookOpen },
-    { href: `/clients/${clientId}/campaigns`, label: "Campaigns", icon: Flag },
-    { href: `/clients/${clientId}/bulk-generate`, label: "Bulk Generate", icon: Zap },
-    { href: `/clients/${clientId}/drafts`, label: "Drafts", icon: FileText },
-    { href: `/clients/${clientId}/blog`, label: "Blog", icon: Newspaper },
-    { href: `/clients/${clientId}/newsletters`, label: "Newsletters", icon: Mail },
-    { href: `/clients/${clientId}/social-accounts`, label: "Social Accounts", icon: Share2 },
-    { href: `/clients/${clientId}/queue`, label: "Posting Queue", icon: ListOrdered },
-    { href: `/clients/${clientId}/memory`, label: "Memory", icon: Database },
+  const advancedSections: NavSection[] = clientId ? [
+    {
+      label: "Plan",
+      items: [
+        { href: `/clients/${clientId}/brain`, label: "AI Ideas", icon: BrainCircuit },
+        { href: `/clients/${clientId}/storylines`, label: "Storylines", icon: BookOpen },
+        { href: `/clients/${clientId}/campaigns/generate`, label: "Campaign Planner", icon: Flag },
+      ],
+    },
+    {
+      label: "Create",
+      items: [
+        { href: `/clients/${clientId}/blog`, label: "Blog", icon: Newspaper },
+        { href: `/clients/${clientId}/image-studio`, label: "Image", icon: Palette },
+        { href: `/clients/${clientId}/video-studio`, label: "Video", icon: Video },
+        { href: `/clients/${clientId}/bulk-generate`, label: "Bulk Generate", icon: Zap },
+        { href: `/clients/${clientId}/newsletters`, label: "Newsletters", icon: Mail },
+      ],
+    },
+    {
+      label: "Review",
+      items: [
+        { href: `/clients/${clientId}/drafts?tab=drafts`, label: "Drafts view", icon: FileText },
+        { href: `/clients/${clientId}/queue`, label: "Publish Queue", icon: ListOrdered },
+        { href: `/clients/${clientId}/social-accounts`, label: "Social Accounts", icon: Share2 },
+      ],
+    },
+    {
+      label: "Learn",
+      items: [
+        { href: `/clients/${clientId}/memory`, label: "AI Memory", icon: Database },
+      ],
+    },
   ] : [];
 
   function NavLink({ item }: { item: NavItem }) {
@@ -189,7 +213,7 @@ export function Sidebar({ clientId }: { clientId?: string }) {
 
         {/* Settings always visible */}
         {clientId && (
-          <NavLink item={{ href: `/clients/${clientId}/settings`, label: "Settings", icon: Settings }} />
+          <NavLink item={{ href: `/clients/${clientId}/settings`, label: "Posting Rules", icon: Settings }} />
         )}
 
         {/* Advanced / Coming Later */}
@@ -204,15 +228,19 @@ export function Sidebar({ clientId }: { clientId?: string }) {
               ) : (
                 <ChevronRight className="w-3 h-3" />
               )}
-              Advanced
-              <span className="ml-1 text-[9px] bg-muted px-1 py-0.5 rounded text-muted-foreground/60 normal-case tracking-normal font-normal">
-                coming later
-              </span>
+              More Tools
             </button>
             {advancedOpen && (
               <div className="space-y-0.5 mt-1">
-                {advancedItems.map((item) => (
-                  <NavLink key={item.href} item={item} />
+                {advancedSections.map((section) => (
+                  <div key={section.label} className="pt-2 first:pt-0">
+                    <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      {section.label}
+                    </div>
+                    {section.items.map((item) => (
+                      <NavLink key={`${section.label}-${item.href}`} item={item} />
+                    ))}
+                  </div>
                 ))}
               </div>
             )}

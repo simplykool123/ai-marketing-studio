@@ -14,6 +14,7 @@ import {
   MUTATE_CONTENT_ROLES,
   requireClientRole,
 } from "../middleware/auth.js";
+import { writeClientMemory } from "../lib/client-memory-packet.js";
 
 const router = Router();
 
@@ -33,6 +34,9 @@ router.get("/clients/:clientId/posts", async (req, res) => {
     const conditions = [eq(postsTable.clientId, req.params.clientId)];
     if (query.status) {
       conditions.push(eq(postsTable.status, query.status));
+    }
+    if (query.campaignId) {
+      conditions.push(eq(postsTable.campaignId, query.campaignId));
     }
     const posts = await db
       .select()
@@ -90,8 +94,11 @@ router.get("/clients/:clientId/posts/export", async (req, res) => {
         caption: p.caption,
         hashtags: p.hashtags ?? "",
         image_url: p.selectedImageUrl ?? "",
+        original_image_url: p.originalImageUrl ?? "",
+        branded_image_url: p.brandedImageUrl ?? "",
         scheduled_at: p.scheduledAt?.toISOString() ?? "",
         platform: p.platform ?? "instagram",
+        source_ai_idea_id: p.sourceAiIdeaId ?? "",
       })),
     };
     res.json(exportData);
@@ -132,8 +139,11 @@ router.get("/clients/:clientId/export/approved", async (req, res) => {
         caption: p.caption,
         hashtags: p.hashtags ?? "",
         selectedImageUrl: p.selectedImageUrl ?? "",
+        originalImageUrl: p.originalImageUrl ?? "",
+        brandedImageUrl: p.brandedImageUrl ?? "",
         scheduledAt: p.scheduledAt?.toISOString() ?? "",
         platform: p.platform ?? "instagram",
+        sourceAiIdeaId: p.sourceAiIdeaId ?? "",
         status: p.status,
         createdAt: p.createdAt,
       })),
@@ -253,6 +263,9 @@ router.delete("/clients/:clientId/posts/:postId", requireClientRole(EDIT_CONTENT
 
 router.post("/clients/:clientId/posts/:postId/reject", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
+    const { category, reason } = req.body as { category?: string; reason?: string };
+    const cleanCategory = typeof category === "string" && category.trim() ? category.trim() : "other";
+    const cleanReason = typeof reason === "string" && reason.trim() ? reason.trim() : "";
     const [post] = await db
       .update(postsTable)
       .set({ status: "rejected", updatedAt: new Date() })
@@ -264,6 +277,16 @@ router.post("/clients/:clientId/posts/:postId/reject", requireClientRole(APPROVE
       )
       .returning();
     if (!post) { res.status(404).json({ error: "Post not found" }); return; }
+    await writeClientMemory(
+      req.params.clientId,
+      "Rejection Memory / Rejected draft",
+      [
+        `User rejected draft "${post.topic}".`,
+        `Category: ${cleanCategory}.`,
+        cleanReason ? `Reason: ${cleanReason}.` : null,
+        "Avoid repeating this angle unless edited.",
+      ].filter(Boolean).join(" ")
+    );
     res.json(post);
   } catch {
     res.status(500).json({ error: "Failed to reject post" });
@@ -296,6 +319,9 @@ router.post("/clients/:clientId/posts/bulk-approve", requireClientRole(APPROVE_C
         .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
         .returning();
       if (post) results.push(post);
+      if (post) {
+        await writeClientMemory(clientId, "Performance Memory / Approved draft", `User approved ${post.platform ?? "social"} draft "${post.topic}". Caption angle: ${post.caption.slice(0, 140)}`);
+      }
     }
     res.json({ approved: results, count: results.length });
   } catch {
@@ -324,6 +350,9 @@ router.post("/clients/:clientId/posts/:postId/approve", requireClientRole(APPROV
         )
       )
       .returning();
+    if (post) {
+      await writeClientMemory(req.params.clientId, "Performance Memory / Approved draft", `User approved ${post.platform ?? "social"} draft "${post.topic}". Caption angle: ${post.caption.slice(0, 140)}`);
+    }
     res.json(post);
   } catch (err) {
     res.status(400).json({ error: "Failed to approve post" });
@@ -358,6 +387,8 @@ router.post("/clients/:clientId/posts/:postId/mock-post", requireClientRole(APPR
       responseBody: JSON.stringify({ success: true, mockId: `mock_${Date.now()}`, message: "Post published successfully (mock)" }),
     });
 
+    await writeClientMemory(clientId, "Performance Memory / Mock posted", `User mock posted ${post.platform ?? "social"} post "${post.topic}". Treat this as a final accepted content direction.`);
+
     res.json({ post: updated, message: "Mock post published successfully" });
   } catch (err) {
     res.status(500).json({ error: "Failed to mock post" });
@@ -367,10 +398,11 @@ router.post("/clients/:clientId/posts/:postId/mock-post", requireClientRole(APPR
 router.post("/clients/:clientId/posts/:postId/mark-posted", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
     const { clientId, postId } = req.params;
+    const publishedAt = new Date();
 
     const [updated] = await db
       .update(postsTable)
-      .set({ status: "posted", updatedAt: new Date() })
+      .set({ status: "posted", publishedAt, updatedAt: publishedAt })
       .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
       .returning();
 
@@ -383,6 +415,8 @@ router.post("/clients/:clientId/posts/:postId/mark-posted", requireClientRole(AP
       status: "success",
       provider: "manual",
     });
+
+    await writeClientMemory(clientId, "Performance Memory / Posted manually", `User marked ${updated.platform ?? "social"} post "${updated.topic}" as posted. Treat this as an accepted final content direction.`);
 
     res.json({ post: updated, message: "Post marked as posted" });
   } catch (err) {
@@ -426,8 +460,11 @@ router.post("/clients/:clientId/webhook/export", requireClientRole(APPROVE_CONTE
         caption: p.caption,
         hashtags: p.hashtags ?? "",
         image_url: p.selectedImageUrl ?? "",
+        original_image_url: p.originalImageUrl ?? "",
+        branded_image_url: p.brandedImageUrl ?? "",
         scheduled_at: p.scheduledAt?.toISOString() ?? "",
         platform: p.platform ?? "instagram",
+        source_ai_idea_id: p.sourceAiIdeaId ?? "",
         status: p.status,
       })),
     };

@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from "react";
-import { useParams } from "wouter";
+import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useParams, useSearch } from "wouter";
 import {
   useListPosts,
   useApprovePost,
@@ -46,6 +46,8 @@ import {
   Zap,
   AlertCircle,
   RotateCcw,
+  Eye,
+  XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
@@ -76,6 +78,8 @@ type Post = {
   caption: string;
   hashtags?: string | null;
   selectedImageUrl?: string | null;
+  originalImageUrl?: string | null;
+  brandedImageUrl?: string | null;
   status: string;
   platform?: string | null;
   scheduledAt?: string | null;
@@ -86,9 +90,100 @@ type Post = {
   publishedAt?: string | null;
   publishedUrl?: string | null;
   publishError?: string | null;
+  qualityScore?: number | null;
+  qualityReport?: unknown;
+  campaignId?: string | null;
+  skillId?: string | null;
+  contentType?: string | null;
+  contentSchema?: unknown;
+  title?: string | null;
+  longFormBody?: string | null;
+  imagePrompt?: string | null;
+  postType?: string | null;
 };
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const CONTENT_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "social", label: "Social" },
+  { value: "blog", label: "Blog" },
+  { value: "newsletter", label: "Newsletter" },
+  { value: "image", label: "Image prompts/assets" },
+  { value: "video", label: "Video scripts" },
+] as const;
+
+const REJECT_CATEGORIES = [
+  { value: "off_brand_voice", label: "Off-brand voice" },
+  { value: "off_strategy", label: "Off strategy" },
+  { value: "poor_quality", label: "Poor quality" },
+  { value: "wrong_format", label: "Wrong format" },
+  { value: "wrong_timing", label: "Wrong timing" },
+  { value: "too_similar_to_past", label: "Too similar to past" },
+  { value: "other", label: "Other" },
+];
+
+const MAX_IMAGE_GENERATIONS = 3;
+
+function hasPublishedProof(post: Post): boolean {
+  return (post.status === "posted" || post.status === "published") && !!post.publishedAt;
+}
+
+function displayStatus(post: Post): string {
+  if (hasPublishedProof(post)) return "published";
+  if ((post.status === "posted" || post.status === "published") && !post.publishedAt) return "not posted yet";
+  if (post.status === "export_ready") return "ready to post";
+  if (post.status === "failed" && /no active .*account connected|no .*account connected/i.test(post.publishError ?? "")) {
+    return "failed - no social account";
+  }
+  return post.status;
+}
+
+type ContentFilter = typeof CONTENT_FILTERS[number]["value"];
+type ReviewTab = "pending" | "drafts" | "ready" | "history";
+
+function getReviewTab(value: string | null): ReviewTab {
+  return value === "drafts" || value === "ready" || value === "history" ? value : "pending";
+}
+
+function asRecord(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
+}
+
+function contentTypeLabel(post: Post): string {
+  return (post.contentType || post.postType || "social_post").replace(/_/g, " ");
+}
+
+function contentGroup(post: Post): ContentFilter {
+  const type = `${post.contentType ?? ""} ${post.postType ?? ""} ${post.platform ?? ""}`.toLowerCase();
+  if (type.includes("blog")) return "blog";
+  if (type.includes("newsletter")) return "newsletter";
+  if (type.includes("video")) return "video";
+  if (type.includes("image")) return "image";
+  return "social";
+}
+
+function schemaPreview(post: Post): string {
+  const schema = asRecord(post.contentSchema);
+  const type = contentGroup(post);
+  if (type === "blog") {
+    return [schema.seoTitle, schema.metaDescription, schema.fullDraft, post.longFormBody, post.caption].filter(Boolean).join(" ");
+  }
+  if (type === "newsletter") {
+    return [schema.subject, schema.preheader, ...(Array.isArray(schema.sections) ? schema.sections : []), post.caption].filter(Boolean).join(" ");
+  }
+  if (type === "video") {
+    const scenes = Array.isArray(schema.scenes) ? schema.scenes.map((scene: any) => [scene.visual, scene.text, scene.voiceover].filter(Boolean).join(" ")) : [];
+    return [schema.hook, ...scenes, schema.cta, post.longFormBody, post.caption].filter(Boolean).join(" ");
+  }
+  if (type === "image") {
+    return [schema.prompt, schema.imageUrl, schema.style, schema.rationale, post.imagePrompt, post.selectedImageUrl, post.caption].filter(Boolean).join(" ");
+  }
+  if (Array.isArray(schema.slides)) {
+    return schema.slides.map((slide: any) => [slide.title, slide.text, slide.caption].filter(Boolean).join(" ")).join(" ");
+  }
+  return [schema.captionAngle, schema.caption, schema.hashtags, schema.imagePrompt, post.caption, post.hashtags].filter(Boolean).join(" ");
+}
 
 async function mockPost(clientId: string, postId: string) {
   const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/mock-post`, {
@@ -118,12 +213,26 @@ async function webhookExport(clientId: string, postId: string) {
   return res.json();
 }
 
+async function rejectDraft(clientId: string, postId: string, category: string, reason: string) {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ category, reason }),
+  });
+  if (!res.ok) throw new Error("Failed to reject draft");
+  return res.json();
+}
+
 export default function Drafts() {
   const { clientId } = useParams<{ clientId: string }>();
+  const search = useSearch();
+  const searchParams = new URLSearchParams(search);
+  const campaignIdFilter = searchParams.get("campaignId") ?? undefined;
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: posts, isLoading } = useListPosts(clientId || "");
+  const listParams = campaignIdFilter ? { campaignId: campaignIdFilter } : undefined;
+  const { data: posts, isLoading } = useListPosts(clientId || "", listParams);
   const approvePost = useApprovePost();
   const deletePost = useDeletePost();
   const updatePost = useUpdatePost();
@@ -133,8 +242,18 @@ export default function Drafts() {
 
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [date, setDate] = useState<Date>();
+  const [approveTime, setApproveTime] = useState("");
   const [approvePlatform, setApprovePlatform] = useState("instagram");
   const [isApproveOpen, setIsApproveOpen] = useState(false);
+  const [activeContentFilter, setActiveContentFilter] = useState<ContentFilter>("all");
+  const [activeReviewTab, setActiveReviewTab] = useState<ReviewTab>(() => getReviewTab(searchParams.get("tab")));
+  const [previewPostId, setPreviewPostId] = useState<string | null>(null);
+  const [previewFocusPostId, setPreviewFocusPostId] = useState<string | null>(null);
+  const previewPanelRef = useRef<HTMLDivElement | null>(null);
+  const [rejectingPost, setRejectingPost] = useState<Post | null>(null);
+  const [rejectCategory, setRejectCategory] = useState("poor_quality");
+  const [rejectReason, setRejectReason] = useState("");
+  const [isRejecting, setIsRejecting] = useState(false);
 
   const [editingPost, setEditingPost] = useState<Post | null>(null);
   const [editTopic, setEditTopic] = useState("");
@@ -144,18 +263,54 @@ export default function Drafts() {
   const [isEditSaving, setIsEditSaving] = useState(false);
 
   const [regeneratingPostId, setRegeneratingPostId] = useState<string | null>(null);
-  const [generatingImagePostId, setGeneratingImagePostId] = useState<string | null>(null);
+  const [generatingImagePostIds, setGeneratingImagePostIds] = useState<Set<string>>(() => new Set());
   const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
 
   const invalidatePosts = () => {
-    if (clientId) queryClient.invalidateQueries({ queryKey: getListPostsQueryKey(clientId) });
+    if (clientId) queryClient.invalidateQueries({ queryKey: getListPostsQueryKey(clientId, listParams) });
   };
 
-  const drafts = (posts?.filter(p => p.status === "draft") || []) as Post[];
-  const approved = (posts?.filter(p =>
+  const updateReviewTab = (value: string) => {
+    const nextTab = getReviewTab(value);
+    setActiveReviewTab(nextTab);
+    setPreviewPostId(null);
+    const params = new URLSearchParams(search);
+    params.set("tab", nextTab);
+    const nextSearch = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`);
+  };
+
+  const allPosts = (posts || []) as Post[];
+  const needsReview = allPosts.filter(p => p.status === "draft" || p.status === "in_review");
+  const drafts = allPosts.filter(p => p.status === "draft");
+  const approved = allPosts.filter(p =>
     p.status === "approved" || p.status === "export_ready" || p.status === "scheduled" || p.status === "failed"
-  ) || []) as Post[];
-  const published = (posts?.filter(p => p.status === "posted" || p.status === "published") || []) as Post[];
+  );
+  const history = allPosts.filter(p => p.status === "rejected" || hasPublishedProof(p));
+  const matchesContentFilter = (post: Post) => activeContentFilter === "all" || contentGroup(post) === activeContentFilter;
+  const filteredNeedsReview = needsReview.filter(matchesContentFilter);
+  const filteredDrafts = drafts.filter(matchesContentFilter);
+  const filteredApproved = approved.filter(matchesContentFilter);
+  const filteredHistory = history.filter(matchesContentFilter);
+  const lowQualityDrafts = drafts.filter((post) => post.qualityScore != null && post.qualityScore < 0.5);
+  const contentTypeCount = new Set(drafts.map((post) => contentGroup(post))).size;
+  const campaignDraftCount = campaignIdFilter
+    ? drafts.filter((post) => post.campaignId === campaignIdFilter).length
+    : drafts.filter((post) => !!post.campaignId).length;
+  const activeReviewPosts = activeReviewTab === "drafts"
+    ? filteredDrafts
+    : activeReviewTab === "ready"
+      ? filteredApproved
+      : activeReviewTab === "history"
+        ? filteredHistory
+        : filteredNeedsReview;
+  const previewPost = useMemo(() => {
+    if (previewPostId) {
+      const found = (posts as Post[] | undefined)?.find((post) => post.id === previewPostId);
+      if (found) return found;
+    }
+    return activeReviewPosts[0] ?? filteredNeedsReview[0] ?? filteredDrafts[0] ?? filteredApproved[0] ?? filteredHistory[0] ?? null;
+  }, [activeReviewPosts, filteredApproved, filteredDrafts, filteredHistory, filteredNeedsReview, posts, previewPostId]);
 
   const openEdit = (post: Post) => {
     setEditingPost(post);
@@ -223,13 +378,32 @@ export default function Drafts() {
     onError: () => toast({ title: "Failed to webhook export", variant: "destructive" }),
   });
 
+  const handleReviewSelect = (postId: string) => {
+    setPreviewPostId(postId);
+    setPreviewFocusPostId(postId);
+    window.requestAnimationFrame(() => {
+      previewPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      previewPanelRef.current?.focus({ preventScroll: true });
+    });
+    window.setTimeout(() => setPreviewFocusPostId((current) => current === postId ? null : current), 1200);
+  };
+
+  const buildScheduledAt = () => {
+    if (!date) return undefined;
+    const [hours, minutes] = (approveTime || "10:00").split(":").map(Number);
+    const scheduledAt = new Date(date);
+    scheduledAt.setHours(hours || 10, minutes || 0, 0, 0);
+    return scheduledAt;
+  };
+
   const handleApprove = () => {
-    if (!clientId || !selectedPostId || !date) return;
+    if (!clientId || !selectedPostId) return;
+    const scheduledAt = buildScheduledAt();
     approvePost.mutate(
       {
         clientId,
         postId: selectedPostId,
-        data: { scheduledAt: date.toISOString(), platform: approvePlatform as ApprovePostBodyPlatform },
+        data: { scheduledAt: scheduledAt?.toISOString(), platform: approvePlatform as ApprovePostBodyPlatform },
       },
       {
         onSuccess: () => {
@@ -237,11 +411,41 @@ export default function Drafts() {
           setIsApproveOpen(false);
           setSelectedPostId(null);
           setDate(undefined);
-          toast({ title: "Post approved and scheduled" });
+          setApproveTime("");
+          toast({
+            title: "Approved and moved to Publish Queue.",
+            description: scheduledAt ? `Scheduled for ${format(scheduledAt, "MMMM d, yyyy 'at' h:mm a")}.` : undefined,
+          });
         },
         onError: () => toast({ title: "Failed to approve post", variant: "destructive" }),
       }
     );
+  };
+
+  const openReject = (post: Post) => {
+    setRejectingPost(post);
+    setRejectCategory("poor_quality");
+    setRejectReason("");
+  };
+
+  const handleReject = async () => {
+    if (!clientId || !rejectingPost) return;
+    setIsRejecting(true);
+    try {
+      await rejectDraft(clientId, rejectingPost.id, rejectCategory, rejectReason);
+      invalidatePosts();
+      setRejectingPost(null);
+      setRejectReason("");
+      if (previewPostId === rejectingPost.id) setPreviewPostId(null);
+      toast({
+        title: "Draft rejected",
+        description: "AI memory was updated with what to avoid.",
+      });
+    } catch {
+      toast({ title: "Failed to reject draft", variant: "destructive" });
+    } finally {
+      setIsRejecting(false);
+    }
   };
 
   const handleDelete = (postId: string) => {
@@ -279,18 +483,31 @@ export default function Drafts() {
 
   const handleGenerateImage = (postId: string) => {
     if (!clientId) return;
-    setGeneratingImagePostId(postId);
+    if (generatingImagePostIds.has(postId)) return;
+    if (generatingImagePostIds.size >= MAX_IMAGE_GENERATIONS) {
+      toast({
+        title: "Image generation queue is full",
+        description: `Up to ${MAX_IMAGE_GENERATIONS} draft images can generate at once.`,
+      });
+      return;
+    }
+    setGeneratingImagePostIds((current) => new Set(current).add(postId));
     generateImage.mutate(
       { clientId, postId },
       {
         onSuccess: () => {
           invalidatePosts();
           toast({ title: "Image generated" });
-          setGeneratingImagePostId(null);
         },
         onError: () => {
           toast({ title: "Failed to generate image", variant: "destructive" });
-          setGeneratingImagePostId(null);
+        },
+        onSettled: () => {
+          setGeneratingImagePostIds((current) => {
+            const next = new Set(current);
+            next.delete(postId);
+            return next;
+          });
         },
       }
     );
@@ -339,6 +556,8 @@ export default function Drafts() {
         caption: post.caption,
         hashtags: post.hashtags ?? "",
         selectedImageUrl: post.selectedImageUrl ?? "",
+        originalImageUrl: post.originalImageUrl ?? "",
+        brandedImageUrl: post.brandedImageUrl ?? "",
         platform: post.platform ?? "instagram",
         scheduledAt: post.scheduledAt ?? "",
         status: post.status,
@@ -368,6 +587,80 @@ export default function Drafts() {
       </div>
     );
   }
+
+  const canReview = (post?: Post | null): post is Post => !!post && (post.status === "draft" || post.status === "in_review");
+
+  const renderReviewGrid = (items: Post[], emptyTitle: string, emptyBody: string) => {
+    if (items.length === 0) {
+      return (
+        <Card className="border-dashed bg-card/50">
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+            <FileText className="w-10 h-10 text-muted-foreground/30 mb-3" />
+            <h3 className="text-base font-semibold mb-1">{emptyTitle}</h3>
+            <p className="text-muted-foreground text-sm max-w-sm mb-5">{emptyBody}</p>
+            {drafts.length === 0 && needsReview.length === 0 && (
+              <div className="flex gap-2 flex-wrap justify-center">
+                <Link href={`/clients/${clientId}/bulk-generate`}>
+                  <Button size="sm"><Zap className="w-4 h-4 mr-2" /> Bulk Generate</Button>
+                </Link>
+                <Link href={`/clients/${clientId}/create`}>
+                  <Button size="sm" variant="outline"><PlusCircle className="w-4 h-4 mr-2" /> Create with AI</Button>
+                </Link>
+                <Link href={`/clients/${clientId}/manual`}>
+                  <Button size="sm" variant="outline"><PenLine className="w-4 h-4 mr-2" /> Manual Post</Button>
+                </Link>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      );
+    }
+
+    return (
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_420px] gap-5 items-start">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {items.map(post => (
+            <PostCard
+              key={post.id}
+              post={post}
+              isSelected={previewPost?.id === post.id}
+              onSelect={() => handleReviewSelect(post.id)}
+              onEdit={() => openEdit(post)}
+              onApprove={canReview(post) ? () => {
+                setSelectedPostId(post.id);
+                setApprovePlatform(post.platform || "instagram");
+                setIsApproveOpen(true);
+              } : undefined}
+              onReject={canReview(post) ? () => openReject(post) : undefined}
+              onDelete={() => handleDelete(post.id)}
+              onRegenerateCopy={() => handleRegenerateCopy(post.id)}
+              onGenerateImage={() => handleGenerateImage(post.id)}
+              isRegeneratingCopy={regeneratingPostId === post.id}
+              isGeneratingImage={generatingImagePostIds.has(post.id)}
+            />
+          ))}
+        </div>
+        <div
+          ref={previewPanelRef}
+          tabIndex={-1}
+          className={cn(
+            "rounded-lg outline-none transition-shadow",
+            previewFocusPostId === previewPost?.id && "ring-2 ring-primary ring-offset-2"
+          )}
+        >
+          <DraftPreviewPanel
+            post={previewPost}
+            onApprove={canReview(previewPost) ? () => {
+              setSelectedPostId(previewPost.id);
+              setApprovePlatform(previewPost.platform || "instagram");
+              setIsApproveOpen(true);
+            } : undefined}
+            onReject={canReview(previewPost) ? () => openReject(previewPost) : undefined}
+          />
+        </div>
+      </div>
+    );
+  };
 
   const PostActionBar = ({ post }: { post: Post }) => (
     <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-border">
@@ -435,8 +728,10 @@ export default function Drafts() {
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Drafts & Posts</h1>
-          <p className="text-muted-foreground mt-1 text-sm">Review, edit, and schedule generated posts.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Review</h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Review pending content, approve ready posts, and inspect draft history.
+          </p>
         </div>
         <div className="flex gap-2">
           <Link href={`/clients/${clientId}/bulk-generate`}>
@@ -455,8 +750,88 @@ export default function Drafts() {
         </div>
       </div>
 
-      <Tabs defaultValue="drafts">
+      {campaignIdFilter && (
+        <div className="flex flex-col gap-2 rounded-md border border-primary/30 bg-primary/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-semibold text-primary">Campaign filter active</p>
+              <p className="text-xs text-muted-foreground">Showing drafts and posts from this campaign only.</p>
+            </div>
+          </div>
+          <a href={`/clients/${clientId}/drafts`} className="text-sm font-medium text-primary underline">
+            Clear filter
+          </a>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xs font-medium text-muted-foreground">Needs review</p>
+            <p className="text-2xl font-semibold mt-1">{needsReview.length}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xs font-medium text-muted-foreground">{campaignIdFilter ? "Campaign-filtered drafts" : "Campaign-linked drafts"}</p>
+            <p className="text-2xl font-semibold mt-1">{campaignDraftCount}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xs font-medium text-muted-foreground">Low quality drafts</p>
+            <p className="text-2xl font-semibold mt-1">{lowQualityDrafts.length}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xs font-medium text-muted-foreground">Content type count</p>
+            <p className="text-2xl font-semibold mt-1">{contentTypeCount}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {CONTENT_FILTERS.map((filter) => (
+          <Button
+            key={filter.value}
+            size="sm"
+            variant={activeContentFilter === filter.value ? "default" : "outline"}
+            onClick={() => {
+              setActiveContentFilter(filter.value);
+              setPreviewPostId(null);
+            }}
+          >
+            {filter.label}
+          </Button>
+        ))}
+      </div>
+
+      <div className="rounded-md border border-border bg-muted/30 px-4 py-3">
+        <p className="text-sm font-medium">Memory impact</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Approving teaches AI what works. Rejecting teaches AI what to avoid.
+        </p>
+      </div>
+
+      <div className="rounded-md border border-border bg-card px-4 py-3">
+        <p className="text-sm font-medium">Draft → Approved/Ready → Publish Queue → Published/Failed</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Approval moves content to the Publish Queue. It is not posted until a publish, webhook, or manual action happens.
+        </p>
+      </div>
+
+      <Tabs value={activeReviewTab} onValueChange={updateReviewTab}>
         <TabsList>
+          <TabsTrigger value="pending">
+            Needs Review / Pending
+            {needsReview.length > 0 && (
+              <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0 h-4">
+                {needsReview.length}
+              </Badge>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="drafts">
             Drafts
             {drafts.length > 0 && (
@@ -465,77 +840,53 @@ export default function Drafts() {
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="approved">
-            Approved
+          <TabsTrigger value="ready">
+            Approved / Ready
             {approved.length > 0 && (
               <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0 h-4">
                 {approved.length}
               </Badge>
             )}
           </TabsTrigger>
-          {published.length > 0 && (
-            <TabsTrigger value="published">
-              Published
+          <TabsTrigger value="history">
+            Rejected / History
+            {history.length > 0 && (
               <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0 h-4">
-                {published.length}
+                {history.length}
               </Badge>
-            </TabsTrigger>
-          )}
+            )}
+          </TabsTrigger>
         </TabsList>
 
-        {/* Drafts Tab */}
-        <TabsContent value="drafts" className="mt-6">
-          {drafts.length === 0 ? (
-            <Card className="border-dashed bg-card/50">
-              <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-                <FileText className="w-10 h-10 text-muted-foreground/30 mb-3" />
-                <h3 className="text-base font-semibold mb-1">No drafts yet</h3>
-                <p className="text-muted-foreground text-sm max-w-sm mb-5">
-                  Create a post using AI or write content manually — it will appear here for review.
-                </p>
-                <div className="flex gap-2 flex-wrap justify-center">
-                  <Link href={`/clients/${clientId}/bulk-generate`}>
-                    <Button size="sm"><Zap className="w-4 h-4 mr-2" /> Bulk Generate</Button>
-                  </Link>
-                  <Link href={`/clients/${clientId}/create`}>
-                    <Button size="sm" variant="outline"><PlusCircle className="w-4 h-4 mr-2" /> Create with AI</Button>
-                  </Link>
-                  <Link href={`/clients/${clientId}/manual`}>
-                    <Button size="sm" variant="outline"><PenLine className="w-4 h-4 mr-2" /> Manual Post</Button>
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-              {drafts.map(post => (
-                <PostCard
-                  key={post.id}
-                  post={post}
-                  onEdit={() => openEdit(post)}
-                  onApprove={() => {
-                    setSelectedPostId(post.id);
-                    setApprovePlatform(post.platform || "instagram");
-                    setIsApproveOpen(true);
-                  }}
-                  onDelete={() => handleDelete(post.id)}
-                  onRegenerateCopy={() => handleRegenerateCopy(post.id)}
-                  onGenerateImage={() => handleGenerateImage(post.id)}
-                  isRegeneratingCopy={regeneratingPostId === post.id}
-                  isGeneratingImage={generatingImagePostId === post.id}
-                />
-              ))}
-            </div>
+        {/* Needs Review Tab */}
+        <TabsContent value="pending" className="mt-6">
+          {renderReviewGrid(
+            filteredNeedsReview,
+            needsReview.length === 0 ? "No posts need review" : "No pending posts match this filter",
+            needsReview.length === 0
+              ? "Generated drafts and approval handoffs will appear here when they need a decision."
+              : "Choose another content type filter to continue reviewing."
           )}
         </TabsContent>
 
-        {/* Approved Tab */}
-        <TabsContent value="approved" className="mt-6">
-          {approved.length === 0 ? (
+        {/* Drafts Tab */}
+        <TabsContent value="drafts" className="mt-6">
+          {renderReviewGrid(
+            filteredDrafts,
+            drafts.length === 0 ? "No drafts yet" : "No drafts match this filter",
+            drafts.length === 0
+              ? "Create a post using AI or write content manually. It will appear here for review."
+              : "Choose another content type filter to continue reviewing."
+          )}
+        </TabsContent>
+
+        {/* Ready Tab */}
+        <TabsContent value="ready" className="mt-6">
+          {filteredApproved.length === 0 ? (
             <Card className="border-dashed bg-card/50">
               <CardContent className="flex flex-col items-center justify-center py-20 text-center">
                 <CheckCircle className="w-12 h-12 text-muted-foreground mb-4" />
-                <h3 className="text-xl font-semibold mb-2">No approved posts</h3>
+                <h3 className="text-xl font-semibold mb-2">{approved.length === 0 ? "No approved posts" : "No approved posts match this filter"}</h3>
                 <p className="text-muted-foreground max-w-md">
                   Approve drafts to see them here and take publishing actions.
                 </p>
@@ -543,7 +894,7 @@ export default function Drafts() {
             </Card>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-              {approved.map(post => (
+              {filteredApproved.map(post => (
                 <PostCard
                   key={post.id}
                   post={post}
@@ -558,11 +909,21 @@ export default function Drafts() {
           )}
         </TabsContent>
 
-        {/* Published Tab */}
-        {published.length > 0 && (
-          <TabsContent value="published" className="mt-6">
+        {/* History Tab */}
+        <TabsContent value="history" className="mt-6">
+          {filteredHistory.length === 0 ? (
+            <Card className="border-dashed bg-card/50">
+              <CardContent className="flex flex-col items-center justify-center py-20 text-center">
+                <RotateCcw className="w-12 h-12 text-muted-foreground mb-4" />
+                <h3 className="text-xl font-semibold mb-2">{history.length === 0 ? "No review history yet" : "No history matches this filter"}</h3>
+                <p className="text-muted-foreground max-w-md">
+                  Rejected drafts and published posts will appear here after review decisions are made.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-              {published.map(post => (
+              {filteredHistory.map(post => (
                 <PostCard
                   key={post.id}
                   post={post}
@@ -571,15 +932,15 @@ export default function Drafts() {
                 />
               ))}
             </div>
-          </TabsContent>
-        )}
+          )}
+        </TabsContent>
       </Tabs>
 
       {/* Approve Dialog */}
       <Dialog open={isApproveOpen} onOpenChange={setIsApproveOpen}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Approve & Schedule</DialogTitle>
+            <DialogTitle>Approve to Queue</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
@@ -607,11 +968,69 @@ export default function Drafts() {
                 </PopoverContent>
               </Popover>
             </div>
+            <div className="space-y-1.5">
+              <Label>Schedule Time</Label>
+              <Input
+                type="time"
+                value={approveTime}
+                onChange={(event) => setApproveTime(event.target.value)}
+                disabled={!date}
+              />
+              <p className="text-xs text-muted-foreground">
+                If you pick a date without a time, it defaults to 10:00 AM local time.
+              </p>
+            </div>
+            <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+              This schedules the post inside the app. It will not publish until a social account/webhook/manual action is used.
+            </div>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setIsApproveOpen(false)}>Cancel</Button>
-            <Button onClick={handleApprove} disabled={!date || approvePost.isPending}>
-              {approvePost.isPending ? "Scheduling…" : "Confirm"}
+            <Button onClick={handleApprove} disabled={approvePost.isPending}>
+              {approvePost.isPending ? "Approving..." : date ? "Approve & Schedule" : "Approve to Queue"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reject Dialog */}
+      <Dialog open={!!rejectingPost} onOpenChange={(open) => { if (!open) setRejectingPost(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reject Draft</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="rounded-md border bg-muted/30 p-3">
+              <p className="text-sm font-medium">{rejectingPost?.topic || "Untitled draft"}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Rejecting this draft teaches AI what to avoid next time.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Reason category</Label>
+              <Select value={rejectCategory} onValueChange={setRejectCategory}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {REJECT_CATEGORIES.map((category) => (
+                    <SelectItem key={category.value} value={category.value}>{category.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Optional reason</Label>
+              <Textarea
+                value={rejectReason}
+                onChange={(event) => setRejectReason(event.target.value)}
+                placeholder="What should AI avoid or improve?"
+                className="min-h-[100px]"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRejectingPost(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleReject} disabled={isRejecting}>
+              {isRejecting ? "Rejecting…" : "Reject Draft"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -669,10 +1088,233 @@ export default function Drafts() {
   );
 }
 
+function QualityBadge({ score }: { score?: number | null }) {
+  if (score == null) return null;
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "text-xs",
+        score >= 0.75 ? "bg-green-50 text-green-700 border-green-200"
+        : score >= 0.5 ? "bg-yellow-50 text-yellow-700 border-yellow-200"
+        : "bg-red-50 text-red-700 border-red-200"
+      )}
+    >
+      Quality {Math.round(score * 100)}
+    </Badge>
+  );
+}
+
+function PostHistoryTimeline({ post }: { post: Post }) {
+  const approvedAt = ["approved", "export_ready", "scheduled", "posted", "published", "failed"].includes(post.status)
+    ? post.updatedAt
+    : null;
+  const finalLabel = post.status === "failed" ? "Failed" : post.publishedAt ? "Published" : "Not posted yet";
+  const finalAt = post.status === "failed" ? post.updatedAt : post.publishedAt;
+  const steps = [
+    { label: "Created", value: post.createdAt },
+    { label: "Approved", value: approvedAt },
+    { label: "Scheduled", value: post.scheduledAt },
+    { label: finalLabel, value: finalAt },
+  ];
+
+  return (
+    <div className="rounded-md border bg-muted/30 p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Post history</p>
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        {steps.map((step) => (
+          <div key={step.label}>
+            <p className="font-medium">{step.label}</p>
+            <p className="text-muted-foreground">
+              {step.value ? format(new Date(step.value), "MMM d, h:mm a") : "—"}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TextBlock({ title, children }: { title: string; children: ReactNode }) {
+  if (!children) return null;
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
+      <div className="text-sm leading-relaxed">{children}</div>
+    </div>
+  );
+}
+
+function ListBlock({ title, items }: { title: string; items?: unknown[] }) {
+  if (!Array.isArray(items) || items.length === 0) return null;
+  return (
+    <TextBlock title={title}>
+      <ul className="list-disc pl-4 space-y-1">
+        {items.map((item, index) => (
+          <li key={index}>{typeof item === "string" ? item : JSON.stringify(item)}</li>
+        ))}
+      </ul>
+    </TextBlock>
+  );
+}
+
+function DraftPreviewContent({ post }: { post: Post }) {
+  const schema = asRecord(post.contentSchema);
+  const type = contentGroup(post);
+
+  if (type === "blog") {
+    return (
+      <div className="space-y-4">
+        <TextBlock title="SEO title">{schema.seoTitle || post.title || post.topic}</TextBlock>
+        <TextBlock title="Meta description">{schema.metaDescription || post.caption}</TextBlock>
+        <ListBlock title="Outline" items={schema.sections} />
+        <TextBlock title="Full draft preview">{schema.fullDraft || post.longFormBody}</TextBlock>
+        <ListBlock title="FAQ" items={schema.faq} />
+      </div>
+    );
+  }
+
+  if (type === "newsletter") {
+    return (
+      <div className="space-y-4">
+        <TextBlock title="Subject">{schema.subject || post.title || post.topic}</TextBlock>
+        <TextBlock title="Preheader">{schema.preheader || post.caption}</TextBlock>
+        <ListBlock title="Sections" items={schema.sections} />
+        <TextBlock title="Body preview">{post.longFormBody}</TextBlock>
+      </div>
+    );
+  }
+
+  if (type === "video") {
+    const scenes = Array.isArray(schema.scenes) ? schema.scenes : [];
+    return (
+      <div className="space-y-4">
+        <TextBlock title="Hook">{schema.hook || post.topic}</TextBlock>
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scenes</p>
+          {scenes.length > 0 ? scenes.map((scene: any, index: number) => (
+            <div key={index} className="rounded-md border p-3 text-sm">
+              <p className="font-medium">Scene {scene.order ?? index + 1}{scene.duration ? ` · ${scene.duration}` : ""}</p>
+              <p className="text-muted-foreground mt-1">{[scene.visual, scene.text, scene.voiceover].filter(Boolean).join(" ")}</p>
+            </div>
+          )) : <p className="text-sm text-muted-foreground">{post.longFormBody || post.caption}</p>}
+        </div>
+        <TextBlock title="Voiceover">{schema.voiceoverFull || post.longFormBody}</TextBlock>
+        <TextBlock title="CTA">{schema.cta}</TextBlock>
+      </div>
+    );
+  }
+
+  if (type === "image") {
+    return (
+      <div className="space-y-4">
+        <TextBlock title="Prompt">{schema.prompt || post.imagePrompt || post.caption}</TextBlock>
+        <TextBlock title="Style">{schema.style}</TextBlock>
+        <TextBlock title="Details">{schema.rationale}</TextBlock>
+        {(schema.imageUrl || post.selectedImageUrl) && (
+          <TextBlock title="Image URL">
+            <a className="text-primary underline break-all" href={schema.imageUrl || post.selectedImageUrl || ""} target="_blank" rel="noreferrer">
+              {schema.imageUrl || post.selectedImageUrl}
+            </a>
+          </TextBlock>
+        )}
+      </div>
+    );
+  }
+
+  if (Array.isArray(schema.slides)) {
+    return (
+      <div className="space-y-3">
+        {schema.slides.map((slide: any, index: number) => (
+          <div key={index} className="rounded-md border p-3">
+            <p className="text-sm font-medium">Slide {index + 1}{slide.title ? ` · ${slide.title}` : ""}</p>
+            <p className="text-sm text-muted-foreground mt-1">{slide.text || slide.caption || JSON.stringify(slide)}</p>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <TextBlock title="Caption">{schema.caption || schema.captionAngle || post.caption}</TextBlock>
+      <TextBlock title="Hashtags">{schema.hashtags || post.hashtags}</TextBlock>
+      <TextBlock title="Image prompt">{schema.imagePrompt || post.imagePrompt}</TextBlock>
+    </div>
+  );
+}
+
+function DraftPreviewPanel({
+  post,
+  onApprove,
+  onReject,
+}: {
+  post: Post | null;
+  onApprove?: () => void;
+  onReject?: () => void;
+}) {
+  if (!post) {
+    return (
+      <Card className="xl:sticky xl:top-4">
+        <CardContent className="p-5 text-sm text-muted-foreground">
+          Select a draft to review the full structured content.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="xl:sticky xl:top-4 max-h-[calc(100vh-2rem)] overflow-auto">
+      <CardContent className="p-5 space-y-5">
+        <div>
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            <Badge variant="secondary" className="capitalize">{contentTypeLabel(post)}</Badge>
+            {post.platform && <Badge variant="outline">{post.platform}</Badge>}
+            {post.campaignId && <Badge variant="outline">Campaign</Badge>}
+            <QualityBadge score={post.qualityScore} />
+          </div>
+          <h2 className="text-lg font-semibold leading-tight">{post.title || post.topic || "Untitled draft"}</h2>
+          <p className="text-xs text-muted-foreground mt-1">Status: {displayStatus(post)}</p>
+        </div>
+
+        <PostHistoryTimeline post={post} />
+
+        {post.qualityReport != null && (
+          <TextBlock title="Quality report">
+            <pre className="whitespace-pre-wrap rounded-md bg-muted/50 p-3 text-xs overflow-auto">
+              {typeof post.qualityReport === "string" ? post.qualityReport : JSON.stringify(post.qualityReport, null, 2)}
+            </pre>
+          </TextBlock>
+        )}
+
+        <DraftPreviewContent post={post} />
+
+        {(onApprove || onReject) && (
+          <div className="flex gap-2 pt-3 border-t">
+            {onApprove && (
+              <Button className="flex-1" size="sm" onClick={onApprove}>
+                <CheckCircle className="w-4 h-4 mr-2" /> Approve
+              </Button>
+            )}
+            {onReject && (
+              <Button className="flex-1" size="sm" variant="outline" onClick={onReject}>
+                <XCircle className="w-4 h-4 mr-2" /> Reject
+              </Button>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function PostCard({
   post,
+  isSelected,
+  onSelect,
   onEdit,
   onApprove,
+  onReject,
   onDelete,
   onRegenerateCopy,
   onGenerateImage,
@@ -683,8 +1325,11 @@ function PostCard({
   actionBar,
 }: {
   post: Post;
+  isSelected?: boolean;
+  onSelect?: () => void;
   onEdit: () => void;
   onApprove?: () => void;
+  onReject?: () => void;
   onDelete: () => void;
   onRegenerateCopy?: () => void;
   onGenerateImage?: () => void;
@@ -694,13 +1339,15 @@ function PostCard({
   isPublishing?: boolean;
   actionBar?: ReactNode;
 }) {
-  const isDraft = post.status === "draft";
+  const isDraft = post.status === "draft" || post.status === "in_review";
   const isApprovedOrScheduled = post.status === "approved" || post.status === "export_ready" || post.status === "scheduled";
   const isFailed = post.status === "failed";
-  const isPublished = post.status === "posted" || post.status === "published";
+  const isPublished = hasPublishedProof(post);
   const platformClass = PLATFORM_COLORS[post.platform || ""] || "bg-muted text-muted-foreground";
 
-  const statusBadgeClass = {
+  const statusBadgeClass = ((post.status === "posted" || post.status === "published") && !post.publishedAt)
+    ? "bg-muted text-muted-foreground border border-border"
+    : ({
     draft: "",
     in_review: "bg-amber-50 text-amber-700 border border-amber-200",
     approved: "bg-blue-50 text-blue-700 border border-blue-200",
@@ -709,10 +1356,10 @@ function PostCard({
     posted: "bg-green-50 text-green-700 border border-green-200",
     published: "bg-green-50 text-green-700 border border-green-200",
     failed: "bg-red-50 text-red-700 border border-red-200",
-  }[post.status] ?? "";
+  }[post.status] ?? "");
 
   return (
-    <Card className="overflow-hidden flex flex-col group">
+    <Card className={cn("overflow-hidden flex flex-col group", isSelected && "ring-2 ring-primary")}>
       <div className="aspect-square bg-muted relative">
         {post.selectedImageUrl ? (
           <img src={post.selectedImageUrl} alt="" className="w-full h-full object-cover" />
@@ -742,6 +1389,11 @@ function PostCard({
             {post.platform.charAt(0).toUpperCase() + post.platform.slice(1)}
           </div>
         )}
+        {post.campaignId && (
+          <div className="absolute bottom-2 right-2 text-[10px] font-medium px-2 py-0.5 rounded-full border bg-background/90 text-muted-foreground">
+            Campaign
+          </div>
+        )}
         {isGeneratingImage && (
           <div className="absolute inset-0 bg-background/70 backdrop-blur-sm flex items-center justify-center">
             <div className="flex flex-col items-center gap-2">
@@ -761,12 +1413,30 @@ function PostCard({
       </div>
       <CardContent className="p-4 flex-1 flex flex-col">
         <div className="flex justify-between items-start mb-2">
-          <Badge
-            variant="secondary"
-            className={cn("uppercase text-[10px] tracking-wider", statusBadgeClass)}
-          >
-            {post.status}
-          </Badge>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Badge
+              variant="secondary"
+              className={cn("uppercase text-[10px] tracking-wider", statusBadgeClass)}
+            >
+              {displayStatus(post)}
+            </Badge>
+            <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full border bg-muted text-muted-foreground border-border capitalize">
+              {contentTypeLabel(post)}
+            </span>
+            {post.qualityScore != null && (
+              <span
+                title="Quality score from AI skill evaluation"
+                className={cn(
+                  "text-[9px] font-bold px-1.5 py-0.5 rounded-full border",
+                  post.qualityScore >= 0.75 ? "bg-green-50 text-green-700 border-green-200"
+                  : post.qualityScore >= 0.5  ? "bg-yellow-50 text-yellow-700 border-yellow-200"
+                  : "bg-red-50 text-red-600 border-red-200"
+                )}
+              >
+                Q {Math.round(post.qualityScore * 100)}
+              </span>
+            )}
+          </div>
           <span className="text-xs text-muted-foreground">
             {format(new Date(post.createdAt), "MMM d")}
           </span>
@@ -779,7 +1449,7 @@ function PostCard({
           </div>
         ) : (
           <>
-            <p className="text-sm line-clamp-3 flex-1 leading-relaxed">{post.caption}</p>
+            <p className="text-sm line-clamp-3 flex-1 leading-relaxed">{schemaPreview(post) || post.caption}</p>
             {post.hashtags && <p className="text-xs text-primary/70 mt-1.5 line-clamp-1">{post.hashtags}</p>}
           </>
         )}
@@ -819,6 +1489,11 @@ function PostCard({
 
         {isDraft && (
           <div className="mt-3 space-y-2">
+            {onSelect && (
+              <Button variant="outline" className="w-full" size="sm" onClick={onSelect}>
+                <Eye className="w-4 h-4 mr-2" /> Review Draft
+              </Button>
+            )}
             {(onRegenerateCopy || onGenerateImage) && (
               <div className="flex gap-1.5">
                 {onRegenerateCopy && (
@@ -849,7 +1524,12 @@ function PostCard({
             )}
             {onApprove && (
               <Button className="w-full" size="sm" onClick={onApprove}>
-                <CheckCircle className="w-4 h-4 mr-2" /> Approve & Schedule
+                <CheckCircle className="w-4 h-4 mr-2" /> Approve to Queue
+              </Button>
+            )}
+            {onReject && (
+              <Button className="w-full" size="sm" variant="outline" onClick={onReject}>
+                <XCircle className="w-4 h-4 mr-2" /> Reject
               </Button>
             )}
           </div>

@@ -170,10 +170,23 @@ export interface Post {
   id: string;
   clientId: string;
   campaignId?: string;
+  sourceAiIdeaId?: string;
+  contentType?: string;
+  contentSchema?: unknown;
+  contentSchemaVersion?: number;
+  skillId?: string;
+  storylineId?: string;
+  qualityScore?: number;
+  qualityReport?: unknown;
+  generationMetadata?: unknown;
+  editHistory?: unknown;
+  memoryRefs?: string[];
   topic: string;
   caption: string;
   hashtags?: string;
   selectedImageUrl?: string;
+  originalImageUrl?: string;
+  brandedImageUrl?: string;
   status: PostStatus;
   scheduledAt?: string;
   platform?: PostPlatform;
@@ -216,8 +229,21 @@ export interface CreatePostBody {
   caption: string;
   hashtags?: string;
   selectedImageUrl?: string;
+  originalImageUrl?: string;
+  brandedImageUrl?: string;
   platform?: CreatePostBodyPlatform;
   campaignId?: string;
+  sourceAiIdeaId?: string;
+  contentType?: string;
+  contentSchema?: unknown;
+  contentSchemaVersion?: number;
+  skillId?: string;
+  storylineId?: string;
+  qualityScore?: number;
+  qualityReport?: unknown;
+  generationMetadata?: unknown;
+  editHistory?: unknown;
+  memoryRefs?: string[];
   postType?: CreatePostBodyPostType;
   title?: string;
   longFormBody?: string;
@@ -265,10 +291,23 @@ export interface UpdatePostBody {
   caption?: string;
   hashtags?: string;
   selectedImageUrl?: string;
+  originalImageUrl?: string;
+  brandedImageUrl?: string;
   status?: UpdatePostBodyStatus;
   scheduledAt?: string;
   platform?: UpdatePostBodyPlatform;
   campaignId?: string;
+  sourceAiIdeaId?: string;
+  contentType?: string;
+  contentSchema?: unknown;
+  contentSchemaVersion?: number;
+  skillId?: string;
+  storylineId?: string;
+  qualityScore?: number;
+  qualityReport?: unknown;
+  generationMetadata?: unknown;
+  editHistory?: unknown;
+  memoryRefs?: string[];
   postType?: UpdatePostBodyPostType;
   title?: string;
   longFormBody?: string;
@@ -387,6 +426,8 @@ export interface Image {
   clientId: string;
   postId: string;
   url: string;
+  originalImageUrl?: string;
+  brandedImageUrl?: string;
   provider: ImageProvider;
   status: ImageStatus;
   prompt?: string;
@@ -412,6 +453,8 @@ export const SaveImageBodyStatus = {
 
 export interface SaveImageBody {
   url: string;
+  originalImageUrl?: string;
+  brandedImageUrl?: string;
   provider: SaveImageBodyProvider;
   status: SaveImageBodyStatus;
   prompt?: string;
@@ -768,6 +811,7 @@ export type UploadPostImageBody = {
 
 export type ListPostsParams = {
   status?: ListPostsStatus;
+  campaignId?: string;
 };
 
 export type ListPostsStatus =

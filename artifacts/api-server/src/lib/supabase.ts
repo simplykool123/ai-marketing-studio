@@ -9,6 +9,50 @@ if (!supabaseUrl || !supabaseKey) {
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
+// ---------------------------------------------------------------------------
+// Network / DNS error classifier
+// Used by auth middleware and any Supabase call site to tell apart
+// "network is unreachable" from "credentials are wrong".
+// ---------------------------------------------------------------------------
+
+export function isNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as NodeJS.ErrnoException).code ?? "";
+  const msg  = err.message.toLowerCase();
+  return (
+    code === "ENOTFOUND"    ||
+    code === "ECONNREFUSED" ||
+    code === "ECONNRESET"   ||
+    code === "ETIMEDOUT"    ||
+    code === "EAI_AGAIN"    ||
+    code === "EADDRNOTAVAIL" ||
+    msg.includes("fetch failed")       ||
+    msg.includes("network error")      ||
+    msg.includes("timed out")          ||
+    msg.includes("dns")                ||
+    msg.includes("enotfound")          ||
+    msg.includes("econnrefused")       ||
+    msg.includes("socket hang up")     ||
+    msg.includes("connect econnrefused")
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Promise timeout wrapper
+// Rejects with a descriptive Error if the wrapped promise takes longer than ms.
+// ---------------------------------------------------------------------------
+
+export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const race = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms} ms`)),
+      ms
+    );
+  });
+  return Promise.race([promise, race]).finally(() => clearTimeout(timer));
+}
+
 export async function uploadImageToSupabase(
   imageData: string | Buffer,
   filename: string,

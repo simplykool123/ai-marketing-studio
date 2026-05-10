@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import PlatformPreview from "@/components/PlatformPreview";
@@ -41,6 +41,9 @@ type Step = 1 | 2 | 3;
 type SaveState = "idle" | "saving" | "saved" | "failed";
 type SendState = "idle" | "sending" | "sent" | "failed";
 type BrandControlKey = "useBrandDna" | "useBrandColors" | "includeLogo" | "useBrandAssets";
+type LogoPlacement = "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center";
+type LogoSize = "small" | "medium" | "large" | "custom";
+type LogoBackground = "none" | "white-pill" | "dark-pill" | "transparent";
 
 type BrandControlsState = Record<BrandControlKey, boolean>;
 
@@ -63,6 +66,12 @@ type GenerateImagesBodyWithBrand = Parameters<typeof generateImages>[0] & {
   brandControls?: BrandControlsPayload;
 };
 
+type BrandedImageResult = {
+  selectedImageUrl: string;
+  originalImageUrl: string;
+  brandedImageUrl?: string | null;
+};
+
 const APPROVAL_PLATFORMS = [
   { value: "instagram", label: "Instagram" },
   { value: "facebook", label: "Facebook" },
@@ -72,6 +81,35 @@ const APPROVAL_PLATFORMS = [
 ] as const;
 
 type ApprovalPlatform = (typeof APPROVAL_PLATFORMS)[number]["value"];
+const BASE = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
+
+const LOGO_POSITION_LABELS: Array<{ value: LogoPlacement; label: string }> = [
+  { value: "top-left", label: "Top left" },
+  { value: "top-right", label: "Top right" },
+  { value: "bottom-left", label: "Bottom left" },
+  { value: "bottom-right", label: "Bottom right" },
+  { value: "center", label: "Center" },
+];
+
+const LOGO_SIZE_LABELS: Array<{ value: LogoSize; label: string }> = [
+  { value: "small", label: "Small" },
+  { value: "medium", label: "Medium" },
+  { value: "large", label: "Large" },
+  { value: "custom", label: "Custom" },
+];
+
+const LOGO_BACKGROUND_LABELS: Array<{ value: LogoBackground; label: string }> = [
+  { value: "none", label: "None" },
+  { value: "white-pill", label: "White pill" },
+  { value: "dark-pill", label: "Dark pill" },
+  { value: "transparent", label: "Transparent" },
+];
+
+const LOGO_SIZE_PERCENT: Record<Exclude<LogoSize, "custom">, number> = {
+  small: 14,
+  medium: 22,
+  large: 32,
+};
 
 function getErrorMessage(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
@@ -85,6 +123,55 @@ function joinReadableList(items: string[]): string {
   if (items.length <= 1) return items[0] ?? "";
   if (items.length === 2) return items.join(" and ");
   return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
+async function createBrandedImage(clientId: string, body: {
+  imageUrl: string;
+  includeLogo: boolean;
+  placement: LogoPlacement;
+  size: LogoSize;
+  customSizePercent: number;
+  marginPercent: number;
+  background: LogoBackground;
+}): Promise<BrandedImageResult> {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/images/brand`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => null) as { error?: string } | BrandedImageResult | null;
+  if (!res.ok) throw new Error(data && "error" in data && data.error ? data.error : "Failed to create branded image");
+  return data as BrandedImageResult;
+}
+
+function logoPreviewClass(placement: LogoPlacement): string {
+  switch (placement) {
+    case "top-left":
+      return "top-[var(--logo-margin)] left-[var(--logo-margin)]";
+    case "top-right":
+      return "top-[var(--logo-margin)] right-[var(--logo-margin)]";
+    case "bottom-left":
+      return "bottom-[var(--logo-margin)] left-[var(--logo-margin)]";
+    case "center":
+      return "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2";
+    case "bottom-right":
+    default:
+      return "bottom-[var(--logo-margin)] right-[var(--logo-margin)]";
+  }
+}
+
+function logoBackgroundClass(background: LogoBackground): string {
+  switch (background) {
+    case "white-pill":
+      return "bg-white/90 rounded-full shadow-sm border border-white/80";
+    case "dark-pill":
+      return "bg-gray-950/85 rounded-full shadow-sm";
+    case "transparent":
+      return "bg-transparent";
+    case "none":
+    default:
+      return "";
+  }
 }
 
 export default function CreatePost() {
@@ -110,6 +197,8 @@ export default function CreatePost() {
 
   const [images, setImages] = useState<ImageResult[]>([]);
   const [selectedImageUrl, setSelectedImageUrl] = useState("");
+  const [brandedImageUrl, setBrandedImageUrl] = useState("");
+  const [brandedSourceKey, setBrandedSourceKey] = useState("");
   const [isGeneratingImages, setIsGeneratingImages] = useState(false);
 
   const [brandControlsInitialized, setBrandControlsInitialized] = useState(false);
@@ -123,6 +212,12 @@ export default function CreatePost() {
   const [selectedPlatforms, setSelectedPlatforms] = useState<ApprovalPlatform[]>(["instagram"]);
   const [platformPreviews, setPlatformPreviews] = useState<ApprovalPlatform[]>([]);
   const [postIdsByPlatform, setPostIdsByPlatform] = useState<Partial<Record<ApprovalPlatform, string>>>({});
+  const [logoInclude, setLogoInclude] = useState(false);
+  const [logoPlacement, setLogoPlacement] = useState<LogoPlacement>("bottom-right");
+  const [logoSize, setLogoSize] = useState<LogoSize>("medium");
+  const [logoCustomSizePercent, setLogoCustomSizePercent] = useState(22);
+  const [logoMarginPercent, setLogoMarginPercent] = useState(4);
+  const [logoBackground, setLogoBackground] = useState<LogoBackground>("none");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [sendState, setSendState] = useState<SendState>("idle");
 
@@ -142,6 +237,18 @@ export default function CreatePost() {
   const hasBrandColors = brandColorList.length > 0;
   const hasLogo = Boolean(client?.logoUrl);
   const hasBrandAssets = brandAssets.length > 0;
+  const logoPercent = logoSize === "custom" ? logoCustomSizePercent : LOGO_SIZE_PERCENT[logoSize];
+  const brandedImageKey = JSON.stringify({
+    selectedImageUrl,
+    logoInclude,
+    logoPlacement,
+    logoSize,
+    logoCustomSizePercent,
+    logoMarginPercent,
+    logoBackground,
+    logoUrl: client?.logoUrl ?? "",
+  });
+  const finalImageUrl = brandedImageUrl || selectedImageUrl;
 
   useEffect(() => {
     if (brandControlsInitialized || brandDnaLoading || brandAssetsLoading || clientLoading) return;
@@ -151,6 +258,7 @@ export default function CreatePost() {
       includeLogo: hasLogo,
       useBrandAssets: hasBrandAssets,
     });
+    setLogoInclude(hasLogo);
     setBrandControlsInitialized(true);
   }, [
     brandAssetsLoading,
@@ -162,6 +270,10 @@ export default function CreatePost() {
     hasBrandDna,
     hasLogo,
   ]);
+
+  useEffect(() => {
+    if (!hasLogo && logoInclude) setLogoInclude(false);
+  }, [hasLogo, logoInclude]);
 
   const invalidatePosts = () => {
     if (!clientId) return;
@@ -177,6 +289,12 @@ export default function CreatePost() {
   const resetPlatformPreviews = () => {
     setPlatformPreviews([]);
     resetSavedStates();
+  };
+
+  const resetBrandedOutput = () => {
+    setBrandedImageUrl("");
+    setBrandedSourceKey("");
+    resetPlatformPreviews();
   };
 
   const setBrandControl = (key: BrandControlKey, value: boolean) => {
@@ -339,6 +457,8 @@ export default function CreatePost() {
       } as GenerateImagesBodyWithBrand);
       setImages(res.images);
       setSelectedImageUrl("");
+      setBrandedImageUrl("");
+      setBrandedSourceKey("");
       setPlatformPreviews([]);
       toast({ title: "Images generated", description: "Select one image to continue." });
     } catch (err) {
@@ -362,7 +482,40 @@ export default function CreatePost() {
     resetPlatformPreviews();
   };
 
-  const handleGeneratePlatformPreviews = () => {
+  const ensureFinalImage = async (): Promise<BrandedImageResult> => {
+    if (!clientId || !selectedImageUrl) {
+      throw new Error("Select an image first.");
+    }
+    if (!logoInclude || !client?.logoUrl) {
+      return {
+        selectedImageUrl,
+        originalImageUrl: selectedImageUrl,
+        brandedImageUrl: null,
+      };
+    }
+    if (brandedImageUrl && brandedSourceKey === brandedImageKey) {
+      return {
+        selectedImageUrl: brandedImageUrl,
+        originalImageUrl: selectedImageUrl,
+        brandedImageUrl,
+      };
+    }
+
+    const result = await createBrandedImage(clientId, {
+      imageUrl: selectedImageUrl,
+      includeLogo: logoInclude,
+      placement: logoPlacement,
+      size: logoSize,
+      customSizePercent: logoCustomSizePercent,
+      marginPercent: logoMarginPercent,
+      background: logoBackground,
+    });
+    setBrandedImageUrl(result.brandedImageUrl || "");
+    setBrandedSourceKey(brandedImageKey);
+    return result;
+  };
+
+  const handleGeneratePlatformPreviews = async () => {
     if (!selectedImageUrl) {
       toast({
         title: "Select an image first",
@@ -379,12 +532,21 @@ export default function CreatePost() {
       });
       return;
     }
-    setPlatformPreviews([...selectedPlatforms]);
-    setSendState("idle");
-    toast({
-      title: "Platform previews generated",
-      description: `${selectedPlatforms.length} preview${selectedPlatforms.length !== 1 ? "s" : ""} ready to review.`,
-    });
+    try {
+      await ensureFinalImage();
+      setPlatformPreviews([...selectedPlatforms]);
+      setSendState("idle");
+      toast({
+        title: "Platform previews generated",
+        description: `${selectedPlatforms.length} preview${selectedPlatforms.length !== 1 ? "s" : ""} ready to review.`,
+      });
+    } catch (err) {
+      toast({
+        title: "Failed to create branded image",
+        description: getErrorMessage(err, "Try again before sending to approval."),
+        variant: "destructive",
+      });
+    }
   };
 
   const upsertPostsForSelectedPlatforms = async (
@@ -397,6 +559,7 @@ export default function CreatePost() {
     }
 
     const nextIds: Partial<Record<ApprovalPlatform, string>> = { ...postIdsByPlatform };
+    const imageOutput = await ensureFinalImage();
 
     for (const platform of platforms) {
       const existingPostId = nextIds[platform];
@@ -404,7 +567,9 @@ export default function CreatePost() {
         topic: topic.trim(),
         caption: editedCaption,
         hashtags: editedHashtags,
-        selectedImageUrl: selectedImageUrl || undefined,
+        selectedImageUrl: imageOutput.selectedImageUrl || undefined,
+        originalImageUrl: imageOutput.originalImageUrl || undefined,
+        brandedImageUrl: imageOutput.brandedImageUrl || undefined,
         platform: platform as CreatePostBodyPlatform,
         postType: "social" as const,
         title: platform === "youtube" ? topic.trim() : undefined,
@@ -659,7 +824,7 @@ export default function CreatePost() {
                   onClick={() => {
                     if (!image.url) return;
                     setSelectedImageUrl(image.url);
-                    resetPlatformPreviews();
+                    resetBrandedOutput();
                   }}
                 >
                   <div className="aspect-square relative bg-muted">
@@ -716,11 +881,145 @@ export default function CreatePost() {
                     <span className="text-sm">No image selected</span>
                   </div>
                 )}
-                {selectedImageUrl && brandControls.includeLogo && client?.logoUrl && (
-                  <div className="absolute bottom-3 right-3 rounded-md bg-white/90 backdrop-blur-sm p-1.5 shadow-sm border border-white/70">
-                    <img src={client.logoUrl} alt={`${brandName} logo`} className="h-8 max-w-24 object-contain" />
+                {selectedImageUrl && logoInclude && client?.logoUrl && (
+                  <div
+                    className={cn(
+                      "absolute p-[var(--logo-pad)]",
+                      logoPreviewClass(logoPlacement),
+                      logoBackgroundClass(logoBackground),
+                    )}
+                    style={{
+                      "--logo-margin": `${logoMarginPercent}%`,
+                      "--logo-pad": logoBackground === "none" ? "0px" : logoBackground === "transparent" ? "1.5%" : "2%",
+                      width: `${logoPercent}%`,
+                    } as CSSProperties}
+                  >
+                    <img
+                      src={client.logoUrl}
+                      alt={`${brandName} logo`}
+                      className="w-full min-w-9 object-contain"
+                    />
                   </div>
                 )}
+              </div>
+              {brandedImageUrl && (
+                <p className="text-xs text-emerald-600">Final branded image is ready for previews and approval.</p>
+              )}
+              <div className="rounded-lg border border-border bg-muted/25 p-3 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <Label className="text-sm font-medium">Include logo on image</Label>
+                    {!hasLogo && (
+                      <p className="text-xs text-muted-foreground mt-0.5">Upload logo in Brand Setup</p>
+                    )}
+                  </div>
+                  <Switch
+                    checked={logoInclude && hasLogo}
+                    disabled={!hasLogo}
+                    onCheckedChange={(checked) => {
+                      setLogoInclude(checked);
+                      resetBrandedOutput();
+                    }}
+                    aria-label="Include logo on image"
+                  />
+                </div>
+
+                <div className={cn("space-y-3", (!hasLogo || !logoInclude) && "opacity-50 pointer-events-none")}>
+                  <div>
+                    <Label className="text-xs uppercase tracking-wider text-muted-foreground">Logo position</Label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
+                      {LOGO_POSITION_LABELS.map((item) => (
+                        <Button
+                          key={item.value}
+                          type="button"
+                          size="sm"
+                          variant={logoPlacement === item.value ? "default" : "outline"}
+                          onClick={() => {
+                            setLogoPlacement(item.value);
+                            resetBrandedOutput();
+                          }}
+                        >
+                          {item.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label className="text-xs uppercase tracking-wider text-muted-foreground">Logo size</Label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+                      {LOGO_SIZE_LABELS.map((item) => (
+                        <Button
+                          key={item.value}
+                          type="button"
+                          size="sm"
+                          variant={logoSize === item.value ? "default" : "outline"}
+                          onClick={() => {
+                            setLogoSize(item.value);
+                            resetBrandedOutput();
+                          }}
+                        >
+                          {item.label}
+                        </Button>
+                      ))}
+                    </div>
+                    {logoSize === "custom" && (
+                      <div className="flex items-center gap-2 mt-2">
+                        <Input
+                          type="number"
+                          min={5}
+                          max={45}
+                          value={logoCustomSizePercent}
+                          onChange={(event) => {
+                            setLogoCustomSizePercent(Number(event.target.value));
+                            resetBrandedOutput();
+                          }}
+                          className="h-8 w-24"
+                        />
+                        <span className="text-xs text-muted-foreground">% of image width</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs uppercase tracking-wider text-muted-foreground">Logo margin</Label>
+                      <div className="flex items-center gap-2 mt-2">
+                        <Input
+                          type="number"
+                          min={0}
+                          max={20}
+                          value={logoMarginPercent}
+                          onChange={(event) => {
+                            setLogoMarginPercent(Number(event.target.value));
+                            resetBrandedOutput();
+                          }}
+                          className="h-8"
+                        />
+                        <span className="text-xs text-muted-foreground">%</span>
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-xs uppercase tracking-wider text-muted-foreground">Logo background</Label>
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                        {LOGO_BACKGROUND_LABELS.map((item) => (
+                          <Button
+                            key={item.value}
+                            type="button"
+                            size="sm"
+                            variant={logoBackground === item.value ? "default" : "outline"}
+                            onClick={() => {
+                              setLogoBackground(item.value);
+                              resetBrandedOutput();
+                            }}
+                          >
+                            {item.label}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -850,10 +1149,10 @@ export default function CreatePost() {
                           platform={platform}
                           caption={editedCaption}
                           hashtags={editedHashtags}
-                          imageUrl={selectedImageUrl}
+                          imageUrl={finalImageUrl}
                           title={platform === "youtube" ? topic : undefined}
                           brandName={brandName}
-                          logoUrl={brandControls.includeLogo ? client?.logoUrl : undefined}
+                          logoUrl={client?.logoUrl}
                         />
                       </CardContent>
                     </Card>
@@ -866,10 +1165,10 @@ export default function CreatePost() {
               platform={selectedPlatforms[0] ?? "instagram"}
               caption={editedCaption}
               hashtags={editedHashtags}
-              imageUrl={selectedImageUrl}
+              imageUrl={finalImageUrl}
               title={selectedPlatforms.includes("youtube") ? topic : undefined}
               brandName={brandName}
-              logoUrl={brandControls.includeLogo ? client?.logoUrl : undefined}
+              logoUrl={client?.logoUrl}
             />
           )}
         </div>

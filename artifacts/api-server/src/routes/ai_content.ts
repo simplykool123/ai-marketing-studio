@@ -12,6 +12,7 @@ import {
   safeErrorMessage,
 } from "../lib/ai-provider.js";
 import { logger } from "../lib/logger.js";
+import { persistRemoteImageUrl } from "../lib/durable-image-storage.js";
 
 const router = Router();
 
@@ -54,7 +55,9 @@ async function triggerBackgroundImageGen(
         response_format: "url",
       });
 
-      const imageUrl = result.data?.[0]?.url ?? "";
+      const providerImageUrl = result.data?.[0]?.url ?? "";
+      if (!providerImageUrl) throw new Error("DALL-E returned no image URL");
+      const { durableUrl: imageUrl } = await persistRemoteImageUrl(providerImageUrl, clientId, "campaign-post");
 
       await db
         .update(postsTable)
@@ -65,9 +68,12 @@ async function triggerBackgroundImageGen(
         clientId,
         postId: post.id,
         url: imageUrl,
+        originalImageUrl: imageUrl,
         provider: "openai",
-        status: "ready",
+        status: "selected",
+        type: "generated",
         prompt,
+        notes: "Stored copy of generated campaign image",
       });
     } catch {
       await db
@@ -254,7 +260,9 @@ router.post("/clients/:clientId/posts/:postId/generate-image", requireClientRole
       response_format: "url",
     });
 
-    const imageUrl = result.data?.[0]?.url ?? "";
+    const providerImageUrl = result.data?.[0]?.url ?? "";
+    if (!providerImageUrl) throw new Error("DALL-E returned no image URL");
+    const { durableUrl: imageUrl } = await persistRemoteImageUrl(providerImageUrl, clientId, "post-regenerate");
 
     const [updated] = await db
       .update(postsTable)
@@ -272,9 +280,12 @@ router.post("/clients/:clientId/posts/:postId/generate-image", requireClientRole
       clientId,
       postId,
       url: imageUrl,
+      originalImageUrl: imageUrl,
       provider: "openai",
-      status: "ready",
+      status: "selected",
+      type: "generated",
       prompt: imagePrompt,
+      notes: "Stored copy of regenerated post image",
     });
 
     res.json(updated);

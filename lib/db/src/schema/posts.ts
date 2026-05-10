@@ -1,15 +1,31 @@
-import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { integer, jsonb, pgTable, real, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
+import { campaignsTable } from "./campaigns";
+import { storylinesTable } from "./storylines";
 
 export const postsTable = pgTable("posts", {
   id: uuid("id").primaryKey().defaultRandom(),
   clientId: uuid("client_id").notNull(),
-  campaignId: uuid("campaign_id"),
+  campaignId: uuid("campaign_id").references(() => campaignsTable.id, { onDelete: "set null" }),
+  storylineId: uuid("storyline_id").references(() => storylinesTable.id, { onDelete: "set null" }),
+  sourceAiIdeaId: uuid("source_ai_idea_id"),
+  contentType: text("content_type").notNull().default("social_post"),
+  contentSchema: jsonb("content_schema").notNull().default({}),
+  contentSchemaVersion: integer("content_schema_version").notNull().default(0),
+  skillId: text("skill_id"),
+  qualityScore: real("quality_score"),
+  qualityReport: jsonb("quality_report"),
+  generationMetadata: jsonb("generation_metadata"),
+  editHistory: jsonb("edit_history").notNull().default([]),
+  memoryRefs: uuid("memory_refs").array().notNull().default(sql`'{}'::uuid[]`),
   topic: text("topic").notNull(),
   caption: text("caption").notNull(),
   hashtags: text("hashtags"),
   selectedImageUrl: text("selected_image_url"),
+  originalImageUrl: text("original_image_url"),
+  brandedImageUrl: text("branded_image_url"),
   status: text("status").notNull().default("draft"),
   scheduledAt: timestamp("scheduled_at"),
   platform: text("platform"),

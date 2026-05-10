@@ -5,9 +5,12 @@ import {
   brandDnaTable,
   storylinesTable,
   socialAccountsTable,
+  userSettingsTable,
 } from "@workspace/db/schema";
-import { eq, and, desc, gte, asc, inArray } from "drizzle-orm";
+import { eq, and, desc, gte, asc, inArray, isNotNull } from "drizzle-orm";
 import { ensureStorageBucket } from "./upload.js";
+import { getProviderKeyStatus } from "../lib/ai-provider.js";
+import type { AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -27,12 +30,13 @@ async function getStorageReadiness(): Promise<{
   }
 }
 
-router.get("/clients/:clientId/dashboard", async (req, res) => {
+router.get("/clients/:clientId/dashboard", async (req: AuthRequest, res) => {
   try {
     const clientId = req.params.clientId;
+    const userId = req.userId;
     const now = new Date();
 
-    const [allPosts, brandDna, activeStoryline, recentPosts, connectedAccounts, upcomingPosts, recentlyPublished, storage] =
+    const [allPosts, brandDna, activeStoryline, recentPosts, connectedAccounts, upcomingPosts, recentlyPublished, storage, userSettings, providerStatus] =
       await Promise.all([
         db.select().from(postsTable).where(eq(postsTable.clientId, clientId)),
         db
@@ -96,12 +100,21 @@ router.get("/clients/:clientId/dashboard", async (req, res) => {
           .where(
             and(
               eq(postsTable.clientId, clientId),
-              inArray(postsTable.status, ["posted", "published"])
+              inArray(postsTable.status, ["posted", "published"]),
+              isNotNull(postsTable.publishedAt)
             )
           )
           .orderBy(desc(postsTable.publishedAt))
           .limit(10),
         getStorageReadiness(),
+        userId
+          ? db
+              .select()
+              .from(userSettingsTable)
+              .where(eq(userSettingsTable.userId, userId))
+              .limit(1)
+          : Promise.resolve([]),
+        getProviderKeyStatus(userId),
       ]);
 
     const statusCounts = allPosts.reduce(
@@ -124,18 +137,32 @@ router.get("/clients/:clientId/dashboard", async (req, res) => {
     });
 
     const pendingApprovals = allPosts.filter(p => p.status === "in_review");
+    const publishedPosts = allPosts.filter(p => (p.status === "posted" || p.status === "published") && p.publishedAt);
+    const campaignDraftCount = allPosts.filter(p => p.status === "draft" && p.campaignId).length;
+    const settings = userSettings[0] ?? null;
+    const selectedProvider = settings?.aiProvider ?? "anthropic";
+    const selectedStatus = providerStatus[selectedProvider];
+    const configuredDatabaseProvider = selectedStatus?.source === "database"
+      ? selectedProvider
+      : Object.entries(providerStatus).find(([, status]) => status.source === "database")?.[0] ?? null;
+    const aiProviderConfigured = !!configuredDatabaseProvider;
 
     res.json({
       totalPosts: allPosts.length,
       draftCount: statusCounts["draft"] ?? 0,
       approvedCount: (statusCounts["approved"] ?? 0) + (statusCounts["export_ready"] ?? 0),
       scheduledCount: statusCounts["scheduled"] ?? 0,
-      publishedCount: (statusCounts["posted"] ?? 0) + (statusCounts["published"] ?? 0),
+      publishedCount: publishedPosts.length,
+      campaignDraftCount,
       hasStoryline: activeStoryline.length > 0,
       activeStoryline: activeStoryline[0] ?? null,
       hasBrandDna: brandDna.length > 0,
       storageReady: storage.storageReady,
       storageStatusMessage: storage.storageStatusMessage,
+      aiProviderConfigured,
+      aiProvider: configuredDatabaseProvider ?? selectedProvider,
+      aiModel: settings?.aiModel ?? null,
+      aiKeySource: configuredDatabaseProvider ? "database" : selectedStatus?.source ?? "none",
       recentPosts,
       upcomingPosts,
       connectedAccounts,

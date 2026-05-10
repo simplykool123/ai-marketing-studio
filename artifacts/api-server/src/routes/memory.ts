@@ -4,6 +4,7 @@ import { contentMemoryTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { AddMemoryBody } from "@workspace/api-zod";
 import { EDIT_CONTENT_ROLES, requireClientRole } from "../middleware/auth.js";
+import { buildClientMemoryPacket } from "../lib/client-memory-packet.js";
 
 const router = Router();
 
@@ -17,6 +18,14 @@ router.get("/clients/:clientId/memory", async (req, res) => {
     res.json(entries);
   } catch (err) {
     res.status(500).json({ error: "Failed to list memory" });
+  }
+});
+
+router.get("/clients/:clientId/memory/packet", async (req, res) => {
+  try {
+    res.json(await buildClientMemoryPacket(req.params.clientId));
+  } catch (err) {
+    res.status(500).json({ error: "Failed to build memory packet" });
   }
 });
 

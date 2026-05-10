@@ -7,6 +7,8 @@ export const imagesTable = pgTable("images", {
   clientId: uuid("client_id").notNull(),
   postId: uuid("post_id").notNull(),
   url: text("url").notNull(),
+  originalImageUrl: text("original_image_url"),
+  brandedImageUrl: text("branded_image_url"),
   provider: text("provider").notNull(),
   status: text("status").notNull().default("pending"),
   type: text("type").notNull().default("generated"),

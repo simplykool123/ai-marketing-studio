@@ -4,6 +4,8 @@ import { eq, and, lte } from "drizzle-orm";
 import { decryptToken, encryptToken, isEncryptionConfigured } from "./crypto.js";
 import { publishToPlatform } from "./publishers/index.js";
 import { logger } from "./logger.js";
+import { isNetworkError } from "./supabase.js";
+import { writeClientMemory } from "./client-memory-packet.js";
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
@@ -143,15 +145,21 @@ export async function resolveAccessToken(
   return decryptToken(account.accessToken);
 }
 
+function safeErrMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 async function runScheduledPublish(): Promise<void> {
   if (!isEncryptionConfigured()) {
     logger.warn("Scheduler skipped: TOKEN_ENCRYPTION_KEY not configured");
     return;
   }
 
+  let due: (typeof postsTable.$inferSelect)[];
+
   try {
     const now = new Date();
-    const due = await db
+    due = await db
       .select()
       .from(postsTable)
       .where(
@@ -161,16 +169,27 @@ async function runScheduledPublish(): Promise<void> {
         )
       )
       .limit(20);
+  } catch (err) {
+    // DB unreachable (DNS failure, pooler down, etc.) — skip this cycle quietly
+    if (isNetworkError(err)) {
+      logger.warn({ error: safeErrMsg(err) }, "Scheduler: DB unreachable — skipping cycle");
+    } else {
+      logger.warn({ error: safeErrMsg(err) }, "Scheduler: failed to query due posts — skipping cycle");
+    }
+    return;
+  }
 
-    if (due.length === 0) return;
+  if (due.length === 0) return;
 
-    logger.info({ count: due.length }, "Scheduler: publishing due posts");
+  logger.info({ count: due.length }, "Scheduler: publishing due posts");
 
-    for (const post of due) {
+  for (const post of due) {
+    try {
+      const platform = post.platform ?? "instagram";
+
+      let account: typeof socialAccountsTable.$inferSelect | undefined;
       try {
-        const platform = post.platform ?? "instagram";
-
-        const [account] = await db
+        [account] = await db
           .select()
           .from(socialAccountsTable)
           .where(
@@ -181,57 +200,66 @@ async function runScheduledPublish(): Promise<void> {
             )
           )
           .limit(1);
-
-        if (!account?.accessToken) {
-          await db
-            .update(postsTable)
-            .set({
-              status: "failed",
-              publishError: `No active ${platform} account connected for this brand`,
-              updatedAt: new Date(),
-            })
-            .where(eq(postsTable.id, post.id));
-          continue;
-        }
-
-        const accessToken = await resolveAccessToken(account);
-
-        const result = await publishToPlatform({
-          caption: post.caption,
-          hashtags: post.hashtags,
-          imageUrl: post.selectedImageUrl,
-          accountId: account.accountId ?? account.id,
-          accessToken,
-          platform,
-        });
-
-        await db
-          .update(postsTable)
-          .set({
-            status: "posted",
-            publishedAt: result.publishedAt,
-            publishedUrl: result.publishedUrl,
-            publishError: null,
-            updatedAt: new Date(),
-          })
-          .where(eq(postsTable.id, post.id));
-
-        logger.info({ postId: post.id, platform }, "Scheduler: post published");
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        if (isNetworkError(err)) {
+          logger.warn({ error: safeErrMsg(err) }, "Scheduler: DB unreachable mid-cycle — aborting remaining posts");
+          return; // abort the whole cycle; next tick will retry
+        }
+        throw err;
+      }
+
+      if (!account?.accessToken) {
         await db
           .update(postsTable)
           .set({
             status: "failed",
-            publishError: message,
+            publishError: `No active ${platform} account connected for this brand`,
             updatedAt: new Date(),
           })
           .where(eq(postsTable.id, post.id));
-        logger.warn({ postId: post.id, error: message }, "Scheduler: publish failed");
+        continue;
       }
+
+      const accessToken = await resolveAccessToken(account);
+
+      const result = await publishToPlatform({
+        caption: post.caption,
+        hashtags: post.hashtags,
+        imageUrl: post.selectedImageUrl,
+        accountId: account.accountId ?? account.id,
+        accessToken,
+        platform,
+      });
+
+      await db
+        .update(postsTable)
+        .set({
+          status: "posted",
+          publishedAt: result.publishedAt,
+          publishedUrl: result.publishedUrl,
+          publishError: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(postsTable.id, post.id));
+
+      await writeClientMemory(post.clientId, "Performance Memory / Published post", `Scheduled publisher posted ${platform} post "${post.topic}". Treat this as an accepted final content direction.`);
+
+      logger.info({ postId: post.id, platform }, "Scheduler: post published");
+    } catch (err) {
+      const message = safeErrMsg(err);
+      // Best-effort status update — if DB is also down here, just log
+      await db
+        .update(postsTable)
+        .set({ status: "failed", publishError: message, updatedAt: new Date() })
+        .where(eq(postsTable.id, post.id))
+        .catch((dbErr: unknown) => {
+          logger.warn(
+            { postId: post.id, dbError: safeErrMsg(dbErr) },
+            "Scheduler: could not persist publish failure to DB"
+          );
+        });
+      logger.warn({ postId: post.id, error: message }, "Scheduler: publish failed");
     }
-  } catch (err) {
-    logger.error({ err }, "Scheduler: unexpected error");
   }
 }
 

@@ -89,6 +89,31 @@ const TYPE_FILTERS: { label: string; value: FilterType }[] = [
   { label: "Blog", value: "blog" },
 ];
 
+function AssetImage({ img }: { img: ImageItem }) {
+  const [expired, setExpired] = useState(false);
+
+  if (expired) {
+    return (
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-muted/80 px-4 text-center">
+        <ImageIcon className="w-7 h-7 text-muted-foreground/40" />
+        <p className="text-xs font-semibold text-foreground/70">Image expired</p>
+        <p className="text-[10px] text-muted-foreground leading-snug">
+          Regenerate in Image Studio to get a fresh copy
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={img.url}
+      alt={img.prompt ?? "Asset"}
+      className="w-full h-full object-cover transition-transform group-hover:scale-105"
+      onError={() => setExpired(true)}
+    />
+  );
+}
+
 export default function AssetLibrary() {
   const { clientId } = useParams<{ clientId: string }>();
   const { toast } = useToast();
@@ -175,7 +200,16 @@ export default function AssetLibrary() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Asset Library</h1>
-        <p className="text-muted-foreground mt-1">All generated and uploaded images for this client.</p>
+        <p className="text-muted-foreground mt-1">Generated and uploaded images for this client. Attach images to draft posts from here.</p>
+      </div>
+
+      <div className="flex items-start gap-2.5 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+        <ImageIcon className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground/60" />
+        <p className="text-xs leading-relaxed">
+          AI-generated image URLs expire after a short time. If an image shows as expired, regenerate it in{" "}
+          <strong className="text-foreground/70">Image Studio</strong>.{" "}
+          Future images will be saved to persistent storage once storage is configured.
+        </p>
       </div>
 
       {/* Status filter row */}
@@ -242,12 +276,7 @@ export default function AssetLibrary() {
               )}
             >
               <div className="relative aspect-square bg-muted overflow-hidden">
-                <img
-                  src={img.url}
-                  alt={img.prompt ?? "Asset"}
-                  className="w-full h-full object-cover transition-transform group-hover:scale-105"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
+                <AssetImage img={img} />
                 {/* Hover overlay */}
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
                   <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 flex-wrap justify-center px-2">

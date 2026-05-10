@@ -4,18 +4,18 @@ import {
   useListPosts,
   getListPostsQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient, useMutation } from "@tanstack/react-query";
+import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { format, isToday, isTomorrow, isPast } from "date-fns";
 import {
   CheckCircle2, Clock, CalendarCheck, ListOrdered, PenLine,
-  Send, Loader2, AlertCircle, PlayCircle, Webhook as WebhookIcon, Info, X,
+  Send, Loader2, AlertCircle, PlayCircle, Webhook as WebhookIcon, Info, X, Link as LinkIcon, MoreHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -66,13 +66,64 @@ async function webhookExportApi(clientId: string, postId: string) {
   return res.json();
 }
 
+async function publishApi(clientId: string, postId: string) {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/publish`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Publish failed");
+  return data;
+}
+
+async function fetchSocialAccounts(clientId: string): Promise<Array<{ platform: string; isActive: boolean }>> {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/social-accounts`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
 function formatSchedule(dateStr?: string): { label: string; urgent: boolean } {
-  if (!dateStr) return { label: "Needs schedule/export", urgent: false };
+  if (!dateStr) return { label: "Ready — no date set yet", urgent: false };
   const d = new Date(dateStr);
   if (isPast(d) && !isToday(d)) return { label: `Overdue — ${format(d, "MMM d")}`, urgent: true };
   if (isToday(d)) return { label: `Today at ${format(d, "h:mm a")}`, urgent: true };
   if (isTomorrow(d)) return { label: `Tomorrow at ${format(d, "h:mm a")}`, urgent: false };
   return { label: format(d, "MMM d, h:mm a"), urgent: false };
+}
+
+function isNoAccountFailure(post: any): boolean {
+  return post.status === "failed" && /no active .*account connected|no .*account connected/i.test(post.publishError ?? "");
+}
+
+function postStatusLabel(post: any): string {
+  if ((post.status === "posted" || post.status === "published") && post.publishedAt) return "Published";
+  if (post.status === "scheduled") return "Scheduled";
+  if (isNoAccountFailure(post)) return "Failed: no account connected";
+  if (post.status === "failed") return "Failed";
+  if (post.status === "approved" || post.status === "export_ready") return "Ready to post";
+  return "Not posted yet";
+}
+
+function PostTimeline({ post }: { post: any }) {
+  const steps = [
+    { label: "Created", value: post.createdAt },
+    { label: "Approved", value: ["approved", "export_ready", "scheduled", "posted", "published", "failed"].includes(post.status) ? post.updatedAt : null },
+    { label: "Scheduled", value: post.scheduledAt },
+    {
+      label: post.status === "failed" ? "Failed" : post.publishedAt ? "Published" : "Not posted yet",
+      value: post.status === "failed" ? post.updatedAt : post.publishedAt,
+    },
+  ];
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+      {steps.map((step) => (
+        <span key={step.label} className={cn(step.value && "text-foreground")}>
+          {step.label}: {step.value ? format(new Date(step.value), "MMM d, h:mm a") : "—"}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 export default function PostingQueue() {
@@ -90,6 +141,11 @@ export default function PostingQueue() {
   };
 
   const { data: posts = [], isLoading } = useListPosts(clientId ?? "");
+  const { data: socialAccounts = [] } = useQuery({
+    queryKey: ["social-accounts", clientId],
+    queryFn: () => fetchSocialAccounts(clientId!),
+    enabled: !!clientId,
+  });
   const invalidate = () => {
     if (!clientId) return;
     queryClient.invalidateQueries({ queryKey: getListPostsQueryKey(clientId) });
@@ -126,6 +182,22 @@ export default function PostingQueue() {
     onError: () => toast({ title: "Failed to webhook export", variant: "destructive" }),
   });
 
+  const publishMutation = useMutation({
+    mutationFn: (postId: string) => publishApi(clientId!, postId),
+    onSuccess: () => {
+      invalidate();
+      toast({ title: "Publish retry complete" });
+    },
+    onError: (err) => {
+      invalidate();
+      toast({
+        title: "Publish retry failed",
+        description: err instanceof Error ? err.message : "Connect an account and try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const queuePosts = (posts as any[]).filter((post) =>
     QUEUE_STATUSES.includes(post.status) && (filter === "all" || post.status === filter)
   );
@@ -138,15 +210,14 @@ export default function PostingQueue() {
   });
 
   return (
-    <TooltipProvider>
-      <div className="space-y-6">
+    <div className="space-y-6">
         {!bannerDismissed && (
           <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             <Info className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
             <div className="flex-1">
-              <p className="font-medium">Real platform publishing isn't connected yet.</p>
+              <p className="font-medium">Direct platform publishing is not connected yet.</p>
               <p className="text-xs text-amber-800/90 mt-0.5">
-                Actions here either simulate publishing (Mock Post Demo), export the post (JSON / Webhook), or mark it as posted manually. Nothing is delivered to Instagram, Facebook, LinkedIn, or any other network.
+                Approved and scheduled posts wait here. Nothing is posted automatically.
               </p>
             </div>
             <button
@@ -160,17 +231,17 @@ export default function PostingQueue() {
         )}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Posting Queue</h1>
-            <p className="text-muted-foreground mt-1">Approved, export-ready, scheduled, and failed posts</p>
+            <h1 className="text-2xl font-bold tracking-tight">Publish Queue</h1>
+            <p className="text-muted-foreground mt-1">Approved drafts appear here before publishing.</p>
           </div>
           <Select value={filter} onValueChange={v => setFilter(v as typeof filter)}>
-            <SelectTrigger className="w-36 h-8 text-xs">
+            <SelectTrigger className="w-40 h-8 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All posts</SelectItem>
-              <SelectItem value="approved">Approved</SelectItem>
-              <SelectItem value="export_ready">Export Ready</SelectItem>
+              <SelectItem value="approved">Ready to post</SelectItem>
+              <SelectItem value="export_ready">Ready to export</SelectItem>
               <SelectItem value="scheduled">Scheduled</SelectItem>
               <SelectItem value="failed">Failed</SelectItem>
             </SelectContent>
@@ -197,16 +268,21 @@ export default function PostingQueue() {
               const schedule = formatSchedule(post.scheduledAt);
               const isFailed = post.status === "failed";
               const isPublished = post.status === "posted" || post.status === "published";
+              const hasPublishedProof = isPublished && !!post.publishedAt;
+              const noAccountFailure = isNoAccountFailure(post);
+              const platform = post.platform ?? "instagram";
+              const hasMatchingAccount = socialAccounts.some((account) => account.isActive && account.platform === platform);
               const canAct = ["approved", "export_ready", "scheduled", "failed"].includes(post.status);
               const isBusy =
                 (mockPostMutation.isPending && mockPostMutation.variables === post.id) ||
                 (markPostedMutation.isPending && markPostedMutation.variables === post.id) ||
-                (webhookMutation.isPending && webhookMutation.variables === post.id);
+                (webhookMutation.isPending && webhookMutation.variables === post.id) ||
+                (publishMutation.isPending && publishMutation.variables === post.id);
 
               return (
                 <Card key={post.id} className={cn(
                   "transition-shadow hover:shadow-sm",
-                  schedule.urgent && !isPublished && "border-amber-200",
+                  schedule.urgent && !hasPublishedProof && "border-amber-200",
                   isFailed && "border-red-200"
                 )}>
                   <CardContent className="flex items-center gap-4 p-4">
@@ -233,13 +309,15 @@ export default function PostingQueue() {
                           "text-xs",
                           post.status === "approved" && "bg-blue-50 text-blue-700",
                           post.status === "export_ready" && "bg-emerald-50 text-emerald-700",
+                          post.status === "scheduled" && "bg-primary/10 text-primary",
                           isFailed && "bg-red-50 text-red-700"
                         )}>
-                          {post.status === "export_ready" ? "export ready" : post.status}
+                          {postStatusLabel(post)}
                         </Badge>
                       </div>
                       <p className="text-sm font-medium truncate">{post.topic}</p>
                       <p className="text-xs text-muted-foreground truncate">{post.caption?.slice(0, 80)}…</p>
+                      <PostTimeline post={post} />
                       {isFailed && post.publishError && (
                         <p className="text-xs text-red-600 flex items-center gap-1 mt-0.5">
                           <AlertCircle className="w-3 h-3 shrink-0" />
@@ -254,75 +332,79 @@ export default function PostingQueue() {
                         schedule.urgent && !isPublished ? "text-amber-600 font-medium" : "text-muted-foreground"
                       )}>
                         <Clock className="w-3 h-3" />
-                        {isPublished && post.publishedAt
+                        {hasPublishedProof
                           ? format(new Date(post.publishedAt), "MMM d, h:mm a")
                           : schedule.label}
                       </div>
                     </div>
 
-                    <div className="flex gap-1.5 shrink-0">
-                      <Link href={`/clients/${clientId}/drafts`}>
-                        <Button size="icon" variant="ghost" className="h-7 w-7">
-                          <PenLine className="w-3.5 h-3.5" />
-                        </Button>
-                      </Link>
-
+                    <div className="flex gap-1.5 shrink-0 flex-wrap justify-end">
                       {canAct && (
                         <>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7 text-amber-600 hover:text-amber-700"
-                                onClick={() => mockPostMutation.mutate(post.id)}
-                                disabled={isBusy}
-                              >
-                                {mockPostMutation.isPending && mockPostMutation.variables === post.id
-                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  : <PlayCircle className="w-3.5 h-3.5" />}
+                          {(noAccountFailure || !hasMatchingAccount) && (
+                            <Link href={`/clients/${clientId}/social-accounts`}>
+                              <Button size="sm" variant="default" className="h-7 text-xs px-2">
+                                <LinkIcon className="w-3.5 h-3.5 mr-1" />
+                                Connect account
                               </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Mock Post (Demo) — simulated only</TooltipContent>
-                          </Tooltip>
+                            </Link>
+                          )}
 
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7 text-indigo-600 hover:text-indigo-700"
-                                onClick={() => webhookMutation.mutate(post.id)}
-                                disabled={isBusy}
-                              >
-                                {webhookMutation.isPending && webhookMutation.variables === post.id
-                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  : <WebhookIcon className="w-3.5 h-3.5" />}
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Webhook Export — send payload to configured URL</TooltipContent>
-                          </Tooltip>
+                          {hasMatchingAccount && !hasPublishedProof && (
+                            <Button
+                              size="sm"
+                              variant={isFailed ? "outline" : "default"}
+                              className="h-7 text-xs px-2"
+                              onClick={() => publishMutation.mutate(post.id)}
+                              disabled={isBusy}
+                            >
+                              {publishMutation.isPending && publishMutation.variables === post.id
+                                ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                                : <Send className="w-3.5 h-3.5 mr-1" />}
+                              {isFailed ? "Retry Publish" : "Publish Now"}
+                            </Button>
+                          )}
 
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7 text-green-600 hover:text-green-700"
-                                onClick={() => markPostedMutation.mutate(post.id)}
-                                disabled={isBusy}
-                              >
-                                {markPostedMutation.isPending && markPostedMutation.variables === post.id
-                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  : <Send className="w-3.5 h-3.5" />}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs px-2"
+                            onClick={() => markPostedMutation.mutate(post.id)}
+                            disabled={isBusy}
+                          >
+                            {markPostedMutation.isPending && markPostedMutation.variables === post.id
+                              ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                              : <Send className="w-3.5 h-3.5 mr-1" />}
+                            Mark as posted manually
+                          </Button>
+
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button size="icon" variant="ghost" className="h-7 w-7" disabled={isBusy}>
+                                <MoreHorizontal className="w-3.5 h-3.5" />
                               </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Mark as Posted Manually — flag locally only</TooltipContent>
-                          </Tooltip>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem asChild>
+                                <Link href={`/clients/${clientId}/drafts`} className="flex items-center">
+                                  <PenLine className="w-3.5 h-3.5 mr-2" />
+                                  Edit in Review
+                                </Link>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => mockPostMutation.mutate(post.id)}>
+                                <PlayCircle className="w-3.5 h-3.5 mr-2" />
+                                Mock Post (Demo)
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => webhookMutation.mutate(post.id)}>
+                                <WebhookIcon className="w-3.5 h-3.5 mr-2" />
+                                Webhook Export
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </>
                       )}
 
-                      {isPublished && (
+                      {hasPublishedProof && (
                         <CheckCircle2 className="w-4 h-4 text-green-500 m-1.5" />
                       )}
                       {isFailed && (
@@ -335,7 +417,6 @@ export default function PostingQueue() {
             })}
           </div>
         )}
-      </div>
-    </TooltipProvider>
+    </div>
   );
 }

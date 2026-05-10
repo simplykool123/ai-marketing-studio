@@ -78,7 +78,7 @@ async function ensureStorageBucketOnce(): Promise<void> {
   }
 }
 
-async function uploadToSupabase(
+export async function uploadToSupabase(
   buffer: Buffer,
   path: string,
   contentType: string

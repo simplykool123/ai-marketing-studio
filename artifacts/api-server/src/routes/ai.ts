@@ -19,6 +19,7 @@ import {
   safeErrorMessage,
 } from "../lib/ai-provider.js";
 import { logger } from "../lib/logger.js";
+import { persistRemoteImageUrl } from "../lib/durable-image-storage.js";
 
 const router = Router();
 
@@ -227,22 +228,38 @@ router.post("/ai/generate-images", async (req: AuthRequest, res) => {
       openai.images.generate({ model: "dall-e-3", prompt: altPrompt,  n: 1, size: "1024x1024", quality: "standard", response_format: "url" }),
     ]);
 
-    const images: GeneratedImage[] = [
+    const rawImages = [
       {
-        provider: "openai",
-        panel: "left",
-        url: leftResult.status === "fulfilled" ? (leftResult.value.data?.[0]?.url ?? "") : "",
+        provider: "openai" as const,
+        panel: "left" as const,
+        providerUrl: leftResult.status === "fulfilled" ? (leftResult.value.data?.[0]?.url ?? "") : "",
         prompt: basePrompt,
         ...(leftResult.status === "rejected" ? { error: safeErrorMessage(leftResult.reason) } : {}),
       },
       {
-        provider: "openai",
-        panel: "right",
-        url: rightResult.status === "fulfilled" ? (rightResult.value.data?.[0]?.url ?? "") : "",
+        provider: "openai" as const,
+        panel: "right" as const,
+        providerUrl: rightResult.status === "fulfilled" ? (rightResult.value.data?.[0]?.url ?? "") : "",
         prompt: altPrompt,
         ...(rightResult.status === "rejected" ? { error: safeErrorMessage(rightResult.reason) } : {}),
       },
     ];
+
+    const images: GeneratedImage[] = await Promise.all(rawImages.map(async (image) => {
+      if (!image.providerUrl) return { provider: image.provider, panel: image.panel, url: "", prompt: image.prompt, error: image.error };
+      try {
+        const persisted = await persistRemoteImageUrl(image.providerUrl, body.clientId, `post-${image.panel}`);
+        return { provider: image.provider, panel: image.panel, url: persisted.durableUrl, prompt: image.prompt };
+      } catch (storageErr) {
+        return {
+          provider: image.provider,
+          panel: image.panel,
+          url: "",
+          prompt: image.prompt,
+          error: `Image generated but storage failed: ${safeErrorMessage(storageErr)}`,
+        };
+      }
+    }));
 
     if (body.postId) {
       const successfulImages = images.filter((image) => image.url);

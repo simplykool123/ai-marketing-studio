@@ -6,6 +6,7 @@ import { isEncryptionConfigured } from "../lib/crypto.js";
 import { resolveAccessToken } from "../lib/scheduler.js";
 import { publishToPlatform } from "../lib/publishers/index.js";
 import { APPROVE_CONTENT_ROLES, requireClientRole } from "../middleware/auth.js";
+import { writeClientMemory } from "../lib/client-memory-packet.js";
 
 const router = Router();
 
@@ -96,6 +97,8 @@ router.post("/clients/:clientId/posts/:postId/publish", requireClientRole(APPROV
       })
       .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
       .returning();
+
+    await writeClientMemory(clientId, "Performance Memory / Published post", `User published ${platform} post "${post.topic}". Treat this as an accepted final content direction.`);
 
     res.json(updated);
   } catch (err) {

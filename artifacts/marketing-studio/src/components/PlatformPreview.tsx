@@ -91,7 +91,7 @@ function FacebookPreview({ caption, hashtags, imageUrl, brandName, logoUrl }: Pl
       </div>
       <p className="px-3 pb-2 text-xs text-gray-800 leading-relaxed">{truncate(caption, 150)}</p>
       {imageUrl ? (
-        <img src={imageUrl} alt="Post" className="w-full object-cover" style={{ aspectRatio: "1.91 / 1" }} />
+        <img src={imageUrl} alt="Post" className="w-full object-contain bg-gray-50" style={{ aspectRatio: "1.91 / 1" }} />
       ) : (
         <div className="w-full bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center" style={{ aspectRatio: "1.91 / 1" }}>
           <p className="text-xs text-gray-400">Image preview</p>
@@ -118,7 +118,7 @@ function LinkedInPreview({ caption, imageUrl, brandName, logoUrl }: PlatformPrev
       </div>
       <p className="px-3 pb-2 text-xs text-gray-800 leading-relaxed">{truncate(caption, 180)}</p>
       {imageUrl ? (
-        <img src={imageUrl} alt="Post" className="w-full object-cover" style={{ aspectRatio: "1.91 / 1" }} />
+        <img src={imageUrl} alt="Post" className="w-full object-contain bg-gray-50" style={{ aspectRatio: "1.91 / 1" }} />
       ) : (
         <div className="w-full bg-gradient-to-br from-indigo-50 to-blue-100 flex items-center justify-center" style={{ aspectRatio: "1.91 / 1" }}>
           <p className="text-xs text-gray-400">Image preview</p>
@@ -146,7 +146,7 @@ function TwitterPreview({ caption, hashtags, imageUrl, brandName, logoUrl }: Pla
             <p className="text-[10px] text-gray-400">@{(brandName ?? "brand").toLowerCase().replace(/[^a-z0-9]+/g, "")} · now</p>
           </div>
           <p className="text-xs text-gray-800 leading-relaxed mb-2">{truncate(fullText, 280)}</p>
-          {imageUrl && <img src={imageUrl} alt="Post" className="w-full aspect-video object-cover rounded-lg mb-2" />}
+          {imageUrl && <img src={imageUrl} alt="Post" className="w-full aspect-video object-contain bg-gray-50 rounded-lg mb-2" />}
           <div className="flex items-center gap-5 text-gray-400">
             <MessageCircle className="w-3.5 h-3.5" />
             <Repeat2 className="w-3.5 h-3.5" />
@@ -164,7 +164,7 @@ function YouTubePreview({ title, caption, imageUrl, brandName, logoUrl }: Platfo
     <div className="bg-white border border-gray-200 rounded-lg overflow-hidden w-full max-w-sm mx-auto shadow-sm">
       <div className="relative bg-gray-100">
         {imageUrl ? (
-          <img src={imageUrl} alt="Thumbnail" className="w-full aspect-video object-cover" />
+          <img src={imageUrl} alt="Thumbnail" className="w-full aspect-video object-contain bg-gray-50" />
         ) : (
           <div className="w-full aspect-video bg-gradient-to-br from-red-50 to-gray-100 flex items-center justify-center">
             <p className="text-xs text-gray-400">Thumbnail preview</p>
@@ -192,7 +192,7 @@ function BlogPreview({ title, caption, longFormBody, imageUrl, brandName }: Plat
   return (
     <div className="bg-white border border-gray-200 rounded-lg overflow-hidden w-full max-w-sm mx-auto shadow-sm">
       {imageUrl ? (
-        <img src={imageUrl} alt="Post" className="w-full object-cover" style={{ aspectRatio: "2.4 / 1" }} />
+        <img src={imageUrl} alt="Post" className="w-full object-contain bg-gray-50" style={{ aspectRatio: "2.4 / 1" }} />
       ) : (
         <div className="w-full bg-gradient-to-br from-amber-50 to-orange-100 flex items-center justify-center" style={{ aspectRatio: "2.4 / 1" }}>
           <p className="text-xs text-gray-400">Featured image</p>
@@ -216,7 +216,7 @@ function NewsletterPreview({ title, caption, longFormBody, imageUrl, brandName, 
         <p className="text-[10px] text-violet-500 mb-0.5">From: {brandName ?? "Your Brand"} &lt;hello@brand.com&gt;</p>
         <p className="text-xs font-semibold text-gray-800">{title || truncate(caption, 60)}</p>
       </div>
-      {imageUrl && <img src={imageUrl} alt="Newsletter banner" className="w-full object-cover" style={{ aspectRatio: "2.4 / 1" }} />}
+      {imageUrl && <img src={imageUrl} alt="Newsletter banner" className="w-full object-contain bg-gray-50" style={{ aspectRatio: "2.4 / 1" }} />}
       <div className="p-4">
         {logoUrl ? (
           <img src={logoUrl} alt={brandName ? `${brandName} logo` : "Brand logo"} className="h-6 w-auto max-w-28 object-contain mb-3" />

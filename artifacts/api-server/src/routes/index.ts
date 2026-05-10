@@ -18,6 +18,12 @@ import socialAccountsRouter from "./social_accounts.js";
 import oauthRouter from "./oauth.js";
 import publishRouter from "./publish.js";
 import postingRulesRouter from "./posting_rules.js";
+import aiBrainRouter from "./ai_brain.js";
+import campaignGenerateRouter from "./campaign_generate.js";
+import blogStudioRouter from "./blog_studio.js";
+import imageStudioRouter from "./image_studio.js";
+import videoStudioRouter from "./video_studio.js";
+import skillsRouter from "./skills.js";
 import { requireAuth, requireClientAccess } from "../middleware/auth.js";
 
 const router: IRouter = Router();
@@ -45,5 +51,11 @@ router.use(aiContentRouter);
 router.use(uploadRouter);
 router.use(socialAccountsRouter);
 router.use(postingRulesRouter);
+router.use(aiBrainRouter);
+router.use(campaignGenerateRouter);
+router.use(blogStudioRouter);
+router.use(imageStudioRouter);
+router.use(videoStudioRouter);
+router.use(skillsRouter);
 
 export default router;
