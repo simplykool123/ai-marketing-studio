@@ -31,6 +31,7 @@ import CampaignGenerator from "@/pages/CampaignGenerator";
 import BlogStudio from "@/pages/BlogStudio";
 import ImageStudio from "@/pages/ImageStudio";
 import VideoStudio from "@/pages/VideoStudio";
+import MarketingCalendar from "@/pages/MarketingCalendar";
 
 const queryClient = new QueryClient();
 
@@ -141,6 +142,9 @@ function Router() {
       </Route>
       <Route path="/clients/:clientId/calendar">
         {() => <ProtectedClientRoute><Calendar /></ProtectedClientRoute>}
+      </Route>
+      <Route path="/clients/:clientId/marketing-calendar">
+        {() => <ProtectedClientRoute><MarketingCalendar /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/memory">
         {() => <ProtectedClientRoute><Memory /></ProtectedClientRoute>}

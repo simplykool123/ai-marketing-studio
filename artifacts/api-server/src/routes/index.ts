@@ -24,6 +24,7 @@ import blogStudioRouter from "./blog_studio.js";
 import imageStudioRouter from "./image_studio.js";
 import videoStudioRouter from "./video_studio.js";
 import skillsRouter from "./skills.js";
+import occasionsRouter from "./occasions.js";
 import { requireAuth, requireClientAccess } from "../middleware/auth.js";
 
 const router: IRouter = Router();
@@ -57,5 +58,6 @@ router.use(blogStudioRouter);
 router.use(imageStudioRouter);
 router.use(videoStudioRouter);
 router.use(skillsRouter);
+router.use(occasionsRouter);
 
 export default router;

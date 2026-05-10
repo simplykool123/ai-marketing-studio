@@ -97,6 +97,7 @@ export function Sidebar({ clientId }: { clientId?: string }) {
         { href: `/clients/${clientId}/brain`, label: "AI Ideas", icon: BrainCircuit },
         { href: `/clients/${clientId}/storylines`, label: "Storylines", icon: BookOpen },
         { href: `/clients/${clientId}/campaigns/generate`, label: "Campaign Planner", icon: Flag },
+        { href: `/clients/${clientId}/marketing-calendar`, label: "Marketing Calendar", icon: CalendarIcon },
       ],
     },
     {

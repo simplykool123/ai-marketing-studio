@@ -83,12 +83,29 @@ type EnhancedDashboard = {
   aiKeySource?: "database" | "env" | "none";
 };
 
+type OccasionSummary = {
+  id: string;
+  title: string;
+  date: string;
+  category: string;
+  requiresYearlyUpdate: boolean;
+};
+
 async function fetchDashboard(clientId: string): Promise<EnhancedDashboard> {
   const token = localStorage.getItem("ams_token");
   const res = await fetch(`${BASE}/api/clients/${clientId}/dashboard`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new Error("Failed to fetch dashboard");
+  return res.json();
+}
+
+async function fetchOccasions(clientId: string): Promise<{ occasions: OccasionSummary[] }> {
+  const token = localStorage.getItem("ams_token");
+  const res = await fetch(`${BASE}/api/clients/${clientId}/occasions`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error("Failed to fetch occasions");
   return res.json();
 }
 
@@ -153,7 +170,18 @@ export default function ClientDashboard() {
     enabled: !!clientId,
   });
 
+  const { data: occasionsData } = useQuery({
+    queryKey: ["marketing-occasions", clientId],
+    queryFn: () => fetchOccasions(clientId!),
+    enabled: !!clientId,
+  });
+
   const recentlyPublished = dashboard?.recentlyPublished;
+  const nextOccasion = occasionsData?.occasions?.find((occasion) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return new Date(occasion.date) >= today;
+  });
 
   if (isClientLoading || isDashboardLoading) {
     return (
@@ -465,7 +493,7 @@ export default function ClientDashboard() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-3">
         <Card className={cn("bg-card", !hasSocialAccount && "border-amber-200 bg-amber-50/40")}>
           <CardHeader className="flex flex-row items-center justify-between py-3">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -494,6 +522,34 @@ export default function ClientDashboard() {
                 )}
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card">
+          <CardHeader className="py-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <CalendarDays className="w-4 h-4 text-primary" />
+              Upcoming Occasion
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 pb-3">
+            {nextOccasion ? (
+              <>
+                <p className="text-sm font-medium">{nextOccasion.title}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {format(new Date(nextOccasion.date), "MMM d")} · {nextOccasion.category}
+                  {nextOccasion.requiresYearlyUpdate ? " · verify yearly" : ""}
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">No upcoming curated occasions.</p>
+            )}
+            <Link href={`/clients/${clientId}/marketing-calendar`}>
+              <Button size="sm" variant="outline" className="mt-3 gap-2">
+                Open Calendar
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Button>
+            </Link>
           </CardContent>
         </Card>
 
