@@ -192,13 +192,13 @@ export default function CampaignPlanner() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Campaign Planner</h1>
           <p className="text-muted-foreground mt-1">Generate a full campaign of draft posts, images, blogs, and ideas for Review.</p>
         </div>
-        <Button onClick={() => handleOpen()} className="gap-1.5">
-          <Plus className="w-4 h-4" /> New Campaign
+        <Button onClick={() => handleOpen()} className="gap-1.5 sm:self-auto self-start">
+          <Plus className="w-4 h-4" /> New campaign
         </Button>
       </div>
 
@@ -213,9 +213,9 @@ export default function CampaignPlanner() {
               <Flag className="w-6 h-6 text-primary" />
             </div>
             <p className="font-medium text-foreground">No campaigns yet</p>
-            <p className="text-sm text-muted-foreground mt-1 mb-4 max-w-xs">Create a campaign to group related posts and track them together.</p>
+            <p className="text-sm text-muted-foreground mt-1 mb-4 max-w-xs">Create a campaign, then generate drafts for Review.</p>
             <Button size="sm" onClick={() => handleOpen()} variant="outline" className="gap-1.5">
-              <Plus className="w-3.5 h-3.5" /> Create your first campaign
+              <Plus className="w-3.5 h-3.5" /> Create campaign
             </Button>
           </CardContent>
         </Card>
@@ -238,10 +238,10 @@ export default function CampaignPlanner() {
                       variant="outline"
                       className="h-7 text-xs gap-1 px-2"
                       onClick={() => { setGeneratePlanCampaignId(c.id); setPlanPlatforms(c.platforms ? c.platforms.split(",").filter(Boolean) : ["instagram", "facebook", "linkedin"]); }}
-                      title="Generate AI content plan"
+                      title="Generate campaign drafts"
                     >
                       <Sparkles className="w-3 h-3" />
-                      AI Plan
+                      Generate
                     </Button>
                     <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleOpen(c)}>
                       <PenLine className="w-3.5 h-3.5" />

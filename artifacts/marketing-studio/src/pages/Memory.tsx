@@ -234,13 +234,13 @@ export default function Memory() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Client Memory Center</h1>
+        <h1 className="text-3xl font-bold tracking-tight">AI Memory</h1>
         <p className="text-muted-foreground mt-1">
           The AI's long-term learning for this client: approvals, rejections, rules, and style.
         </p>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
         {memorySummary.map((item) => {
           const Icon = item.icon;
           return (
@@ -256,17 +256,17 @@ export default function Memory() {
       </div>
 
       {/* How memory powers AI */}
-      <div className="rounded-lg border border-primary/15 bg-primary/5 px-4 py-3.5">
+      <div className="rounded-lg border border-primary/15 bg-primary/5 px-4 py-3">
         <p className="text-xs font-semibold text-primary mb-2 flex items-center gap-1.5">
           <BrainCircuit className="w-3.5 h-3.5" />
-          How this memory powers your AI
+          How memory helps
         </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
           {[
-            { icon: Lightbulb, text: "Brain reads brand, rules & storyline to suggest ideas" },
-            { icon: BarChart3, text: "Campaigns use performance memory to avoid weak angles" },
-            { icon: MessageSquareX, text: "Approvals & rejections train future content taste" },
-            { icon: Image, text: "Image, video & blog styles improve with every generation" },
+            { icon: Lightbulb, text: "Suggests better ideas" },
+            { icon: BarChart3, text: "Avoids weak angles" },
+            { icon: MessageSquareX, text: "Learns from approvals and rejections" },
+            { icon: Image, text: "Keeps style consistent" },
           ].map(({ icon: Icon, text }) => (
             <div key={text} className="flex items-start gap-2 text-[11px] text-muted-foreground leading-relaxed">
               <Icon className="w-3 h-3 mt-0.5 shrink-0 text-primary/60" />
@@ -353,7 +353,7 @@ export default function Memory() {
 
                 {sectionMemories.length === 0 ? (
                   <p className="text-sm text-muted-foreground py-3 italic">
-                    {EMPTY_STATE[section.id] ?? "No learnings yet — add one manually above."}
+                    {EMPTY_STATE[section.id] ?? "No learnings yet. Add one above when there is a rule AI should remember."}
                   </p>
                 ) : (
                   <div className="space-y-2">

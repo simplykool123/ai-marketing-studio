@@ -8,6 +8,8 @@ import {
   useRegeneratePostCopy,
   useGeneratePostImage,
   usePublishPost,
+  useUploadPostImage,
+  useSaveImage,
   getListPostsQueryKey,
   type UpdatePostBodyPlatform,
   type ApprovePostBodyPlatform,
@@ -166,11 +168,175 @@ function postImageUrl(post: Post): string | null {
   );
 }
 
+function artworkBaseImageUrl(post: Post): string | null {
+  const schema = asRecord(post.contentSchema);
+  return schema.backgroundImageUrl || post.selectedImageUrl || schema.imageUrl || post.originalImageUrl || null;
+}
+
 function postImagePrompt(post: Post): string {
   const schema = asRecord(post.contentSchema);
   return [schema.imagePrompt, schema.creativeDirection, schema.artworkDirection, schema.prompt, post.imagePrompt]
     .filter(Boolean)
     .join(" ");
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function asHexColor(value: unknown, fallback: string): string {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim() : fallback;
+}
+
+function artworkLogoUrl(post: Post): string | null {
+  const schema = asRecord(post.contentSchema);
+  const logo = asRecord(schema.logo);
+  const layers = asRecord(schema.artworkLayers);
+  return firstString(layers.logoUrl, logo.url, schema.logoUrl, schema.brandLogoUrl);
+}
+
+function artworkBrandName(post: Post): string | null {
+  const schema = asRecord(post.contentSchema);
+  return firstString(schema.brandName, schema.clientName);
+}
+
+function artworkFrameColor(post: Post): string {
+  const schema = asRecord(post.contentSchema);
+  const layers = asRecord(schema.artworkLayers);
+  const colors = Array.isArray(schema.brandColorsUsed) ? schema.brandColorsUsed : [];
+  return asHexColor(layers.frameColor, asHexColor(colors[2], asHexColor(colors[0], "#f59e0b")));
+}
+
+function artworkPanelColor(post: Post): string {
+  const schema = asRecord(post.contentSchema);
+  const layers = asRecord(schema.artworkLayers);
+  const colors = Array.isArray(schema.brandColorsUsed) ? schema.brandColorsUsed : [];
+  return asHexColor(layers.panelColor, asHexColor(colors[0], "#111827"));
+}
+
+function loadCanvasImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Could not load image for artwork render"));
+    image.src = url;
+  });
+}
+
+function drawCover(ctx: CanvasRenderingContext2D, image: HTMLImageElement, size: number) {
+  const scale = Math.max(size / image.naturalWidth, size / image.naturalHeight);
+  const width = image.naturalWidth * scale;
+  const height = image.naturalHeight * scale;
+  ctx.drawImage(image, (size - width) / 2, (size - height) / 2, width, height);
+}
+
+function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
+
+function wrapCanvasLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (ctx.measureText(next).width > maxWidth && current) {
+      lines.push(current);
+      current = word;
+      if (lines.length >= maxLines) break;
+    } else {
+      current = next;
+    }
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  return lines;
+}
+
+async function renderArtworkPng(params: {
+  post: Post;
+  headline: string;
+  subline: string;
+  logoEnabled: boolean;
+  frameColor: string;
+}) {
+  const size = 1080;
+  const sourceUrl = artworkBaseImageUrl(params.post);
+  if (!sourceUrl) throw new Error("No background image is available for this artwork.");
+
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not render artwork.");
+
+  const background = await loadCanvasImage(sourceUrl);
+  drawCover(ctx, background, size);
+  ctx.fillStyle = "rgba(0,0,0,0.18)";
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.lineWidth = 12;
+  ctx.strokeStyle = params.frameColor;
+  roundedRect(ctx, 42, 42, 996, 996, 34);
+  ctx.stroke();
+
+  ctx.fillStyle = artworkPanelColor(params.post);
+  ctx.globalAlpha = 0.92;
+  roundedRect(ctx, 76, 644, 928, 326, 30);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  const logoUrl = artworkLogoUrl(params.post);
+  if (params.logoEnabled && logoUrl) {
+    try {
+      const logo = await loadCanvasImage(logoUrl);
+      const boxWidth = 150;
+      const boxHeight = 84;
+      const scale = Math.min(boxWidth / logo.naturalWidth, boxHeight / logo.naturalHeight);
+      const width = logo.naturalWidth * scale;
+      const height = logo.naturalHeight * scale;
+      ctx.drawImage(logo, 76 + (boxWidth - width) / 2, 76 + (boxHeight - height) / 2, width, height);
+    } catch {
+      // If the logo cannot be loaded cross-origin, keep the final artwork renderable.
+    }
+  } else if (params.logoEnabled) {
+    const brandName = artworkBrandName(params.post);
+    if (brandName) {
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "700 34px Inter, Arial, sans-serif";
+      ctx.fillText(brandName, 76, 122);
+    }
+  }
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "800 76px Inter, Arial, sans-serif";
+  const headlineLines = wrapCanvasLines(ctx, params.headline, 840, 2);
+  headlineLines.forEach((line, index) => ctx.fillText(line, 120, 740 + index * 82));
+
+  ctx.font = "400 34px Inter, Arial, sans-serif";
+  const sublineStart = 780 + Math.max(0, headlineLines.length - 1) * 82;
+  const sublineLines = wrapCanvasLines(ctx, params.subline, 820, 3);
+  sublineLines.forEach((line, index) => ctx.fillText(line, 120, sublineStart + index * 42));
+
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("Could not export artwork PNG."));
+    }, "image/png");
+  });
 }
 
 function dateFromIsoDay(value: unknown): Date | undefined {
@@ -287,6 +453,8 @@ export default function Drafts() {
   const updatePost = useUpdatePost();
   const regenerateCopy = useRegeneratePostCopy();
   const generateImage = useGeneratePostImage();
+  const uploadPostImage = useUploadPostImage();
+  const saveImage = useSaveImage();
   const publishPost = usePublishPost();
 
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
@@ -314,6 +482,7 @@ export default function Drafts() {
   const [artworkHeadline, setArtworkHeadline] = useState("");
   const [artworkSubline, setArtworkSubline] = useState("");
   const [artworkLogoEnabled, setArtworkLogoEnabled] = useState(true);
+  const [artworkFrameColorValue, setArtworkFrameColorValue] = useState("#f59e0b");
   const [isArtworkSaving, setIsArtworkSaving] = useState(false);
 
   const [regeneratingPostId, setRegeneratingPostId] = useState<string | null>(null);
@@ -404,10 +573,12 @@ export default function Drafts() {
 
   const openArtworkEditor = (post: Post) => {
     const schema = asRecord(post.contentSchema);
+    const layers = asRecord(schema.artworkLayers);
     setArtworkPost(post);
-    setArtworkHeadline(typeof schema.headline === "string" ? schema.headline : "");
-    setArtworkSubline(typeof schema.subline === "string" ? schema.subline : "");
-    setArtworkLogoEnabled(schema.logoEnabled !== false);
+    setArtworkHeadline(firstString(layers.headline, schema.headline) ?? "");
+    setArtworkSubline(firstString(layers.subline, schema.subline) ?? "");
+    setArtworkLogoEnabled(layers.logoEnabled !== false && schema.logoEnabled !== false);
+    setArtworkFrameColorValue(artworkFrameColor(post));
   };
 
   const handleSaveEdit = async () => {
@@ -441,27 +612,68 @@ export default function Drafts() {
 
   const handleSaveArtwork = async () => {
     if (!clientId || !artworkPost) return;
-    const schema = asRecord(artworkPost.contentSchema);
-    const nextSchema = {
-      ...schema,
-      headline: artworkHeadline,
-      subline: artworkSubline,
-      logoEnabled: artworkLogoEnabled,
-      artworkLayers: {
-        ...(asRecord(schema.artworkLayers)),
-        headline: artworkHeadline,
-        subline: artworkSubline,
-        logo: { enabled: artworkLogoEnabled },
-      },
-    };
     setIsArtworkSaving(true);
     try {
+      const schema = asRecord(artworkPost.contentSchema);
+      const frameColor = asHexColor(artworkFrameColorValue, artworkFrameColor(artworkPost));
+      const finalArtworkBlob = await renderArtworkPng({
+        post: artworkPost,
+        headline: artworkHeadline,
+        subline: artworkSubline,
+        logoEnabled: artworkLogoEnabled,
+        frameColor,
+      });
+      const uploaded = await new Promise<{ url: string }>((resolve, reject) => {
+        uploadPostImage.mutate(
+          {
+            clientId,
+            data: {
+              file: new File([finalArtworkBlob], `final-artwork-${artworkPost.id}.png`, { type: "image/png" }),
+            },
+          },
+          { onSuccess: resolve, onError: reject }
+        );
+      });
+      const nextSchema = {
+        ...schema,
+        headline: artworkHeadline,
+        subline: artworkSubline,
+        logoEnabled: artworkLogoEnabled,
+        finalArtworkUrl: uploaded.url,
+        artworkLayers: {
+          ...(asRecord(schema.artworkLayers)),
+          headline: artworkHeadline,
+          subline: artworkSubline,
+          logoEnabled: artworkLogoEnabled,
+          frameColor,
+          panelColor: artworkPanelColor(artworkPost),
+          logo: { enabled: artworkLogoEnabled, url: artworkLogoUrl(artworkPost) },
+        },
+      };
+      await new Promise<void>((resolve, reject) => {
+        saveImage.mutate(
+          {
+            clientId,
+            postId: artworkPost.id,
+            data: {
+              url: uploaded.url,
+              originalImageUrl: artworkBaseImageUrl(artworkPost) ?? undefined,
+              brandedImageUrl: uploaded.url,
+              provider: "openai",
+              status: "selected",
+              prompt: postImagePrompt(artworkPost) || "Final artwork rendered in Review",
+            },
+          },
+          { onSuccess: () => resolve(), onError: reject }
+        );
+      });
       await new Promise<void>((resolve, reject) => {
         updatePost.mutate(
           {
             clientId,
             postId: artworkPost.id,
             data: {
+              selectedImageUrl: uploaded.url,
               contentSchema: nextSchema,
               contentSchemaVersion: artworkPost.contentSchema ? 1 : undefined,
             },
@@ -470,10 +682,15 @@ export default function Drafts() {
         );
       });
       invalidatePosts();
+      queryClient.invalidateQueries({ queryKey: ["client-images", clientId] });
       setArtworkPost(null);
-      toast({ title: "Artwork notes saved" });
-    } catch {
-      toast({ title: "Failed to save artwork notes", variant: "destructive" });
+      toast({ title: "Final artwork saved" });
+    } catch (err) {
+      toast({
+        title: "Failed to save final artwork",
+        description: err instanceof Error ? err.message : undefined,
+        variant: "destructive",
+      });
     } finally {
       setIsArtworkSaving(false);
     }
@@ -848,26 +1065,26 @@ export default function Drafts() {
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Review</h1>
           <p className="text-muted-foreground mt-1 text-sm">
             Approve drafts that are ready. Reject drafts to teach AI what to avoid.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Link href={`/clients/${clientId}/bulk-generate`}>
             <Button variant="outline" size="sm">
-              <Zap className="w-4 h-4 mr-2" /> Bulk Generate
+              <Zap className="w-4 h-4 mr-2" /> Bulk create
             </Button>
           </Link>
           <Link href={`/clients/${clientId}/manual`}>
             <Button variant="outline" size="sm">
-              <PlusCircle className="w-4 h-4 mr-2" /> New Manual Post
+              <PlusCircle className="w-4 h-4 mr-2" /> Manual post
             </Button>
           </Link>
           <Button variant="outline" size="sm" onClick={handleExportAll} disabled={approved.length === 0}>
-            <ExternalLink className="w-4 h-4 mr-2" /> Export JSON
+            <ExternalLink className="w-4 h-4 mr-2" /> Export approved
           </Button>
         </div>
       </div>
@@ -902,13 +1119,13 @@ export default function Drafts() {
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs font-medium text-muted-foreground">Low quality drafts</p>
+            <p className="text-xs font-medium text-muted-foreground">Needs improvement</p>
             <p className="text-2xl font-semibold mt-1">{lowQualityDrafts.length}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs font-medium text-muted-foreground">Content type count</p>
+            <p className="text-xs font-medium text-muted-foreground">Content types</p>
             <p className="text-2xl font-semibold mt-1">{contentTypeCount}</p>
           </CardContent>
         </Card>
@@ -930,15 +1147,8 @@ export default function Drafts() {
         ))}
       </div>
 
-      <div className="rounded-md border border-border bg-muted/30 px-4 py-3">
-        <p className="text-sm font-medium">Memory impact</p>
-        <p className="text-xs text-muted-foreground mt-1">
-          Approving teaches AI what works. Rejecting teaches AI what to avoid.
-        </p>
-      </div>
-
       <div className="rounded-md border border-border bg-card px-4 py-3">
-        <p className="text-sm font-medium">Brand Setup → Campaign Planner / Marketing Calendar → Review → Publish Queue → AI Memory</p>
+        <p className="text-sm font-medium">Review → Publish Queue → AI Memory</p>
         <p className="text-xs text-muted-foreground mt-1">
           Approval moves content to the Publish Queue. It is not posted until a publish, webhook, or manual action happens.
         </p>
@@ -1254,7 +1464,13 @@ export default function Drafts() {
           {artworkPost && (
             <div className="space-y-4 py-2">
               <div className="aspect-square overflow-hidden rounded-md border bg-muted">
-                <DraftImagePreview post={artworkPost} large />
+                <ArtworkLayerPreview
+                  post={artworkPost}
+                  headline={artworkHeadline}
+                  subline={artworkSubline}
+                  logoEnabled={artworkLogoEnabled}
+                  frameColor={artworkFrameColorValue}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Headline</Label>
@@ -1264,10 +1480,26 @@ export default function Drafts() {
                 <Label>Subline</Label>
                 <Input value={artworkSubline} onChange={(event) => setArtworkSubline(event.target.value)} placeholder="Short supporting line" />
               </div>
+              <div className="space-y-1.5">
+                <Label>Frame color</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="color"
+                    value={asHexColor(artworkFrameColorValue, artworkFrameColor(artworkPost))}
+                    onChange={(event) => setArtworkFrameColorValue(event.target.value)}
+                    className="h-10 w-14 p-1"
+                  />
+                  <Input
+                    value={artworkFrameColorValue}
+                    onChange={(event) => setArtworkFrameColorValue(event.target.value)}
+                    className="font-mono text-sm"
+                  />
+                </div>
+              </div>
               <label className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm">
                 <span>
                   <span className="font-medium">Show logo when available</span>
-                  <span className="block text-xs text-muted-foreground">Saved as an artwork layer for the next editor pass.</span>
+                  <span className="block text-xs text-muted-foreground">Uses the logo URL saved with this draft when available.</span>
                 </span>
                 <input
                   type="checkbox"
@@ -1287,7 +1519,7 @@ export default function Drafts() {
           <DialogFooter>
             <Button variant="ghost" onClick={() => setArtworkPost(null)}>Cancel</Button>
             <Button onClick={handleSaveArtwork} disabled={isArtworkSaving}>
-              {isArtworkSaving ? "Saving…" : "Save Artwork"}
+              {isArtworkSaving ? "Rendering…" : "Save Final Artwork"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1393,6 +1625,56 @@ function DraftImagePreview({ post, large = false }: { post: Post; large?: boolea
           {prompt}
         </p>
       )}
+    </div>
+  );
+}
+
+function ArtworkLayerPreview({
+  post,
+  headline,
+  subline,
+  logoEnabled,
+  frameColor,
+}: {
+  post: Post;
+  headline: string;
+  subline: string;
+  logoEnabled: boolean;
+  frameColor: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const imageUrl = artworkBaseImageUrl(post);
+  const logoUrl = artworkLogoUrl(post);
+  const brandName = artworkBrandName(post);
+  const panelColor = artworkPanelColor(post);
+
+  return (
+    <div className="relative h-full w-full overflow-hidden bg-muted">
+      {imageUrl && !failed ? (
+        <img src={imageUrl} alt="" className="h-full w-full object-cover" onError={() => setFailed(true)} />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
+          No background image available
+        </div>
+      )}
+      <div className="absolute inset-0 bg-black/20" />
+      <div
+        className="absolute inset-4 rounded-md border-4"
+        style={{ borderColor: asHexColor(frameColor, artworkFrameColor(post)) }}
+      />
+      {logoEnabled && (logoUrl || brandName) && (
+        <div className="absolute left-7 top-7 flex h-12 max-w-[45%] items-center">
+          {logoUrl ? (
+            <img src={logoUrl} alt="" className="max-h-full max-w-full object-contain" />
+          ) : (
+            <span className="truncate text-sm font-semibold text-white drop-shadow">{brandName}</span>
+          )}
+        </div>
+      )}
+      <div className="absolute inset-x-7 bottom-7 rounded-md px-5 py-4 text-white" style={{ backgroundColor: panelColor }}>
+        <p className="line-clamp-2 text-2xl font-bold leading-tight">{headline || "Headline"}</p>
+        <p className="mt-2 line-clamp-3 text-sm opacity-90">{subline || "Subline"}</p>
+      </div>
     </div>
   );
 }

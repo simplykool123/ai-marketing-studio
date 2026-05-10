@@ -212,7 +212,7 @@ export default function MarketingCalendar() {
         </div>
         <Button asChild variant="outline">
           <Link href={`/clients/${clientId}/drafts?tab=drafts`}>
-            Open Review
+            Review drafts
             <ArrowRight className="w-4 h-4 ml-2" />
           </Link>
         </Button>
@@ -240,7 +240,7 @@ export default function MarketingCalendar() {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-lg">Upcoming Occasions</CardTitle>
+          <CardTitle className="text-lg">Upcoming occasions</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           {upcoming.map((occasion) => {
@@ -284,7 +284,7 @@ export default function MarketingCalendar() {
                   ) : (
                     <>
                       <Sparkles className="w-4 h-4 mr-2" />
-                      Generate Drafts
+                      Create drafts
                     </>
                   )}
                 </Button>

@@ -268,7 +268,7 @@ export default function PostingQueue() {
             </button>
           </div>
         )}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Publish Queue</h1>
             <p className="text-muted-foreground mt-1">Approved posts wait here before publishing, exporting, or marking as posted.</p>
@@ -298,7 +298,7 @@ export default function PostingQueue() {
                 <ListOrdered className="w-6 h-6 text-primary" />
               </div>
               <p className="font-medium">Queue is empty</p>
-              <p className="text-sm text-muted-foreground mt-1">Approve drafts to add them to the queue.</p>
+              <p className="text-sm text-muted-foreground mt-1">Approve drafts in Review to add them here.</p>
             </CardContent>
           </Card>
         ) : (
@@ -371,7 +371,7 @@ export default function PostingQueue() {
                       </div>
                     </div>
 
-                    <div className="flex gap-1.5 shrink-0 flex-wrap justify-end">
+                    <div className="flex gap-1.5 shrink-0 flex-wrap justify-end max-w-[220px]">
                       {canAct && (
                         <>
                           {(noAccountFailure || !hasMatchingAccount) && (
@@ -408,7 +408,7 @@ export default function PostingQueue() {
                             {markPostedMutation.isPending && markPostedMutation.variables === post.id
                               ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
                               : <Send className="w-3.5 h-3.5 mr-1" />}
-                            Mark as posted manually
+                            Mark posted
                           </Button>
 
                           <DropdownMenu>

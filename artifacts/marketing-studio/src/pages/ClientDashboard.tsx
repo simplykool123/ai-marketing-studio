@@ -353,7 +353,7 @@ export default function ClientDashboard() {
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
-          <p className="text-muted-foreground mt-1">Dashboard for {client.name}</p>
+          <p className="text-muted-foreground mt-1">What needs attention for {client.name}.</p>
         </div>
         <Link href={`/clients/${clientId}/create`}>
           <Button variant="outline" className="gap-2">
@@ -400,7 +400,7 @@ export default function ClientDashboard() {
               {dashboard.pendingApprovals + dashboard.draftCount > 0 ? "Drafts are waiting" : "No drafts waiting"}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Campaign Planner → Review → approved content moves to the Publish Queue.
+              Approve ready drafts or reject weak ones.
             </p>
           </CardContent>
         </Card>
@@ -415,7 +415,7 @@ export default function ClientDashboard() {
                   : "No destination connected"}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Publish Queue → social account, webhook, or manual action → AI Memory.
+              Approved posts wait in the Publish Queue.
             </p>
           </CardContent>
         </Card>
@@ -607,9 +607,9 @@ export default function ClientDashboard() {
       </div>
 
       <div className="rounded-md border bg-card px-4 py-3">
-        <p className="text-sm font-medium">Campaign Planner → Review → Publish Queue → AI Memory</p>
+        <p className="text-sm font-medium">Main workflow</p>
         <p className="text-xs text-muted-foreground mt-1">
-          Plan a campaign, review drafts, publish or mark complete, then keep memory improving.
+          Brand Setup → Campaign Planner / Marketing Calendar → Review → Publish Queue.
         </p>
       </div>
 
@@ -629,7 +629,7 @@ export default function ClientDashboard() {
           <CardContent className="pt-0 pb-3">
             {dashboard.upcomingPosts.length === 0 ? (
               <div className="text-sm text-muted-foreground">
-                No upcoming scheduled posts.
+                No scheduled posts yet. Approved posts with dates will appear here.
               </div>
             ) : (
               <div className="space-y-1.5">
@@ -684,7 +684,7 @@ export default function ClientDashboard() {
           <CardContent className="pt-0 pb-3">
             {!dashboard.activeStoryline ? (
               <div className="text-sm text-muted-foreground">
-                No active storyline.{" "}
+                No active storyline yet.{" "}
                 <Link href={`/clients/${clientId}/storylines`} className="text-primary hover:underline text-sm">
                   Create one
                 </Link>
@@ -721,7 +721,7 @@ export default function ClientDashboard() {
         {activityItems.length === 0 ? (
           <Card className="border-dashed">
             <CardContent className="py-8 text-center text-muted-foreground">
-              No posts yet. Start by generating some content!
+              No posts yet. Create a draft to start the workflow.
             </CardContent>
           </Card>
         ) : (

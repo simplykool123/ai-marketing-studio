@@ -526,7 +526,7 @@ export default function CampaignGenerator() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <Flag className="w-6 h-6 text-primary" /> Campaign Generator
+          <Flag className="w-6 h-6 text-primary" /> Campaign Planner
         </h1>
         <p className="text-muted-foreground text-sm mt-1">
           Generate a full campaign of draft posts, images, blogs, and ideas for Review.
@@ -647,7 +647,7 @@ export default function CampaignGenerator() {
             {loading ? (
               <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Generating campaign…</>
             ) : (
-              <><Sparkles className="w-4 h-4 mr-2" /> Generate Full Campaign</>
+              <><Sparkles className="w-4 h-4 mr-2" /> Generate campaign drafts</>
             )}
           </Button>
         </CardContent>
@@ -699,14 +699,14 @@ export default function CampaignGenerator() {
             <CardContent className="py-4">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
                 <div>
-                  <p className="text-sm font-semibold">Approval-ready drafts</p>
+                  <p className="text-sm font-semibold">Drafts ready for Review</p>
                   <p className="text-xs text-muted-foreground">
                     Saved to posts under campaign {generatedCampaignId?.slice(0, 8) ?? ""}
                   </p>
                 </div>
                 <Link href={`/clients/${clientId}/drafts${generatedCampaignId ? `?campaignId=${generatedCampaignId}` : ""}`}>
                   <Button size="sm">
-                    <ExternalLink className="w-4 h-4 mr-2" /> Review in Drafts
+                    <ExternalLink className="w-4 h-4 mr-2" /> Open Review
                   </Button>
                 </Link>
               </div>
