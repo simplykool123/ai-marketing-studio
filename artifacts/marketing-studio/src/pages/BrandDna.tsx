@@ -69,14 +69,17 @@ type WebsiteAnalysis = {
 
 type WebsiteImageCandidate = {
   url: string;
+  previewUrl?: string;
   alt: string;
   sourcePage: string;
   reason: string;
+  contentType?: string;
 };
 
 type WebsiteColorCandidate = {
   hex: string;
   count: number;
+  score?: number;
 };
 
 type WebsiteAnalysisResponse = {
@@ -87,7 +90,10 @@ type WebsiteAnalysisResponse = {
   logoCandidates?: WebsiteImageCandidate[];
   imageCandidates?: WebsiteImageCandidate[];
   colors?: WebsiteColorCandidate[];
+  visibleColors?: WebsiteColorCandidate[];
+  cssColors?: WebsiteColorCandidate[];
   palette?: { primary?: string; secondary?: string; accent?: string };
+  visualExtraction?: { screenshotCaptured?: boolean; note?: string };
   fontFamilies?: string[];
   warnings?: string[];
   cssFetched?: number;
@@ -148,6 +154,79 @@ async function getUploadErrorMessage(res: Response): Promise<string> {
 async function getJsonErrorMessage(res: Response): Promise<string> {
   const data = await res.json().catch(() => null) as { error?: string } | null;
   return data?.error ?? `Request failed with status ${res.status}`;
+}
+
+function remotePreviewSrc(image?: WebsiteImageCandidate | null): string {
+  if (!image?.url) return "";
+  return image.previewUrl || `/api/brand-assets/proxy-image?url=${encodeURIComponent(image.url)}`;
+}
+
+function RemotePreviewImage({
+  src,
+  token,
+  alt,
+  className,
+  fallbackClassName,
+}: {
+  src: string;
+  token?: string | null;
+  alt: string;
+  className: string;
+  fallbackClassName?: string;
+}) {
+  const [resolvedSrc, setResolvedSrc] = useState("");
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl: string | null = null;
+    setResolvedSrc("");
+    setFailed(false);
+    if (!src) {
+      setFailed(true);
+      return () => {};
+    }
+    if (!src.startsWith("/api/")) {
+      setResolvedSrc(src);
+      return () => {};
+    }
+    fetch(src, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Preview unavailable");
+        const blob = await res.blob();
+        objectUrl = URL.createObjectURL(blob);
+        if (active) setResolvedSrc(objectUrl);
+      })
+      .catch(() => {
+        if (active) setFailed(true);
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src, token]);
+
+  if (failed) {
+    return (
+      <div className={cn("flex h-full w-full flex-col items-center justify-center gap-1 bg-muted text-center text-[10px] text-muted-foreground", fallbackClassName)}>
+        <ImageIcon className="h-4 w-4" />
+        <span>Preview unavailable</span>
+      </div>
+    );
+  }
+
+  if (!resolvedSrc) {
+    return <div className={cn("h-full w-full animate-pulse bg-muted", fallbackClassName)} />;
+  }
+
+  return (
+    <img
+      src={resolvedSrc}
+      alt={alt}
+      className={className}
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 export default function BrandDna() {
@@ -213,14 +292,39 @@ export default function BrandDna() {
 
   const onSubmit = (data: BrandDnaFormValues) => {
     if (!clientId) return;
+    const payload: BrandDnaFormValues = {
+      ...data,
+      brandName: data.brandName?.trim() || client?.name || "Brand",
+      voiceTone: data.voiceTone || "",
+      targetAudience: data.targetAudience || "",
+      industry: data.industry || "",
+      brandValues: data.brandValues || "",
+      visualStyle: data.visualStyle || "",
+      competitors: data.competitors || "",
+      additionalContext: data.additionalContext || "",
+      primaryColor: data.primaryColor || "",
+      secondaryColor: data.secondaryColor || "",
+      accentColor: data.accentColor || "",
+      fontStyle: data.fontStyle || "",
+      designNotes: data.designNotes || "",
+      contentThemes: data.contentThemes || "",
+      postingCadence: data.postingCadence || "",
+      audiencePersonas: data.audiencePersonas || "",
+      campaignGoals: data.campaignGoals || "",
+    };
     upsertBrandDna.mutate(
-      { clientId, data },
+      { clientId, data: payload },
       {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetBrandDnaQueryKey(clientId) });
+        onSuccess: async () => {
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: getGetBrandDnaQueryKey(clientId) }),
+            queryClient.invalidateQueries({ queryKey: getGetClientQueryKey(clientId) }),
+            queryClient.refetchQueries({ queryKey: getGetBrandDnaQueryKey(clientId) }),
+            queryClient.refetchQueries({ queryKey: getGetClientQueryKey(clientId) }),
+          ]);
           toast({ title: "Brand DNA saved" });
         },
-        onError: () => toast({ title: "Failed to save Brand DNA", variant: "destructive" }),
+        onError: () => toast({ title: "Failed to save Brand DNA", description: "Your changes were not saved. Please try again.", variant: "destructive" }),
       }
     );
   };
@@ -324,7 +428,7 @@ export default function BrandDna() {
     if (!value || value === "Not clear from the page") return;
     const current = form.getValues(field);
     if (replaceFilledFields || !current?.trim()) {
-      form.setValue(field, value, { shouldDirty: true });
+      form.setValue(field, value, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
     }
   };
 
@@ -337,12 +441,15 @@ export default function BrandDna() {
       websiteAnalysis.keywords ? `Keywords: ${websiteAnalysis.keywords}` : null,
     ].filter(Boolean).join("\n");
 
+    if (!form.getValues("brandName")?.trim() && client?.name) {
+      form.setValue("brandName", client.name, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
+    }
     setSuggestedValue("voiceTone", websiteAnalysis.brandTone);
     setSuggestedValue("targetAudience", websiteAnalysis.targetAudience);
     setSuggestedValue("contentThemes", websiteAnalysis.contentPillars);
     setSuggestedValue("visualStyle", websiteAnalysis.visualStyle || websiteAnalysis.colorStyleHints);
     setSuggestedValue("fontStyle", websiteAnalysis.fontStyle || websiteAnalysisResult?.fontFamilies?.join(", ") || "");
-    setSuggestedValue("designNotes", [websiteAnalysis.designNotes, websiteAnalysis.imageStyle || websiteAnalysis.imageStyleNotes].filter(Boolean).join("\n"));
+    setSuggestedValue("designNotes", [websiteAnalysis.designNotes, websiteAnalysis.imageStyle || websiteAnalysis.imageStyleNotes, websiteAnalysis.colorStyleHints].filter(Boolean).join("\n"));
     setSuggestedValue("primaryColor", palette?.primary || "");
     setSuggestedValue("secondaryColor", palette?.secondary || "");
     setSuggestedValue("accentColor", palette?.accent || "");
@@ -359,7 +466,7 @@ export default function BrandDna() {
       } : null,
       websiteAnalysisResult?.colors?.length ? {
         key: "Image Style Memory / Website palette",
-        value: `Extracted palette: ${websiteAnalysisResult.colors.map((color) => `${color.hex} (${color.count})`).join(", ")}`,
+        value: `Extracted palette: ${websiteAnalysisResult.colors.map((color) => `${color.hex} (${color.count})`).join(", ")}. ${websiteAnalysisResult.visualExtraction?.note || ""}`,
       } : null,
       websiteAnalysis.keywords ? {
         key: "SEO Memory / Website keywords",
@@ -377,8 +484,8 @@ export default function BrandDna() {
     }).catch(() => null)));
 
     toast({
-      title: "Suggestions applied",
-      description: replaceFilledFields ? "Brand fields were updated. Review and save Brand DNA." : "Empty Brand Setup fields were filled. Existing filled fields were preserved.",
+      title: "Suggestions applied. Click Save Brand DNA to keep changes.",
+      description: replaceFilledFields ? "Brand fields were updated from the importer." : "Empty Brand Setup fields were filled. Existing filled fields were preserved.",
     });
   };
 
@@ -390,6 +497,7 @@ export default function BrandDna() {
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetClientQueryKey(clientId) });
+          queryClient.refetchQueries({ queryKey: getGetClientQueryKey(clientId) });
           toast({ title: "Extracted logo applied", description: "The logo URL was saved as the client logo reference." });
           setIsUsingExtractedLogo(false);
         },
@@ -411,6 +519,22 @@ export default function BrandDna() {
   }
 
   const logoUrl = client?.logoUrl;
+  const logoDisplaySrc = logoUrl
+    ? (/^https?:\/\//i.test(logoUrl) ? `/api/brand-assets/proxy-image?url=${encodeURIComponent(logoUrl)}` : logoUrl)
+    : "";
+  const extractedLogo = websiteAnalysisResult?.logoCandidates?.[0] ?? null;
+  const recommendedPalette = [
+    { label: "Primary", hex: websiteAnalysisResult?.palette?.primary },
+    { label: "Secondary", hex: websiteAnalysisResult?.palette?.secondary },
+    { label: "Accent", hex: websiteAnalysisResult?.palette?.accent },
+  ].filter((color): color is { label: string; hex: string } => Boolean(color.hex));
+  const moreDetectedColors = (websiteAnalysisResult?.colors ?? []).filter(
+    (color) => !recommendedPalette.some((recommended) => recommended.hex.toLowerCase() === color.hex.toLowerCase()),
+  );
+  const cssFallbackColors = (websiteAnalysisResult?.cssColors ?? []).filter(
+    (color) => !recommendedPalette.some((recommended) => recommended.hex.toLowerCase() === color.hex.toLowerCase()),
+  );
+  const hasVisiblePalette = (websiteAnalysisResult?.visibleColors?.length ?? 0) > 0;
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -461,6 +585,9 @@ export default function BrandDna() {
                   <p className="text-xs text-muted-foreground">
                     Source: {websiteAnalysisResult?.finalUrl || analysisSourceUrl}. Review before applying; importer analyzed up to five same-domain pages.
                   </p>
+                  {websiteAnalysisResult?.visualExtraction?.note && (
+                    <p className="mt-1 text-xs text-muted-foreground">{websiteAnalysisResult.visualExtraction.note}</p>
+                  )}
                 </div>
                 <label className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Checkbox checked={replaceFilledFields} onCheckedChange={(checked) => setReplaceFilledFields(checked === true)} />
@@ -488,47 +615,92 @@ export default function BrandDna() {
                 </div>
               )}
 
-              {(websiteAnalysisResult?.logoCandidates?.length ?? 0) > 0 && (
+              {extractedLogo ? (
                 <div className="rounded-md border bg-muted/25 p-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Extracted logo candidate</p>
-                      <p className="text-xs text-muted-foreground mt-1">{websiteAnalysisResult?.logoCandidates?.[0]?.reason}</p>
+                      <p className="text-xs text-muted-foreground mt-1">{extractedLogo.reason}</p>
                     </div>
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
                       disabled={isUsingExtractedLogo}
-                      onClick={() => websiteAnalysisResult?.logoCandidates?.[0]?.url && handleUseExtractedLogo(websiteAnalysisResult.logoCandidates[0].url)}
+                      onClick={() => handleUseExtractedLogo(extractedLogo.url)}
                     >
                       {isUsingExtractedLogo ? "Applying..." : "Use extracted logo"}
                     </Button>
                   </div>
                   <div className="mt-3 flex items-center gap-3">
-                    <div className="h-16 w-24 rounded-md border bg-white p-2">
-                      <img
-                        src={websiteAnalysisResult?.logoCandidates?.[0]?.url}
-                        alt={websiteAnalysisResult?.logoCandidates?.[0]?.alt || "Extracted logo"}
+                    <div className="h-16 w-24 overflow-hidden rounded-md border bg-white p-2">
+                      <RemotePreviewImage
+                        src={remotePreviewSrc(extractedLogo)}
+                        token={token}
+                        alt={extractedLogo.alt || "Extracted logo"}
                         className="h-full w-full object-contain"
                       />
                     </div>
-                    <p className="min-w-0 truncate text-xs text-muted-foreground">{websiteAnalysisResult?.logoCandidates?.[0]?.url}</p>
+                    <div className="min-w-0">
+                      <p className="truncate text-xs text-muted-foreground">{extractedLogo.url}</p>
+                      <p className="text-[10px] text-muted-foreground">Validated preview from the website source.</p>
+                    </div>
                   </div>
                 </div>
-              )}
+              ) : websiteAnalysisResult ? (
+                <div className="flex items-start gap-2 rounded-md border bg-muted/25 p-3 text-xs text-muted-foreground">
+                  <ImageIcon className="h-4 w-4 shrink-0" />
+                  <span>No usable logo preview was found. If the website blocks logo preview, upload the logo manually.</span>
+                </div>
+              ) : null}
 
-              {(websiteAnalysisResult?.colors?.length ?? 0) > 0 && (
+              {recommendedPalette.length > 0 && (
                 <div className="rounded-md border bg-muted/25 p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Extracted color palette</p>
+                  <div className="flex flex-col gap-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {hasVisiblePalette ? "Visible page palette" : "Recommended brand colors"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {hasVisiblePalette
+                        ? "Palette detected from rendered screenshot and used first when applying suggestions."
+                        : "Ranked from logo, header, primary buttons, hero, and brand CSS signals. Treat as a best match, not a perfect extraction."}
+                    </p>
+                  </div>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {websiteAnalysisResult?.colors?.slice(0, 8).map((color) => (
-                      <div key={color.hex} className="flex items-center gap-2 rounded-md border bg-background px-2 py-1">
+                    {recommendedPalette.map((color) => (
+                      <div key={`${color.label}-${color.hex}`} className="flex items-center gap-2 rounded-md border bg-background px-2 py-1">
                         <span className="h-5 w-5 rounded border" style={{ backgroundColor: color.hex }} />
+                        <span className="text-xs font-medium">{color.label}</span>
                         <span className="font-mono text-xs">{color.hex}</span>
                       </div>
                     ))}
                   </div>
+                  {moreDetectedColors.length > 0 && (
+                    <details className="mt-3 text-xs text-muted-foreground">
+                      <summary className="cursor-pointer">{hasVisiblePalette ? "More visible colors" : "More detected colors"}</summary>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {moreDetectedColors.slice(0, 7).map((color) => (
+                          <div key={color.hex} className="flex items-center gap-2 rounded-md border bg-background px-2 py-1">
+                            <span className="h-4 w-4 rounded border" style={{ backgroundColor: color.hex }} />
+                            <span className="font-mono text-[10px]">{color.hex}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                  {cssFallbackColors.length > 0 && (
+                    <details className="mt-3 text-xs text-muted-foreground">
+                      <summary className="cursor-pointer">CSS palette fallback</summary>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {cssFallbackColors.slice(0, 8).map((color) => (
+                          <div key={`css-${color.hex}`} className="flex items-center gap-2 rounded-md border bg-background px-2 py-1">
+                            <span className="h-4 w-4 rounded border" style={{ backgroundColor: color.hex }} />
+                            <span className="font-mono text-[10px]">{color.hex}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
                 </div>
               )}
 
@@ -536,15 +708,20 @@ export default function BrandDna() {
                 <div className="rounded-md border bg-muted/25 p-3">
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Top image candidates</p>
-                      <p className="text-xs text-muted-foreground">Reference only: remote URL import to Brand Assets is not supported yet.</p>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Hero / brand images</p>
+                      <p className="text-xs text-muted-foreground">Rendered hero, slideshow, and product images are prioritized when available. Reference only: remote URL import to Brand Assets is not supported yet.</p>
                     </div>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
                     {websiteAnalysisResult?.imageCandidates?.slice(0, 4).map((image) => (
                       <div key={image.url} className="overflow-hidden rounded-md border bg-background">
                         <div className="aspect-square bg-muted">
-                          <img src={image.url} alt={image.alt || image.reason} className="h-full w-full object-cover" />
+                          <RemotePreviewImage
+                            src={remotePreviewSrc(image)}
+                            token={token}
+                            alt={image.alt || image.reason}
+                            className="h-full w-full object-cover"
+                          />
                         </div>
                         <div className="p-2">
                           <p className="truncate text-[10px] font-medium">{image.reason}</p>
@@ -610,7 +787,12 @@ export default function BrandDna() {
           <div className="flex items-center gap-6">
             <div className="w-20 h-20 rounded-xl border border-border bg-muted flex items-center justify-center overflow-hidden shrink-0">
               {logoUrl ? (
-                <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
+                <RemotePreviewImage
+                  src={logoDisplaySrc}
+                  token={token}
+                  alt="Logo"
+                  className="h-full w-full object-contain bg-white"
+                />
               ) : (
                 <ImageIcon className="w-8 h-8 text-muted-foreground/40" />
               )}

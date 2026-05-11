@@ -1,4 +1,5 @@
 import { Router } from "express";
+import sharp from "sharp";
 import { db } from "@workspace/db";
 import { brandDnaTable, userSettingsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
@@ -32,14 +33,18 @@ type BrandWebsiteAnalysis = {
 
 type WebsiteImageCandidate = {
   url: string;
+  previewUrl?: string;
   alt: string;
   sourcePage: string;
   reason: string;
+  contentType?: string;
 };
 
 type WebsiteColorCandidate = {
   hex: string;
   count: number;
+  score: number;
+  source?: "css" | "screenshot";
 };
 
 type WebsitePageSnapshot = {
@@ -55,9 +60,27 @@ type WebsiteExtraction = {
   logoCandidates: WebsiteImageCandidate[];
   imageCandidates: WebsiteImageCandidate[];
   colors: WebsiteColorCandidate[];
+  visibleColors: WebsiteColorCandidate[];
+  cssColors: WebsiteColorCandidate[];
   fontFamilies: string[];
   cssFetched: number;
+  rendered?: RenderedWebsiteAnalysis;
 };
+
+type RenderedWebsiteAnalysis = {
+  screenshotCaptured: boolean;
+  screenshotNote: string;
+  colors: WebsiteColorCandidate[];
+  imageCandidates: WebsiteImageCandidate[];
+  logoCandidates: WebsiteImageCandidate[];
+};
+
+const IMAGE_PROXY_PATH = "/api/brand-assets/proxy-image";
+const IMAGE_FETCH_HEADERS = {
+  "user-agent": "AI Marketing Studio Brand Importer/2.0",
+  "accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+};
+const MAX_PROXY_IMAGE_BYTES = 8 * 1024 * 1024;
 
 async function getUserSettings(userId?: string) {
   if (!userId) return null;
@@ -114,6 +137,17 @@ function absoluteUrl(value: string | undefined, base: URL): string | null {
   } catch {
     return null;
   }
+}
+
+function parseSafePublicUrl(raw: unknown): URL {
+  if (typeof raw !== "string" || !raw.trim()) throw new Error("Missing image URL.");
+  const url = new URL(raw);
+  if (!isSafePublicUrl(url)) throw new Error("Only public http and https image URLs are supported.");
+  return url;
+}
+
+function imageProxyUrl(url: string): string {
+  return `${IMAGE_PROXY_PATH}?url=${encodeURIComponent(url)}`;
 }
 
 function getAttr(tag: string, name: string): string {
@@ -301,18 +335,56 @@ function normalizeHexColor(value: string): string | null {
   return null;
 }
 
-function colorIsNeutral(hex: string): boolean {
+function colorChannels(hex: string): { r: number; g: number; b: number } {
   const n = Number.parseInt(hex.slice(1), 16);
-  const r = (n >> 16) & 255;
-  const g = (n >> 8) & 255;
-  const b = n & 255;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  return max > 238 || max < 24 || max - min < 12;
+  return {
+    r: (n >> 16) & 255,
+    g: (n >> 8) & 255,
+    b: n & 255,
+  };
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  return `#${[r, g, b].map((part) => Math.max(0, Math.min(255, Math.round(part))).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function colorMetrics(hex: string): { r: number; g: number; b: number; max: number; min: number; lightness: number; saturation: number; hue: number } {
+  const { r, g, b } = colorChannels(hex);
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const delta = max - min;
+  const lightness = (max + min) / 2;
+  const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1));
+  let hue = 0;
+  if (delta !== 0) {
+    if (max === rn) hue = ((gn - bn) / delta) % 6;
+    else if (max === gn) hue = (bn - rn) / delta + 2;
+    else hue = (rn - gn) / delta + 4;
+    hue *= 60;
+    if (hue < 0) hue += 360;
+  }
+  return { r, g, b, max: Math.round(max * 255), min: Math.round(min * 255), lightness, saturation, hue };
+}
+
+function colorIsNeutral(hex: string): boolean {
+  const metrics = colorMetrics(hex);
+  return metrics.max > 238 || metrics.max < 24 || metrics.max - metrics.min < 14;
+}
+
+function isVeryGenericPixel(hex: string): boolean {
+  const metrics = colorMetrics(hex);
+  return (metrics.lightness > 0.97 && metrics.saturation < 0.08) || (metrics.lightness < 0.04 && metrics.saturation < 0.08);
 }
 
 function extractColors(cssText: string): WebsiteColorCandidate[] {
-  const counts = new Map<string, number>();
+  const counts = new Map<string, { count: number; score: number }>();
+  const socialColors = new Set(["#1877f2", "#1da1f2", "#000000", "#e4405f", "#ff0000", "#bd081c", "#0077b5"]);
+  const utilityContext = /elementor|woocommerce|swiper|slick|jetpack|cookie|captcha|recaptcha|facebook|twitter|linkedin|instagram|youtube|social|--tw-/i;
+  const brandContext = /logo|brand|primary|secondary|accent|theme|header|navbar|nav-|button|btn|cta|hero|banner|menu|root|:root|--/i;
+  const strongContext = /logo|brand|primary|accent|button|btn|cta|hero|header|navbar|:root|--/i;
   const patterns = [
     /#(?:[0-9a-f]{3}|[0-9a-f]{6})\b/gi,
     /rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+(?:\s*,\s*[\d.]+)?\s*\)/gi,
@@ -322,12 +394,27 @@ function extractColors(cssText: string): WebsiteColorCandidate[] {
     for (const match of cssText.matchAll(pattern)) {
       const hex = normalizeHexColor(match[0]);
       if (!hex) continue;
-      counts.set(hex, (counts.get(hex) ?? 0) + 1);
+      const index = match.index ?? 0;
+      const context = cssText.slice(Math.max(0, index - 180), Math.min(cssText.length, index + 180));
+      const neutral = colorIsNeutral(hex);
+      let score = 1;
+      if (brandContext.test(context)) score += 4;
+      if (strongContext.test(context)) score += 6;
+      if (/--[\w-]*(brand|primary|secondary|accent|theme|button|cta|header|nav)[\w-]*\s*:/i.test(context)) score += 14;
+      if (/<svg|fill=|stroke=|logo/i.test(context)) score += 10;
+      if (/background(?:-color)?\s*:[^;}]*$/i.test(context.slice(0, 90))) score += 3;
+      if (utilityContext.test(context)) score -= 8;
+      if (neutral) score -= 10;
+      if (socialColors.has(hex)) score -= 8;
+      const current = counts.get(hex) ?? { count: 0, score: 0 };
+      counts.set(hex, { count: current.count + 1, score: current.score + Math.max(0.1, score) });
     }
   }
-  const entries = [...counts.entries()].map(([hex, count]) => ({ hex, count }));
+  const entries = [...counts.entries()].map(([hex, value]) => ({ hex, count: value.count, score: value.score, source: "css" as const }));
   const nonNeutral = entries.filter((item) => !colorIsNeutral(item.hex));
-  return (nonNeutral.length ? nonNeutral : entries).sort((a, b) => b.count - a.count).slice(0, 8);
+  return (nonNeutral.length ? nonNeutral : entries)
+    .sort((a, b) => (b.score - a.score) || (b.count - a.count))
+    .slice(0, 10);
 }
 
 function extractFontFamilies(cssText: string): string[] {
@@ -357,7 +444,7 @@ async function fetchCss(urls: string[], warnings: string[]): Promise<{ cssText: 
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(cssUrl, { signal: controller.signal, redirect: "follow" }).finally(() => clearTimeout(timeout));
+      const res = await fetch(cssUrl, { signal: controller.signal, redirect: "follow", headers: { "user-agent": IMAGE_FETCH_HEADERS["user-agent"], "accept": "text/css,*/*;q=0.8" } }).finally(() => clearTimeout(timeout));
       if (res.ok && (res.headers.get("content-type") ?? "").includes("text/css")) {
         chunks.push(await res.text());
         fetched++;
@@ -367,6 +454,266 @@ async function fetchCss(urls: string[], warnings: string[]): Promise<{ cssText: 
     }
   }
   return { cssText: chunks.join("\n"), fetched };
+}
+
+async function validateImageUrl(url: string): Promise<{ ok: true; contentType: string } | { ok: false; warning: string }> {
+  const parsed = parseSafePublicUrl(url);
+  const tryFetch = async (method: "HEAD" | "GET") => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    try {
+      return await fetch(parsed, {
+        method,
+        redirect: "follow",
+        signal: controller.signal,
+        headers: method === "GET" ? { ...IMAGE_FETCH_HEADERS, "range": "bytes=0-2047" } : IMAGE_FETCH_HEADERS,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  try {
+    let response = await tryFetch("HEAD");
+    if (!response.ok || !(response.headers.get("content-type") ?? "").toLowerCase().startsWith("image/")) {
+      response = await tryFetch("GET");
+    }
+    const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+    const contentLength = Number(response.headers.get("content-length") ?? 0);
+    if (!response.ok) return { ok: false, warning: `Image could not be read (HTTP ${response.status}).` };
+    if (!contentType.startsWith("image/")) return { ok: false, warning: "URL did not return an image." };
+    if (contentLength > MAX_PROXY_IMAGE_BYTES) return { ok: false, warning: "Image was too large to preview safely." };
+    return { ok: true, contentType };
+  } catch {
+    return { ok: false, warning: "Website blocks preview for this image." };
+  }
+}
+
+async function validateImageCandidates(
+  candidates: WebsiteImageCandidate[],
+  limit: number,
+  warnings: string[],
+  label: "logo" | "image",
+): Promise<WebsiteImageCandidate[]> {
+  const valid: WebsiteImageCandidate[] = [];
+  for (const candidate of candidates) {
+    if (valid.length >= limit) break;
+    const validation = await validateImageUrl(candidate.url);
+    if (validation.ok) {
+      valid.push({
+        ...candidate,
+        contentType: validation.contentType,
+        previewUrl: imageProxyUrl(candidate.url),
+      });
+    }
+  }
+  if (!valid.length && candidates.length) {
+    warnings.push(
+      label === "logo"
+        ? "Logo found but website blocks preview. Upload manually or save via import later."
+        : "Some website images were found but could not be previewed safely.",
+    );
+  }
+  return valid;
+}
+
+async function fetchLogoColorText(candidates: WebsiteImageCandidate[], warnings: string[]): Promise<string> {
+  const chunks: string[] = [];
+  for (const candidate of candidates.slice(0, 2)) {
+    if (!/\.svg(?:$|\?)/i.test(candidate.url)) continue;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const response = await fetch(candidate.url, {
+        signal: controller.signal,
+        redirect: "follow",
+        headers: { "user-agent": IMAGE_FETCH_HEADERS["user-agent"], "accept": "image/svg+xml,text/xml,*/*;q=0.8" },
+      }).finally(() => clearTimeout(timeout));
+      const contentType = response.headers.get("content-type") ?? "";
+      if (response.ok && (contentType.includes("svg") || /\.svg(?:$|\?)/i.test(candidate.url))) {
+        chunks.push(`/* logo svg ${candidate.url} */\n${await response.text()}`);
+      }
+    } catch {
+      warnings.push(`Could not read logo SVG colors from ${candidate.url}.`);
+    }
+  }
+  return chunks.join("\n");
+}
+
+function selectVisiblePalette(colors: WebsiteColorCandidate[]): WebsiteColorCandidate[] {
+  const sorted = colors
+    .filter((color) => !isVeryGenericPixel(color.hex))
+    .sort((a, b) => (b.score - a.score) || (b.count - a.count));
+  const selected: WebsiteColorCandidate[] = [];
+  const isWarm = (hex: string) => {
+    const metrics = colorMetrics(hex);
+    return metrics.hue >= 15 && metrics.hue <= 65 && metrics.saturation > 0.08;
+  };
+  const buckets = [
+    (hex: string) => isWarm(hex) && colorMetrics(hex).lightness < 0.38,
+    (hex: string) => isWarm(hex) && colorMetrics(hex).lightness >= 0.74,
+    (hex: string) => isWarm(hex) && colorMetrics(hex).lightness >= 0.38 && colorMetrics(hex).lightness < 0.74,
+    (hex: string) => {
+      const metrics = colorMetrics(hex);
+      return metrics.lightness < 0.32 && metrics.saturation < 0.16;
+    },
+  ];
+  for (const bucket of buckets) {
+    const found = sorted.find((color) => bucket(color.hex) && !selected.some((item) => item.hex === color.hex));
+    if (found) selected.push(found);
+  }
+  for (const color of sorted) {
+    if (selected.length >= 6) break;
+    const tooClose = selected.some((item) => {
+      const a = colorChannels(item.hex);
+      const b = colorChannels(color.hex);
+      return Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b) < 58;
+    });
+    if (!tooClose) selected.push(color);
+  }
+  return selected.slice(0, 6);
+}
+
+async function extractScreenshotColors(screenshot: Buffer): Promise<WebsiteColorCandidate[]> {
+  const { data, info } = await sharp(screenshot)
+    .resize({ width: 180, withoutEnlargement: true })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const counts = new Map<string, { count: number; score: number }>();
+  const channels = info.channels;
+  for (let y = 0; y < info.height; y += 2) {
+    for (let x = 0; x < info.width; x += 2) {
+      const index = (y * info.width + x) * channels;
+      const r = data[index] ?? 0;
+      const g = data[index + 1] ?? 0;
+      const b = data[index + 2] ?? 0;
+      const hex = rgbToHex(Math.round(r / 8) * 8, Math.round(g / 8) * 8, Math.round(b / 8) * 8);
+      if (isVeryGenericPixel(hex)) continue;
+      const metrics = colorMetrics(hex);
+      let regionWeight = 1;
+      const yRatio = y / info.height;
+      if (yRatio < 0.12) regionWeight += 3;
+      else if (yRatio < 0.58) regionWeight += 2.5;
+      else if (yRatio > 0.86) regionWeight += 1.5;
+      const warmth = metrics.hue >= 15 && metrics.hue <= 65 ? 1.6 : 1;
+      const saturation = Math.max(0.5, metrics.saturation * 2.2);
+      const current = counts.get(hex) ?? { count: 0, score: 0 };
+      counts.set(hex, { count: current.count + 1, score: current.score + regionWeight * warmth * saturation });
+    }
+  }
+  return selectVisiblePalette([...counts.entries()].map(([hex, value]) => ({
+    hex,
+    count: value.count,
+    score: value.score,
+    source: "screenshot" as const,
+  })));
+}
+
+type OptionalPlaywrightBrowser = {
+  newPage(options?: unknown): Promise<{
+    goto(url: string, options?: unknown): Promise<unknown>;
+    waitForLoadState(state: string, options?: unknown): Promise<unknown>;
+    waitForTimeout(ms: number): Promise<unknown>;
+    screenshot(options?: unknown): Promise<Buffer>;
+    evaluate<T>(fn: () => T): Promise<T>;
+    close(): Promise<void>;
+  }>;
+  close(): Promise<void>;
+};
+
+async function loadPlaywrightChromium(): Promise<{ launch(options?: unknown): Promise<OptionalPlaywrightBrowser> } | null> {
+  try {
+    const importer = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<unknown>;
+    const mod = await importer("playwright") as { chromium?: { launch(options?: unknown): Promise<OptionalPlaywrightBrowser> } };
+    return mod.chromium ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function captureRenderedWebsite(url: URL, warnings: string[]): Promise<RenderedWebsiteAnalysis | null> {
+  const chromium = await loadPlaywrightChromium();
+  if (!chromium) {
+    warnings.push("Rendered screenshot analysis skipped because Playwright is not installed in this runtime. Falling back to HTML/CSS extraction.");
+    return null;
+  }
+  let browser: OptionalPlaywrightBrowser | null = null;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1600 }, deviceScaleFactor: 1 });
+    await page.goto(url.toString(), { waitUntil: "domcontentloaded", timeout: 12000 });
+    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => null);
+    await page.waitForTimeout(800);
+    const rendered = await page.evaluate<{
+      imageCandidates: WebsiteImageCandidate[];
+      logoCandidates: WebsiteImageCandidate[];
+    }>(() => {
+      const w = globalThis as unknown as { location: { href: string }; getComputedStyle(el: unknown): { backgroundImage: string } };
+      const d = (globalThis as unknown as { document: { querySelectorAll(selector: string): unknown[] } }).document;
+      const absolute = (value: string | null | undefined) => {
+        if (!value || value.startsWith("data:") || value.startsWith("blob:")) return "";
+        try { return new URL(value, w.location.href).toString(); } catch { return ""; }
+      };
+      const visible = (rect: { width: number; height: number; bottom: number; top: number }) => rect.width >= 80 && rect.height >= 40 && rect.bottom > 0 && rect.top < 2200;
+      const imageCandidates: WebsiteImageCandidate[] = [];
+      const logoCandidates: WebsiteImageCandidate[] = [];
+      const add = (list: WebsiteImageCandidate[], item: WebsiteImageCandidate) => {
+        if (item.url && !list.some((existing) => existing.url === item.url)) list.push(item);
+      };
+      d.querySelectorAll("img").forEach((node) => {
+        const img = node as {
+          getBoundingClientRect(): { width: number; height: number; bottom: number; top: number };
+          currentSrc?: string;
+          src?: string;
+          id?: string;
+          className?: string;
+          getAttribute(name: string): string | null;
+        };
+        const rect = img.getBoundingClientRect();
+        const url = absolute(img.currentSrc || img.src);
+        if (!url || !visible(rect)) return;
+        const alt = img.getAttribute("alt") || "";
+        const signal = `${alt} ${img.id} ${img.className} ${url}`.toLowerCase();
+        if (rect.top < 220 && (signal.includes("logo") || rect.width <= 360)) {
+          add(logoCandidates, { url, alt, sourcePage: w.location.href, reason: "rendered header logo" });
+        }
+        if (rect.width >= 260 && rect.height >= 150) {
+          add(imageCandidates, { url, alt, sourcePage: w.location.href, reason: rect.top < 850 ? "rendered hero image" : "rendered brand image" });
+        }
+      });
+      d.querySelectorAll("header, nav, main, section, div, a").forEach((node) => {
+        const el = node as {
+          getBoundingClientRect(): { width: number; height: number; bottom: number; top: number };
+          getAttribute(name: string): string | null;
+        };
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 280 || rect.height < 150 || rect.top > 1800 || rect.bottom < 0) return;
+        const bg = w.getComputedStyle(el).backgroundImage;
+        const match = bg.match(/url\(["']?([^"')]+)["']?\)/);
+        const url = absolute(match?.[1]);
+        if (url) add(imageCandidates, { url, alt: el.getAttribute("aria-label") || "", sourcePage: w.location.href, reason: rect.top < 850 ? "rendered hero background" : "rendered section background" });
+      });
+      return {
+        imageCandidates: imageCandidates.slice(0, 10),
+        logoCandidates: logoCandidates.slice(0, 4),
+      };
+    });
+    const screenshot = await page.screenshot({ type: "png", fullPage: false });
+    const colors = await extractScreenshotColors(screenshot);
+    return {
+      screenshotCaptured: true,
+      screenshotNote: "Palette detected from rendered screenshot at 1440px desktop width.",
+      colors,
+      imageCandidates: rendered.imageCandidates,
+      logoCandidates: rendered.logoCandidates,
+    };
+  } catch (err) {
+    warnings.push(`Rendered screenshot analysis failed; using HTML/CSS fallback. ${safeErrorMessage(err)}`);
+    return null;
+  } finally {
+    await browser?.close().catch(() => null);
+  }
 }
 
 async function crawlWebsite(startUrl: URL): Promise<WebsiteExtraction> {
@@ -392,6 +739,9 @@ async function crawlWebsite(startUrl: URL): Promise<WebsiteExtraction> {
 
   const logoCandidates: WebsiteImageCandidate[] = [];
   const imageCandidates: WebsiteImageCandidate[] = [];
+  const rendered = await captureRenderedWebsite(homeUrl, warnings);
+  rendered?.logoCandidates.forEach((candidate) => addImageCandidate(logoCandidates, candidate));
+  rendered?.imageCandidates.forEach((candidate) => addImageCandidate(imageCandidates, candidate));
   for (const page of pages) {
     const extracted = extractImagesFromHtml(page.html, new URL(page.url), "");
     extracted.logoCandidates.forEach((candidate) => addImageCandidate(logoCandidates, candidate));
@@ -400,22 +750,31 @@ async function crawlWebsite(startUrl: URL): Promise<WebsiteExtraction> {
 
   const cssUrls = [...new Set(pages.flatMap((page) => extractStylesheetUrls(page.html, new URL(page.url))))];
   const { cssText, fetched } = await fetchCss(cssUrls, warnings);
+  const logoColorText = await fetchLogoColorText(logoCandidates, warnings);
   const inlineCss = pages.map((page) => page.html).join("\n");
-  const colors = extractColors(`${inlineCss}\n${cssText}`);
+  const cssColors = extractColors(`${logoColorText}\n${inlineCss}\n${cssText}`);
+  const visibleColors = rendered?.colors ?? [];
+  const colors = visibleColors.length ? visibleColors : cssColors;
   const fontFamilies = extractFontFamilies(`${inlineCss}\n${cssText}`);
+  const validLogoCandidates = await validateImageCandidates(logoCandidates, 5, warnings, "logo");
+  const validImageCandidates = await validateImageCandidates(imageCandidates, 8, warnings, "image");
 
   if (fetched === 0 && cssUrls.length) warnings.push("Stylesheets could not be read; colors may be inferred from inline page styles only.");
-  if (!logoCandidates.length) warnings.push("No clear logo candidate was found.");
+  if (!validLogoCandidates.length && !logoCandidates.length) warnings.push("No clear logo candidate was found.");
   if (!colors.length) warnings.push("No strong CSS color palette was found.");
+  if (colors.length < 3) warnings.push("Color confidence is limited; only a partial palette could be detected.");
 
   return {
     pages,
     warnings,
-    logoCandidates: logoCandidates.slice(0, 5),
-    imageCandidates: imageCandidates.slice(0, 8),
+    logoCandidates: validLogoCandidates,
+    imageCandidates: validImageCandidates,
     colors,
+    visibleColors,
+    cssColors,
     fontFamilies,
     cssFetched: fetched,
+    rendered: rendered ?? undefined,
   };
 }
 
@@ -485,6 +844,43 @@ router.put("/clients/:clientId/brand-dna", requireClientRole(EDIT_CONTENT_ROLES)
   }
 });
 
+router.get("/brand-assets/proxy-image", async (req, res): Promise<void> => {
+  try {
+    const url = parseSafePublicUrl(req.query.url);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const response = await fetch(url, {
+      redirect: "follow",
+      signal: controller.signal,
+      headers: IMAGE_FETCH_HEADERS,
+    }).finally(() => clearTimeout(timeout));
+    if (!response.ok) {
+      res.status(502).json({ error: "Image could not be read from the website." });
+      return;
+    }
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().startsWith("image/")) {
+      res.status(415).json({ error: "URL did not return an image." });
+      return;
+    }
+    const contentLength = Number(response.headers.get("content-length") ?? 0);
+    if (contentLength > MAX_PROXY_IMAGE_BYTES) {
+      res.status(413).json({ error: "Image is too large to preview safely." });
+      return;
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > MAX_PROXY_IMAGE_BYTES) {
+      res.status(413).json({ error: "Image is too large to preview safely." });
+      return;
+    }
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.send(buffer);
+  } catch {
+    res.status(400).json({ error: "Could not preview this image URL." });
+  }
+});
+
 router.post("/clients/:clientId/brand-dna/analyze-website", requireClientRole(EDIT_CONTENT_ROLES), async (req: AuthRequest, res): Promise<void> => {
   try {
     const url = normalizeWebsiteUrl((req.body as { websiteUrl?: string }).websiteUrl);
@@ -521,6 +917,8 @@ If something is not detectable, say "Not clear from the page" rather than invent
 Website URL: ${url.toString()}
 Pages analyzed: ${extraction.pages.map((page) => page.url).join(", ")}
 Detected colors: ${extraction.colors.map((color) => `${color.hex} (${color.count})`).join(", ") || "None"}
+Visible screenshot colors: ${extraction.visibleColors.map((color) => color.hex).join(", ") || "Screenshot unavailable"}
+CSS fallback colors: ${extraction.cssColors.map((color) => color.hex).join(", ") || "None"}
 Detected fonts: ${extraction.fontFamilies.join(", ") || "None"}
 Logo candidates: ${extraction.logoCandidates.map((image) => image.url).join(", ") || "None"}
 Image candidates: ${extraction.imageCandidates.slice(0, 4).map((image) => `${image.url} (${image.alt || image.reason})`).join(", ") || "None"}
@@ -541,10 +939,16 @@ ${websiteText}`;
       logoCandidates: extraction.logoCandidates,
       imageCandidates: extraction.imageCandidates,
       colors: extraction.colors,
+      visibleColors: extraction.visibleColors,
+      cssColors: extraction.cssColors,
       palette: {
         primary: palette[0] ?? "",
         secondary: palette[1] ?? "",
         accent: palette[2] ?? "",
+      },
+      visualExtraction: {
+        screenshotCaptured: extraction.rendered?.screenshotCaptured ?? false,
+        note: extraction.rendered?.screenshotNote ?? "HTML/CSS fallback used because rendered screenshot analysis was unavailable.",
       },
       fontFamilies: extraction.fontFamilies,
       warnings: extraction.warnings,

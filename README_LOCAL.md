@@ -150,6 +150,16 @@ This creates all tables:
 
 Open **two terminals**:
 
+### Optional — enable Brand Importer visual screenshot analysis
+
+The Brand Setup website importer can analyze the rendered homepage palette and hero images when Chromium is installed for Playwright. Install the browser once after dependencies are installed:
+
+```bash
+pnpm --filter @workspace/api-server exec playwright install chromium
+```
+
+If Chromium is not installed or a website blocks rendering, the importer still falls back to HTML/CSS extraction and shows a warning in the importer result.
+
 **Terminal 1 — API server:**
 ```bash
 cd artifacts/api-server

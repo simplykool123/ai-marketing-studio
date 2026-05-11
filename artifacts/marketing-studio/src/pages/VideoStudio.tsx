@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "wouter";
 import {
   Video, Sparkles, RefreshCw, Lock, ChevronDown,
@@ -53,6 +53,18 @@ interface VideoProvider {
   notes: string;
 }
 
+type VideoAspectRatio = "9:16" | "1:1" | "16:9";
+type VideoJobStatus = "queued" | "processing" | "completed" | "failed";
+
+interface VideoGenerationJob {
+  provider: "fal.ai";
+  model: string;
+  status: VideoJobStatus;
+  videoUrl?: string;
+  jobId?: string;
+  error?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Platform display labels
 // ---------------------------------------------------------------------------
@@ -82,6 +94,14 @@ export default function VideoStudio() {
   const [videoProviders, setVideoProviders] = useState<VideoProvider[]>([]);
   const [expandedScene, setExpandedScene] = useState<number | null>(null);
   const [showFullVO, setShowFullVO] = useState(false);
+  const [videoPrompt, setVideoPrompt] = useState("");
+  const [videoImageUrl, setVideoImageUrl] = useState("");
+  const [videoAspectRatio, setVideoAspectRatio] = useState<VideoAspectRatio>("9:16");
+  const [videoDurationSeconds, setVideoDurationSeconds] = useState<5 | 10>(5);
+  const [submittingVideo, setSubmittingVideo] = useState(false);
+  const [videoJob, setVideoJob] = useState<VideoGenerationJob | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
+  const [fetchingVideoResult, setFetchingVideoResult] = useState(false);
 
   async function generate() {
     if (!topic.trim()) {
@@ -116,6 +136,103 @@ export default function VideoStudio() {
     }
   }
 
+  async function generateProviderVideo() {
+    if (!videoPrompt.trim()) {
+      toast({ title: "Enter a video prompt", variant: "destructive" });
+      return;
+    }
+    setSubmittingVideo(true);
+    setVideoError(null);
+    setVideoJob(null);
+    try {
+      const res = await fetch(`${BASE}/api/clients/${clientId}/video/generate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("ams_token")}`,
+        },
+        body: JSON.stringify({
+          prompt: videoPrompt,
+          imageUrl: videoImageUrl.trim() || undefined,
+          durationSeconds: videoDurationSeconds,
+          aspectRatio: videoAspectRatio,
+        }),
+      });
+      const data = await res.json().catch(() => ({})) as VideoGenerationJob;
+      if (!res.ok) {
+        const message = data.error === "FAL_KEY is not configured"
+          ? "fal.ai is not configured. Add FAL_KEY on the API server to test video generation."
+          : data.error ?? "Video generation failed.";
+        throw new Error(message);
+      }
+      setVideoJob(data);
+      toast({
+        title: data.status === "completed" ? "Video generated" : "Video job queued",
+        description: data.jobId ? `Job ${data.jobId}` : undefined,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Video generation failed.";
+      setVideoError(message);
+      toast({ title: "Video generation failed", description: message, variant: "destructive" });
+    } finally {
+      setSubmittingVideo(false);
+    }
+  }
+
+  async function fetchVideoStatus(job: VideoGenerationJob) {
+    if (!job.jobId || !job.model) return;
+    const res = await fetch(`${BASE}/api/clients/${clientId}/video/status/${encodeURIComponent(job.jobId)}?model=${encodeURIComponent(job.model)}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("ams_token")}` },
+    });
+    const data = await res.json().catch(() => ({})) as VideoGenerationJob;
+    if (!res.ok) {
+      const message = data.error === "FAL_KEY is not configured"
+        ? "fal.ai is not configured. Add FAL_KEY on the API server to test video generation."
+        : data.error ?? "Could not check video status.";
+      setVideoError(message);
+      setVideoJob((current) => current ? { ...current, status: "failed", error: message } : current);
+      return;
+    }
+    setVideoJob((current) => current ? { ...current, ...data } : data);
+  }
+
+  async function fetchVideoResult(job: VideoGenerationJob) {
+    if (!job.jobId || !job.model || fetchingVideoResult) return;
+    setFetchingVideoResult(true);
+    try {
+      const res = await fetch(`${BASE}/api/clients/${clientId}/video/result/${encodeURIComponent(job.jobId)}?model=${encodeURIComponent(job.model)}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("ams_token")}` },
+      });
+      const data = await res.json().catch(() => ({})) as VideoGenerationJob;
+      if (!res.ok) {
+        throw new Error(data.error ?? "Could not retrieve video result.");
+      }
+      setVideoJob((current) => current ? { ...current, ...data } : data);
+      if (!data.videoUrl && data.status !== "completed") {
+        setVideoError("Video is not ready yet. Keep polling for the final result.");
+      }
+    } catch (err) {
+      setVideoError(err instanceof Error ? err.message : "Could not retrieve video result.");
+    } finally {
+      setFetchingVideoResult(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!videoJob?.jobId || !videoJob.model) return;
+    if (videoJob.status !== "queued" && videoJob.status !== "processing") return;
+    const timer = window.setInterval(() => {
+      void fetchVideoStatus(videoJob);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [videoJob?.jobId, videoJob?.model, videoJob?.status]);
+
+  useEffect(() => {
+    if (!videoJob?.jobId || !videoJob.model) return;
+    if (videoJob.status !== "completed" || videoJob.videoUrl) return;
+    void fetchVideoResult(videoJob);
+  }, [videoJob?.jobId, videoJob?.model, videoJob?.status, videoJob?.videoUrl]);
+
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
       {/* Header */}
@@ -127,6 +244,135 @@ export default function VideoStudio() {
           Generate a complete short-form video blueprint: hook, scene-by-scene storyboard, voiceover script, subtitle style, CTA, and AI provider recommendation.
         </p>
       </div>
+
+      <Card className="border-primary/20 bg-gradient-to-br from-primary/5 via-background to-background">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-primary" />
+            AI Video Generation Test
+          </CardTitle>
+          <p className="text-xs text-muted-foreground">
+            This tests the backend provider only. It does not save to Review, Assets, posts, or Publish Queue.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
+            <p>Video generation may take 1-3 minutes and may use credits.</p>
+            <p>Generated provider URLs may expire until storage saving is added.</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Prompt</Label>
+            <textarea
+              className="min-h-[110px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              placeholder="Describe the short video scene, motion, camera style, mood, and subject."
+              value={videoPrompt}
+              onChange={(event) => setVideoPrompt(event.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="space-y-1.5">
+              <Label>Aspect Ratio</Label>
+              <Select value={videoAspectRatio} onValueChange={(value) => setVideoAspectRatio(value as VideoAspectRatio)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="9:16">9:16 vertical</SelectItem>
+                  <SelectItem value="1:1">1:1 square</SelectItem>
+                  <SelectItem value="16:9">16:9 landscape</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Duration</Label>
+              <Select value={String(videoDurationSeconds)} onValueChange={(value) => setVideoDurationSeconds(Number(value) === 10 ? 10 : 5)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="5">5 seconds</SelectItem>
+                  <SelectItem value="10">10 seconds</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Optional Image URL</Label>
+              <Input
+                placeholder="https://..."
+                value={videoImageUrl}
+                onChange={(event) => setVideoImageUrl(event.target.value)}
+              />
+            </div>
+          </div>
+          <Button onClick={generateProviderVideo} disabled={submittingVideo} className="w-full">
+            {submittingVideo
+              ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Submitting video job...</>
+              : <><Video className="w-4 h-4 mr-2" /> Generate Video</>}
+          </Button>
+
+          {(videoJob || videoError) && (
+            <div className="rounded-lg border bg-background p-4 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {videoJob?.status && (
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      videoJob.status === "completed" && "bg-green-50 text-green-700 border-green-200",
+                      (videoJob.status === "queued" || videoJob.status === "processing") && "bg-blue-50 text-blue-700 border-blue-200",
+                      videoJob.status === "failed" && "bg-red-50 text-red-700 border-red-200"
+                    )}
+                  >
+                    {videoJob.status}
+                  </Badge>
+                )}
+                {videoJob?.provider && <Badge variant="secondary">{videoJob.provider}</Badge>}
+                {videoJob?.model && <span className="text-xs text-muted-foreground break-all">{videoJob.model}</span>}
+              </div>
+              {videoJob?.jobId && (
+                <p className="text-xs text-muted-foreground break-all">Job ID: {videoJob.jobId}</p>
+              )}
+              {(videoJob?.status === "queued" || videoJob?.status === "processing") && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 animate-spin text-primary" />
+                  Polling provider status every few seconds...
+                </div>
+              )}
+              {videoError && (
+                <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  {videoError}
+                </div>
+              )}
+              {videoJob?.error && !videoError && (
+                <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  {videoJob.error}
+                </div>
+              )}
+              {videoJob?.status === "completed" && !videoJob.videoUrl && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => fetchVideoResult(videoJob)}
+                  disabled={fetchingVideoResult}
+                >
+                  {fetchingVideoResult ? <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5 mr-1.5" />}
+                  Fetch video result
+                </Button>
+              )}
+              {videoJob?.videoUrl && (
+                <div className="space-y-2">
+                  <div className="overflow-hidden rounded-lg border bg-black">
+                    <video src={videoJob.videoUrl} controls className="w-full max-h-[520px]" />
+                  </div>
+                  <a
+                    href={videoJob.videoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+                  >
+                    Open provider video URL <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Input form */}
       <Card>
