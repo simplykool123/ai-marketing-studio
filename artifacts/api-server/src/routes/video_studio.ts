@@ -28,8 +28,131 @@ import {
 import { resolveTextProviderForMode, VIDEO_PROVIDERS, type QualityMode } from "../lib/provider-router.js";
 import { EDIT_CONTENT_ROLES, requireClientRole, type AuthRequest } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
+import {
+  defaultVideoModel,
+  generateVideo,
+  getVideoJobResult,
+  getVideoJobStatus,
+  type VideoAspectRatio,
+} from "../lib/video-generator.js";
 
 const router = Router();
+
+function cleanVideoDuration(value: unknown): number | undefined {
+  const duration = Number(value);
+  if (!Number.isFinite(duration)) return undefined;
+  return Math.max(1, Math.min(Math.round(duration), 10));
+}
+
+function cleanAspectRatio(value: unknown): VideoAspectRatio | undefined {
+  return value === "9:16" || value === "1:1" || value === "16:9" ? value : undefined;
+}
+
+function modelFromQuery(value: unknown): string {
+  return typeof value === "string" && value.trim() ? value.trim() : defaultVideoModel();
+}
+
+// POST /clients/:clientId/video/generate
+// Foundation-only provider test endpoint. Does not create posts or DB rows.
+router.post(
+  "/clients/:clientId/video/generate",
+  requireClientRole(EDIT_CONTENT_ROLES),
+  async (req: AuthRequest, res): Promise<void> => {
+    const { prompt, imageUrl, durationSeconds, aspectRatio } = req.body as {
+      prompt?: string;
+      imageUrl?: string;
+      durationSeconds?: number;
+      aspectRatio?: VideoAspectRatio;
+    };
+
+    if (!prompt?.trim()) {
+      res.status(400).json({ error: "prompt is required" });
+      return;
+    }
+
+    try {
+      const result = await generateVideo({
+        prompt,
+        imageUrl: typeof imageUrl === "string" && imageUrl.trim() ? imageUrl.trim() : undefined,
+        durationSeconds: cleanVideoDuration(durationSeconds),
+        aspectRatio: cleanAspectRatio(aspectRatio),
+        qualityMode: "balanced",
+      });
+
+      if (result.status === "failed") {
+        res.status(result.error === "FAL_KEY is not configured" ? 503 : 502).json(result);
+        return;
+      }
+
+      res.json(result);
+    } catch (err) {
+      logger.error({ error: safeErrorMessage(err) }, "Video generation provider error");
+      res.status(500).json({
+        provider: "fal.ai",
+        model: imageUrl ? "fal-ai/wan-25-preview/image-to-video" : "fal-ai/wan-25-preview/text-to-video",
+        status: "failed",
+        error: "Video generation failed",
+      });
+    }
+  }
+);
+
+// Future phase: download completed provider video URLs to durable storage before
+// attaching them to Review, because provider-hosted media URLs may expire.
+
+router.get(
+  "/clients/:clientId/video/status/:jobId",
+  requireClientRole(EDIT_CONTENT_ROLES),
+  async (req: AuthRequest, res): Promise<void> => {
+    try {
+      const result = await getVideoJobStatus({
+        jobId: req.params.jobId,
+        model: modelFromQuery(req.query.model),
+      });
+      if (result.status === "failed") {
+        res.status(result.error === "FAL_KEY is not configured" ? 503 : 502).json(result);
+        return;
+      }
+      res.json(result);
+    } catch (err) {
+      logger.error({ error: safeErrorMessage(err) }, "Video job status provider error");
+      res.status(500).json({
+        provider: "fal.ai",
+        model: modelFromQuery(req.query.model),
+        jobId: req.params.jobId,
+        status: "failed",
+        error: "Video job status check failed",
+      });
+    }
+  }
+);
+
+router.get(
+  "/clients/:clientId/video/result/:jobId",
+  requireClientRole(EDIT_CONTENT_ROLES),
+  async (req: AuthRequest, res): Promise<void> => {
+    try {
+      const result = await getVideoJobResult({
+        jobId: req.params.jobId,
+        model: modelFromQuery(req.query.model),
+      });
+      if (result.status === "failed") {
+        res.status(result.error === "FAL_KEY is not configured" ? 503 : 502).json(result);
+        return;
+      }
+      res.json(result);
+    } catch (err) {
+      logger.error({ error: safeErrorMessage(err) }, "Video job result provider error");
+      res.status(500).json({
+        provider: "fal.ai",
+        model: modelFromQuery(req.query.model),
+        jobId: req.params.jobId,
+        status: "failed",
+        error: "Video job result fetch failed",
+      });
+    }
+  }
+);
 
 function postToVideoConcept(post: typeof postsTable.$inferSelect) {
   const schema = (post.contentSchema ?? {}) as Partial<GeneratedVideoConcept>;
