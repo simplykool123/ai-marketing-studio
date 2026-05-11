@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { imagesTable, postsTable, userSettingsTable } from "@workspace/db/schema";
+import { imagesTable, postsTable, skillConfigsTable, userSettingsTable } from "@workspace/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { buildClientMemoryPacket, formatClientMemoryPacket } from "../lib/client-memory-packet.js";
 import { findOccasion, listOccasionsForYear, occasionDate, type MarketingOccasion } from "../lib/marketing-occasions.js";
@@ -14,6 +14,7 @@ import {
 import { EDIT_CONTENT_ROLES, requireClientRole, type AuthRequest } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 import { persistRemoteImageUrl } from "../lib/durable-image-storage.js";
+import { executeSkill } from "../lib/skill-engine.js";
 import { uploadToSupabase } from "./upload.js";
 import OpenAI from "openai";
 import sharp from "sharp";
@@ -36,6 +37,92 @@ type OccasionDraft = {
 
 type OccasionDraftResponse = {
   drafts?: OccasionDraft[];
+};
+
+type ArtworkSkillOutput = {
+  headline?: string;
+  subline?: string;
+  supportingLine?: string;
+  artDirection?: string;
+  layoutSuggestion?: string;
+  recommendedFontStyle?: string;
+  recommendedPalette?: string[];
+  overlayStyle?: string;
+  ctaStyle?: string;
+  platformNotes?: string;
+  imagePrompt?: string;
+};
+
+const OCCASION_ARTWORK_SKILL_ID = "occasion_artwork";
+const ARTWORK_TEMPLATES = ["festival_greeting", "announcement", "minimal_brand", "carousel_cover"] as const;
+
+const OCCASION_ARTWORK_SKILL = {
+  skillId: OCCASION_ARTWORK_SKILL_ID,
+  version: "1.0.0",
+  displayName: "Occasion Artwork",
+  category: "artwork",
+  config: {
+    skill_id: OCCASION_ARTWORK_SKILL_ID,
+    version: "1.0.0",
+    display_name: "Occasion Artwork",
+    category: "artwork",
+    description: "Prepares branded artwork guidance for Marketing Calendar occasion drafts using Brand DNA, AI Memory, active Storyline, platform, and existing artwork templates.",
+    required_memory: ["brand_dna", "image_style_memory", "content_rules"],
+    optional_memory: ["story_memory", "performance_memory", "rejection_memory", "recent_posts"],
+    input_schema: {
+      type: "object",
+      required: ["occasion", "platform", "topic"],
+      properties: {
+        occasion: { type: "object" },
+        platform: { type: "string", enum: ["instagram", "linkedin", "facebook", "twitter"] },
+        topic: { type: "string" },
+        caption: { type: "string" },
+        brandColors: { type: "array", items: { type: "string" } },
+        imageStyleNotes: { type: "string" },
+        artworkTemplates: { type: "array", items: { type: "string" } },
+      },
+    },
+    output_schema: {
+      type: "object",
+      required: ["headline", "subline", "supportingLine", "artDirection", "layoutSuggestion", "recommendedFontStyle", "recommendedPalette", "overlayStyle", "ctaStyle", "platformNotes", "imagePrompt"],
+      properties: {
+        headline: { type: "string" },
+        subline: { type: "string" },
+        supportingLine: { type: "string" },
+        artDirection: { type: "string" },
+        layoutSuggestion: { type: "string", enum: ARTWORK_TEMPLATES },
+        recommendedFontStyle: { type: "string" },
+        recommendedPalette: { type: "array", items: { type: "string" } },
+        overlayStyle: { type: "string" },
+        ctaStyle: { type: "string" },
+        platformNotes: { type: "string" },
+        imagePrompt: { type: "string" },
+      },
+    },
+    prompt_template:
+      "Prepare branded artwork guidance for this occasion draft.\n\nOccasion: {{occasion.title}} on {{occasion.date}} ({{occasion.category}})\nPlatform: {{platform}}\nTopic: {{topic}}\nCaption: {{caption}}\nBrand colors: {{brandColors}}\nImage style notes: {{imageStyleNotes}}\nAvailable templates: {{artworkTemplates}}\n\nUse Brand DNA, AI Memory, image style memory, active Storyline if relevant, and recent approved/rejected posts. Platform rules: Instagram needs a stronger visual headline and less text; LinkedIn should be cleaner and more professional; Facebook should be warmer and more general-audience. Choose only one layoutSuggestion from festival_greeting, announcement, minimal_brand, carousel_cover. Image prompt must describe a background-only image with no text, logo, watermark, letters, or typography. Return only JSON matching the output schema.",
+    quality_gate: {
+      min_score: 0.78,
+      checks: ["brand_visual_fit", "platform_fit", "occasion_relevance", "usable_artwork_direction"],
+    },
+    provider_routing: {
+      default_quality_mode: "balanced",
+      allow_fallback: true,
+      max_tokens: 1800,
+    },
+    save_destination: {
+      table: "posts",
+      content_type: "artwork",
+      platform: "social",
+      status: "draft",
+    },
+    memory_writeback: {
+      on_approved: "Record approved occasion artwork layout, palette, and template pattern.",
+      on_rejected: "Record rejected occasion artwork direction or visual style.",
+    },
+  },
+  isGlobal: true,
+  isActive: true,
 };
 
 async function getUserSettings(userId?: string) {
@@ -182,6 +269,135 @@ function defaultOccasionCopy(title: string) {
     headline: title.toLowerCase().startsWith("happy ") ? title : `Happy ${title}`,
     subline: sublines[title] ?? "Wishing you comfort, joy, and beautiful moments.",
   };
+}
+
+async function ensureOccasionArtworkSkill() {
+  await db
+    .insert(skillConfigsTable)
+    .values(OCCASION_ARTWORK_SKILL)
+    .onConflictDoNothing();
+}
+
+function cleanHexPalette(values: unknown, fallback: string[]): string[] {
+  const raw = Array.isArray(values) ? values : fallback;
+  const palette = raw
+    .map(String)
+    .map((color) => color.trim())
+    .filter((color) => /^#[0-9a-f]{6}$/i.test(color));
+  return [...new Set(palette)].slice(0, 5);
+}
+
+function templateFromSuggestion(value: unknown, platform: string): string {
+  const requested = typeof value === "string" ? value : "";
+  if ((ARTWORK_TEMPLATES as readonly string[]).includes(requested)) return requested;
+  if (platform === "linkedin") return "minimal_brand";
+  if (platform === "facebook") return "festival_greeting";
+  return "festival_greeting";
+}
+
+function fallbackArtworkSuggestion(params: {
+  occasion: MarketingOccasion;
+  date: string;
+  platform: string;
+  draft: OccasionDraft;
+  colors: string[];
+}): ArtworkSkillOutput {
+  const defaults = defaultOccasionCopy(params.occasion.title);
+  const headline =
+    params.platform === "linkedin"
+      ? params.occasion.title
+      : params.draft.headline ?? defaults.headline;
+  return {
+    headline,
+    subline: params.draft.subline ?? defaults.subline,
+    supportingLine: params.platform === "instagram" ? "" : params.draft.festiveAngle ?? params.occasion.category,
+    artDirection: params.draft.creativeDirection ?? params.draft.artworkDirection ?? `${params.occasion.title} branded occasion artwork`,
+    layoutSuggestion: templateFromSuggestion(null, params.platform),
+    recommendedFontStyle: params.platform === "linkedin" ? "clean professional sans serif" : "premium celebratory display with readable support text",
+    recommendedPalette: params.colors,
+    overlayStyle: params.platform === "linkedin" ? "subtle translucent panel" : "warm branded overlay with clear contrast",
+    ctaStyle: params.platform === "facebook" ? "friendly and conversational" : "minimal visual CTA",
+    platformNotes:
+      params.platform === "instagram"
+        ? "Use a short visual headline and keep supporting text minimal."
+        : params.platform === "linkedin"
+          ? "Keep the composition polished, spacious, and professional."
+          : "Keep the message warm and easy for a general audience.",
+    imagePrompt: params.draft.imagePrompt ?? `${params.occasion.title} branded background, no text, no logo, no typography`,
+  };
+}
+
+async function buildArtworkSuggestion(params: {
+  clientId: string;
+  userId?: string;
+  occasion: MarketingOccasion;
+  date: string;
+  draft: OccasionDraft;
+  platform: string;
+  colors: string[];
+  packet: Awaited<ReturnType<typeof buildClientMemoryPacket>>;
+}): Promise<{ output: ArtworkSkillOutput; warning?: string }> {
+  await ensureOccasionArtworkSkill();
+
+  const fallback = fallbackArtworkSuggestion({
+    occasion: params.occasion,
+    date: params.date,
+    platform: params.platform,
+    draft: params.draft,
+    colors: params.colors,
+  });
+
+  try {
+    const result = await executeSkill({
+      clientId: params.clientId,
+      skillId: OCCASION_ARTWORK_SKILL_ID,
+      userId: params.userId,
+      input: {
+        occasion: {
+          id: params.occasion.id,
+          title: params.occasion.title,
+          date: params.date,
+          category: params.occasion.category,
+          observanceType: params.occasion.observanceType,
+          country: params.occasion.country,
+          region: params.occasion.region,
+          notes: params.occasion.notes,
+        },
+        platform: params.platform,
+        topic: params.draft.topic ?? `${params.occasion.title} content idea`,
+        caption: params.draft.caption ?? "",
+        festiveAngle: params.draft.festiveAngle ?? "",
+        brandColors: params.colors,
+        imageStyleNotes: [
+          params.packet.brandDna?.visualStyle,
+          params.packet.brandDna?.designNotes,
+          params.packet.imageStyleMemory.preferredImageStyle,
+        ].filter(Boolean).join(" | "),
+        activeStoryline: params.packet.storyMemory.activeStoryline
+          ? {
+              title: params.packet.storyMemory.activeStoryline.title,
+              narrative: params.packet.storyMemory.activeStoryline.narrative,
+            }
+          : null,
+        artworkTemplates: ARTWORK_TEMPLATES,
+      },
+    });
+
+    const output = result.output as ArtworkSkillOutput;
+    return {
+      output: {
+        ...fallback,
+        ...output,
+        layoutSuggestion: templateFromSuggestion(output.layoutSuggestion, params.platform),
+        recommendedPalette: cleanHexPalette(output.recommendedPalette, params.colors),
+      },
+    };
+  } catch (err) {
+    return {
+      output: fallback,
+      warning: `Occasion artwork skill fallback used for "${params.draft.topic ?? params.occasion.title}": ${safeErrorMessage(err)}`,
+    };
+  }
 }
 
 function wrapText(value: string, maxChars: number, maxLines: number) {
@@ -388,12 +604,32 @@ router.post(
         generateImagesNow,
       };
 
-      const inserts = drafts.map((draft, index) => {
+      const artworkWarnings: string[] = [];
+      const inserts = await Promise.all(drafts.map(async (draft, index) => {
         const planned = plan[index] ?? plan[0];
         const contentType = CONTENT_TYPE_MAP[String(draft.contentType ?? "").toLowerCase()] ?? planned.contentType;
         const platform = PLATFORM_MAP[String(draft.platform ?? "").toLowerCase()] ?? planned.platform;
         const creativeDirection = draft.creativeDirection ?? draft.artworkDirection ?? draft.imagePrompt ?? "";
         const defaults = defaultOccasionCopy(occasion.title);
+        const brandColors = cleanHexPalette(packet.brandDna?.visualColors, []);
+        const artwork = await buildArtworkSuggestion({
+          clientId,
+          userId: req.userId,
+          occasion,
+          date,
+          draft,
+          platform,
+          colors: brandColors,
+          packet,
+        });
+        if (artwork.warning) artworkWarnings.push(artwork.warning);
+        const artworkSuggestion = artwork.output;
+        const recommendedTemplate = templateFromSuggestion(artworkSuggestion.layoutSuggestion, platform);
+        const recommendedPalette = cleanHexPalette(artworkSuggestion.recommendedPalette, brandColors);
+        const headline = artworkSuggestion.headline || draft.headline || defaults.headline;
+        const subline = artworkSuggestion.subline || draft.subline || defaults.subline;
+        const supportingLine = artworkSuggestion.supportingLine ?? "";
+        const skillImagePrompt = artworkSuggestion.imagePrompt || draft.imagePrompt || creativeDirection;
         return ({
         clientId,
         campaignId,
@@ -407,14 +643,24 @@ router.post(
           platform,
           caption: draft.caption ?? "",
           hashtags: draft.hashtags ?? "",
-          imagePrompt: draft.imagePrompt ?? creativeDirection,
-          creativeDirection,
+          imagePrompt: skillImagePrompt,
+          creativeDirection: artworkSuggestion.artDirection ?? creativeDirection,
           festiveAngle: draft.festiveAngle ?? `${occasion.title} brand moment`,
-          headline: draft.headline ?? defaults.headline,
-          subline: draft.subline ?? defaults.subline,
+          headline,
+          subline,
+          supportingLine,
+          artworkSuggestion,
+          recommendedTemplate,
+          recommendedPalette,
+          overlayStyle: artworkSuggestion.overlayStyle ?? "",
+          recommendedFontStyle: artworkSuggestion.recommendedFontStyle ?? "",
+          platformNotes: artworkSuggestion.platformNotes ?? "",
+          ctaStyle: artworkSuggestion.ctaStyle ?? "",
+          aiPreparedArtworkLayout: true,
+          artworkSkillId: OCCASION_ARTWORK_SKILL_ID,
           brandDnaUsed: !!packet.brandDna,
           logoUsed: false,
-          brandColorsUsed: packet.brandDna?.visualColors ?? [],
+          brandColorsUsed: recommendedPalette.length ? recommendedPalette : packet.brandDna?.visualColors ?? [],
           artworkStyle: contentType === "image_prompt" ? "branded_occasion_square" : "draft_prompt",
         },
         contentSchemaVersion: 1,
@@ -425,10 +671,10 @@ router.post(
         postType: contentType === "blog" ? "blog" as const : "social" as const,
         status: "draft" as const,
         generationStatus: "ready" as const,
-        imagePrompt: (draft.imagePrompt ?? creativeDirection) || null,
+        imagePrompt: skillImagePrompt || null,
         generationMetadata,
         });
-      });
+      }));
 
       const createdDrafts = await db.insert(postsTable).values(inserts).returning();
       const needsArtwork = generateImagesNow || contentTypes.includes("image_prompt");
@@ -445,7 +691,7 @@ router.post(
       res.json({
         occasion: { ...occasion, date },
         createdDrafts: responseDrafts,
-        warnings: imageResult.warnings,
+        warnings: [...artworkWarnings, ...imageResult.warnings],
       });
     } catch (err) {
       logger.error({ err: safeErrorMessage(err), clientId, occasionId }, "Occasion Calendar generation failed");

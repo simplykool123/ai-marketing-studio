@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useParams, Link } from "wouter";
+import { useEffect, useState } from "react";
+import { useParams, Link, useSearch } from "wouter";
 import {
   useListPosts,
   getListPostsQueryKey,
@@ -66,6 +66,29 @@ type PublishingReadiness = {
   canExportManual: boolean;
   canPublishNatively: boolean;
   blockedReason: string | null;
+};
+
+type MetaConnectedAccount = {
+  id: string;
+  platform: string;
+  accountName: string;
+  accountHandle: string | null;
+  accountId: string | null;
+  hasOauth: boolean;
+  tokenExpired: boolean;
+  tokenExpiresAt: string | null;
+  isActive: boolean;
+};
+
+type MetaStatus = {
+  provider: "meta";
+  tokenStorageSafe: boolean;
+  configured: boolean;
+  facebookPage: MetaConnectedAccount | null;
+  instagramAccount: MetaConnectedAccount | null;
+  canPublishFacebook: boolean;
+  canPublishInstagram: boolean;
+  missing: string[];
 };
 
 function asRecord(value: unknown): Record<string, any> {
@@ -148,6 +171,36 @@ async function fetchPublishingReadiness(clientId: string): Promise<PublishingRea
   return res.json();
 }
 
+async function fetchMetaStatus(clientId: string): Promise<MetaStatus> {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/meta/status`);
+  if (!res.ok) throw new Error("Failed to load Meta connection status");
+  return res.json();
+}
+
+async function startMetaConnectApi(clientId: string): Promise<string> {
+  const res = await fetch(`${BASE}/api/auth/meta/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientId }),
+  });
+  const data = (await res.json().catch(() => ({}))) as { redirectUrl?: string; error?: string; missing?: string[] };
+  if (!res.ok || !data.redirectUrl) {
+    const suffix = data.missing?.length ? ` Missing: ${data.missing.join(", ")}.` : "";
+    throw new Error(`${data.error ?? "Meta connection is not configured yet."}${suffix}`);
+  }
+  return data.redirectUrl;
+}
+
+async function publishPostApi(clientId: string, postId: string) {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/publish`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Failed to publish post");
+  return data;
+}
+
 function artworkBaseImageUrl(post: any): string | null {
   const schema = asRecord(post.contentSchema);
   return schema.backgroundImageUrl || post.selectedImageUrl || schema.imageUrl || post.originalImageUrl || null;
@@ -221,6 +274,10 @@ function destinationStatusLabel(destination: PublishingDestination): string {
   return "Not configured";
 }
 
+function isMetaPlatform(platform?: string | null): platform is "facebook" | "instagram" {
+  return platform === "facebook" || platform === "instagram";
+}
+
 function downloadJson(filename: string, payload: unknown) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -257,6 +314,7 @@ function PostTimeline({ post }: { post: any }) {
 
 export default function PostingQueue() {
   const { clientId } = useParams<{ clientId: string }>();
+  const search = useSearch();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<"all" | "approved" | "export_ready" | "scheduled" | "failed">("all");
@@ -283,12 +341,40 @@ export default function PostingQueue() {
     queryFn: () => fetchPublishingReadiness(clientId!),
     enabled: !!clientId,
   });
+  const { data: metaStatus } = useQuery({
+    queryKey: ["meta-status", clientId],
+    queryFn: () => fetchMetaStatus(clientId!),
+    enabled: !!clientId,
+  });
   const invalidate = () => {
     if (!clientId) return;
     queryClient.invalidateQueries({ queryKey: getListPostsQueryKey(clientId) });
     queryClient.invalidateQueries({ queryKey: ["enhanced-dashboard", clientId] });
     queryClient.invalidateQueries({ queryKey: ["publishing-readiness", clientId] });
+    queryClient.invalidateQueries({ queryKey: ["meta-status", clientId] });
   };
+
+  useEffect(() => {
+    if (!search) return;
+    const params = new URLSearchParams(search);
+    const success = params.get("meta_success");
+    const error = params.get("meta_error");
+    if (success) {
+      invalidate();
+      toast({
+        title: "Meta connected",
+        description: "Facebook Page and any linked Instagram Business account are ready in Publish Queue.",
+      });
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (error) {
+      toast({
+        title: "Meta connection failed",
+        description: decodeURIComponent(error),
+        variant: "destructive",
+      });
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [search]);
 
   const handleSaveArtwork = async (blob: Blob, layers: ArtworkLayers) => {
     if (!clientId || !artworkPost) return;
@@ -375,6 +461,34 @@ export default function PostingQueue() {
     }),
   });
 
+  const connectMetaMutation = useMutation({
+    mutationFn: () => startMetaConnectApi(clientId!),
+    onSuccess: (redirectUrl) => {
+      window.location.href = redirectUrl;
+    },
+    onError: (err) => toast({
+      title: "Meta connection unavailable",
+      description: err instanceof Error ? err.message : "Meta OAuth could not be started.",
+      variant: "destructive",
+    }),
+  });
+
+  const publishMutation = useMutation({
+    mutationFn: (postId: string) => publishPostApi(clientId!, postId),
+    onSuccess: () => {
+      invalidate();
+      toast({ title: "Published to Meta", description: "The post is now marked as published with a published time." });
+    },
+    onError: (err) => {
+      invalidate();
+      toast({
+        title: "Meta publish failed",
+        description: err instanceof Error ? err.message : "The post was not published.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const queuePosts = (posts as any[]).filter((post) => {
     if (!QUEUE_STATUSES.includes(post.status)) return false;
     if ((post.status === "posted" || post.status === "published") && !post.publishedAt) return false;
@@ -397,6 +511,8 @@ export default function PostingQueue() {
   const metaDestination = publishingReadiness?.destinations.find((destination) => destination.type === "native_meta_placeholder");
   const externalDestinations = publishingReadiness?.destinations.filter((destination) => destination.type === "postiz_placeholder" || destination.type === "ayrshare_placeholder") ?? [];
   const allVisibleSelected = sortedPosts.length > 0 && sortedPosts.every((post) => selectedIds.has(post.id));
+  const metaConnected = !!metaStatus?.configured;
+  const metaFullyConnected = !!(metaStatus?.canPublishFacebook && metaStatus?.canPublishInstagram);
 
   const toggleSelected = (postId: string, checked: boolean) => {
     setSelectedIds((current) => {
@@ -489,9 +605,11 @@ export default function PostingQueue() {
           <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             <Info className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
             <div className="flex-1">
-              <p className="font-medium">Direct platform publishing is not connected yet.</p>
+              <p className="font-medium">{metaConnected ? "Meta publishing is connected." : "Direct platform publishing is not connected yet."}</p>
               <p className="text-xs text-amber-800/90 mt-0.5">
-                Approved and scheduled posts wait here. Nothing is posted automatically.
+                {metaConnected
+                  ? "Facebook and Instagram posts now require a real Meta publish action before they become Published."
+                  : "Approved and scheduled posts wait here. Nothing is posted automatically."}
               </p>
             </div>
             <button
@@ -545,7 +663,7 @@ export default function PostingQueue() {
               <div>
                 <p className="text-sm font-semibold">Publishing destination</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  AI Marketing Studio stays the source of truth. Export, send to workflow, or mark posts after manual publishing.
+                  AI Marketing Studio stays the source of truth. Export, send to workflow, mark manually, or publish through a valid Meta connection.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -556,7 +674,7 @@ export default function PostingQueue() {
                   {hasWorkflow ? "Workflow configured" : "Workflow not configured"}
                 </Badge>
                 <Badge variant="outline" className={cn(metaDestination && destinationBadgeClass(metaDestination))}>
-                  Meta not connected yet
+                  {metaConnected ? "Meta connected" : "Meta not connected yet"}
                 </Badge>
                 <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
                   External connector not connected yet
@@ -573,6 +691,20 @@ export default function PostingQueue() {
                     </Badge>
                   </div>
                   <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{destination.description}</p>
+                  {destination.type === "native_meta_placeholder" && metaStatus && (
+                    <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+                      {metaStatus.facebookPage ? (
+                        <p>Facebook Page: <span className="font-medium text-foreground">{metaStatus.facebookPage.accountName}</span></p>
+                      ) : (
+                        <p>Facebook Page: not connected</p>
+                      )}
+                      {metaStatus.instagramAccount ? (
+                        <p>Instagram: <span className="font-medium text-foreground">{metaStatus.instagramAccount.accountHandle ?? metaStatus.instagramAccount.accountName}</span></p>
+                      ) : (
+                        <p>Instagram: not connected</p>
+                      )}
+                    </div>
+                  )}
                   <p className="text-[11px] font-medium text-foreground mt-2">{destination.actionLabel}</p>
                 </div>
               ))}
@@ -590,8 +722,15 @@ export default function PostingQueue() {
               <Link href={`/clients/${clientId}/settings`}>
                 <Button variant="outline" size="sm">Setup workflow</Button>
               </Link>
-              <Button variant="outline" size="sm" disabled title="Native Meta connector is coming next">
-                Connect Meta later
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => connectMetaMutation.mutate()}
+                disabled={connectMetaMutation.isPending || metaFullyConnected}
+                title={metaFullyConnected ? "Meta is connected" : "Connect Facebook Page and linked Instagram Business account"}
+              >
+                {connectMetaMutation.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+                {metaFullyConnected ? "Meta connected" : metaConnected ? "Refresh Meta connection" : "Connect Meta"}
               </Button>
             </div>
           </CardContent>
@@ -643,9 +782,17 @@ export default function PostingQueue() {
               const isPublished = post.status === "posted" || post.status === "published";
               const hasPublishedProof = isPublished && !!post.publishedAt;
               const canAct = ["approved", "export_ready", "scheduled", "failed"].includes(post.status);
+              const platform = post.platform ?? "instagram";
+              const canPublishToMeta =
+                canAct &&
+                isMetaPlatform(platform) &&
+                ((platform === "facebook" && !!metaStatus?.canPublishFacebook) ||
+                  (platform === "instagram" && !!metaStatus?.canPublishInstagram));
+              const needsImageForInstagram = platform === "instagram" && !postImageUrl(post);
               const isBusy =
                 (markPostedMutation.isPending && markPostedMutation.variables === post.id) ||
-                (webhookMutation.isPending && webhookMutation.variables === post.id);
+                (webhookMutation.isPending && webhookMutation.variables === post.id) ||
+                (publishMutation.isPending && publishMutation.variables === post.id);
 
               return (
                 <Card key={post.id} className={cn(
@@ -710,6 +857,21 @@ export default function PostingQueue() {
                     <div className="flex gap-1.5 shrink-0 flex-wrap justify-end max-w-[220px]">
                       {canAct && (
                         <>
+                          {canPublishToMeta && (
+                            <Button
+                              size="sm"
+                              variant="default"
+                              className="h-7 text-xs px-2"
+                              onClick={() => publishMutation.mutate(post.id)}
+                              disabled={isBusy || needsImageForInstagram}
+                              title={needsImageForInstagram ? "Instagram publishing needs final artwork or an image URL" : "Publish through connected Meta account"}
+                            >
+                              {publishMutation.isPending && publishMutation.variables === post.id
+                                ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                                : <CheckCircle2 className="w-3.5 h-3.5 mr-1" />}
+                              Publish Meta
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="outline"
@@ -744,9 +906,14 @@ export default function PostingQueue() {
                                 <Workflow className="w-3.5 h-3.5 mr-2" />
                                 {hasWorkflow ? "Send to workflow" : "Setup workflow first"}
                               </DropdownMenuItem>
-                              <DropdownMenuItem disabled>
+                              <DropdownMenuItem
+                                disabled={metaFullyConnected || connectMetaMutation.isPending}
+                                onSelect={() => {
+                                  if (!metaFullyConnected) connectMetaMutation.mutate();
+                                }}
+                              >
                                 <Info className="w-3.5 h-3.5 mr-2" />
-                                Future: Connect Meta
+                                {metaFullyConnected ? "Meta connected" : metaConnected ? "Refresh Meta connection" : "Connect Meta"}
                               </DropdownMenuItem>
                               {externalDestinations.length > 0 && (
                                 <DropdownMenuItem disabled>

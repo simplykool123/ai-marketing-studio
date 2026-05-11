@@ -2,10 +2,11 @@ import { useRef, useState } from "react";
 import type Konva from "konva";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Loader2 } from "lucide-react";
 import ArtworkEditor, { CANVAS_SIZE, CANVAS_DISPLAY } from "./ArtworkEditor";
 import type { ArtworkLayers } from "./types";
-import { defaultLayers, DEFAULT_LAYER_ORDER } from "./presets";
+import { applyTemplate, defaultLayers, DEFAULT_LAYER_ORDER, type TemplateId } from "./presets";
 
 interface PostLike {
   id: string;
@@ -23,6 +24,32 @@ function firstString(...values: unknown[]): string | null {
     if (typeof v === "string" && v.trim()) return v.trim();
   }
   return null;
+}
+
+function isTemplateId(value: unknown): value is TemplateId {
+  return ["festival_greeting", "product_highlight", "quote_thought", "announcement", "minimal_brand", "carousel_cover"].includes(String(value));
+}
+
+function cleanPalette(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(String)
+    .map((color) => color.trim())
+    .filter((color) => /^#[0-9a-f]{6}$/i.test(color))
+    .slice(0, 4);
+}
+
+function applyPalette(layers: ArtworkLayers, palette: string[]): ArtworkLayers {
+  if (!palette.length) return layers;
+  const [primary, secondary, accent] = palette;
+  return {
+    ...layers,
+    panel: primary ? { ...layers.panel, color: primary } : layers.panel,
+    frame: accent ? { ...layers.frame, color: accent, enabled: layers.frame.enabled } : layers.frame,
+    headline: secondary ? { ...layers.headline, color: secondary } : layers.headline,
+    subline: secondary ? { ...layers.subline, color: `${secondary}cc` } : layers.subline,
+    supportingLine: secondary ? { ...layers.supportingLine, color: `${secondary}99` } : layers.supportingLine,
+  };
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
@@ -59,6 +86,10 @@ function EditorContent({
 
   const schema = asRecord(post.contentSchema);
   const existingLayers = asRecord(schema.artworkLayers);
+  const artworkSuggestion = asRecord(schema.artworkSuggestion);
+  const recommendedTemplate = firstString(schema.recommendedTemplate, artworkSuggestion.layoutSuggestion);
+  const recommendedPalette = cleanPalette(schema.recommendedPalette ?? artworkSuggestion.recommendedPalette ?? schema.brandColorsUsed);
+  const hasAiPreparedLayout = schema.aiPreparedArtworkLayout === true || !!schema.artworkSuggestion;
 
   const initialBgUrl =
     firstString(schema.backgroundImageUrl, post.selectedImageUrl, schema.imageUrl) ?? "";
@@ -78,6 +109,7 @@ function EditorContent({
         ? existingLayers.headline?.text
         : existingLayers.headline,
       schema.headline,
+      artworkSuggestion.headline,
       post.topic
     ) ?? "";
 
@@ -86,7 +118,8 @@ function EditorContent({
       typeof existingLayers.subline === "object"
         ? existingLayers.subline?.text
         : existingLayers.subline,
-      schema.subline
+      schema.subline,
+      artworkSuggestion.subline
     ) ?? "";
 
   const initialSupportingLine =
@@ -94,7 +127,8 @@ function EditorContent({
       typeof existingLayers.supportingLine === "object"
         ? existingLayers.supportingLine?.text
         : existingLayers.supportingLine,
-      schema.supportingLine
+      schema.supportingLine,
+      artworkSuggestion.supportingLine
     ) ?? "";
 
   // Use saved full layers if they include the new structure; else build from defaults
@@ -125,13 +159,15 @@ function EditorContent({
       }
       return migrated;
     }
-    return defaultLayers({
+    const fresh = defaultLayers({
       backgroundUrl: initialBgUrl,
       logoUrl: initialLogoUrl,
       headline: initialHeadline,
       subline: initialSubline,
       supportingLine: initialSupportingLine,
     });
+    const templated = isTemplateId(recommendedTemplate) ? applyTemplate(recommendedTemplate, fresh) : fresh;
+    return applyPalette(templated, recommendedPalette);
   });
 
   const handleSave = async () => {
@@ -190,6 +226,12 @@ function EditorContent({
         initialBgUrl={initialBgUrl}
         initialLogoUrl={initialLogoUrl}
       />
+      {hasAiPreparedLayout && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <Badge variant="secondary">AI prepared this artwork layout</Badge>
+          {isTemplateId(recommendedTemplate) && <span>Template: {recommendedTemplate.replace(/_/g, " ")}</span>}
+        </div>
+      )}
       <div className="flex justify-end gap-2 mt-4 pt-4 border-t">
         <Button variant="ghost" onClick={onClose} disabled={saving}>
           Cancel

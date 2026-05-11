@@ -24,7 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -67,6 +67,14 @@ const PLATFORMS = [
   { value: "newsletter", label: "Newsletter" },
 ];
 
+const REWRITE_TARGET_PLATFORMS = [
+  { value: "instagram", label: "Instagram" },
+  { value: "linkedin", label: "LinkedIn" },
+  { value: "facebook", label: "Facebook" },
+  { value: "twitter", label: "X/Twitter" },
+  { value: "blog", label: "Blog intro" },
+] as const;
+
 const PLATFORM_COLORS: Record<string, string> = {
   instagram: "bg-pink-50 text-pink-700 border-pink-200",
   facebook: "bg-blue-50 text-blue-700 border-blue-200",
@@ -98,6 +106,7 @@ type Post = {
   qualityScore?: number | null;
   qualityReport?: unknown;
   campaignId?: string | null;
+  storylineId?: string | null;
   skillId?: string | null;
   contentType?: string | null;
   contentSchema?: unknown;
@@ -106,6 +115,21 @@ type Post = {
   longFormBody?: string | null;
   imagePrompt?: string | null;
   postType?: string | null;
+};
+
+type QualityReviewReport = {
+  skillId?: string;
+  score?: number;
+  verdict?: "approve" | "improve" | "reject";
+  issues?: string[];
+  suggestions?: string[];
+  revisedCaption?: string;
+  revisedHashtags?: string[];
+  brandFitNotes?: string;
+  platformFitNotes?: string;
+  repeatRiskNotes?: string;
+  ctaSuggestion?: string;
+  reviewedAt?: string;
 };
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -289,6 +313,39 @@ async function rejectDraft(clientId: string, postId: string, category: string, r
   return res.json();
 }
 
+async function executePlatformRewrite(clientId: string, post: Post, targetPlatform: string) {
+  const sourcePlatform = post.platform ?? "instagram";
+  const sourceCaption = schemaPreview(post) || post.caption;
+  const res = await fetch(`${BASE}/api/clients/${clientId}/skills/platform_rewrite/execute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      campaignId: post.campaignId ?? undefined,
+      storylineId: post.storylineId ?? undefined,
+      input: {
+        sourcePostId: post.id,
+        sourceCaption,
+        sourcePlatform,
+        targetPlatform,
+        topic: post.topic || post.title || "Platform rewrite",
+      },
+    }),
+  });
+  const data = await res.json().catch(() => ({})) as { post?: Post; error?: string };
+  if (!res.ok) throw new Error(data.error ?? "Failed to rewrite draft");
+  return data.post;
+}
+
+async function reviewDraftQuality(clientId: string, postId: string) {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/quality-review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await res.json().catch(() => ({})) as { post?: Post; review?: QualityReviewReport; error?: string };
+  if (!res.ok) throw new Error(data.error ?? "Failed to review draft quality");
+  return data;
+}
+
 export default function Drafts() {
   const { clientId } = useParams<{ clientId: string }>();
   const search = useSearch();
@@ -336,6 +393,11 @@ export default function Drafts() {
   const [regeneratingPostId, setRegeneratingPostId] = useState<string | null>(null);
   const [generatingImagePostIds, setGeneratingImagePostIds] = useState<Set<string>>(() => new Set());
   const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
+  const [rewritePost, setRewritePost] = useState<Post | null>(null);
+  const [rewriteTargetPlatform, setRewriteTargetPlatform] = useState<string>("linkedin");
+  const [isRewritingPlatform, setIsRewritingPlatform] = useState(false);
+  const [reviewingQualityPostId, setReviewingQualityPostId] = useState<string | null>(null);
+  const [applyingQualityPostId, setApplyingQualityPostId] = useState<string | null>(null);
 
   const invalidatePosts = () => {
     if (clientId) queryClient.invalidateQueries({ queryKey: getListPostsQueryKey(clientId, listParams) });
@@ -736,6 +798,80 @@ export default function Drafts() {
     window.open(url, "_blank");
   };
 
+  const openRewrite = (post: Post) => {
+    setRewritePost(post);
+    setRewriteTargetPlatform(post.platform === "linkedin" ? "instagram" : "linkedin");
+  };
+
+  const handlePlatformRewrite = async () => {
+    if (!clientId || !rewritePost) return;
+    setIsRewritingPlatform(true);
+    try {
+      await executePlatformRewrite(clientId, rewritePost, rewriteTargetPlatform);
+      invalidatePosts();
+      setRewritePost(null);
+      toast({ title: "Rewrite created in Review." });
+    } catch (err) {
+      toast({
+        title: "Rewrite failed",
+        description: err instanceof Error ? err.message : "Could not create platform rewrite.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRewritingPlatform(false);
+    }
+  };
+
+  const handleQualityReview = async (post: Post) => {
+    if (!clientId) return;
+    setReviewingQualityPostId(post.id);
+    try {
+      const result = await reviewDraftQuality(clientId, post.id);
+      invalidatePosts();
+      const verdict = result.review?.verdict === "approve" ? "Ready" : result.review?.verdict === "reject" ? "Not recommended" : "Needs improvement";
+      toast({
+        title: "Quality review complete",
+        description: `${verdict}${typeof result.review?.score === "number" ? ` · ${result.review.score}/100` : ""}`,
+      });
+    } catch (err) {
+      toast({
+        title: "Quality review failed",
+        description: err instanceof Error ? err.message : "Could not review this draft.",
+        variant: "destructive",
+      });
+    } finally {
+      setReviewingQualityPostId(null);
+    }
+  };
+
+  const handleApplyQualityCaption = async (post: Post) => {
+    if (!clientId) return;
+    const report = qualityReport(post.qualityReport);
+    if (!report?.revisedCaption?.trim()) return;
+    setApplyingQualityPostId(post.id);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        updatePost.mutate(
+          {
+            clientId,
+            postId: post.id,
+            data: {
+              caption: report.revisedCaption,
+              hashtags: Array.isArray(report.revisedHashtags) ? report.revisedHashtags.join(" ") : post.hashtags ?? "",
+            },
+          },
+          { onSuccess: () => resolve(), onError: reject }
+        );
+      });
+      invalidatePosts();
+      toast({ title: "Improved caption applied" });
+    } catch {
+      toast({ title: "Failed to apply improved caption", variant: "destructive" });
+    } finally {
+      setApplyingQualityPostId(null);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -790,8 +926,13 @@ export default function Drafts() {
               onDelete={() => handleDelete(post.id)}
               onRegenerateCopy={() => handleRegenerateCopy(post.id)}
               onGenerateImage={() => handleGenerateImage(post.id)}
+              onRewrite={() => openRewrite(post)}
+              onQualityReview={canReview(post) ? () => handleQualityReview(post) : undefined}
+              onApplyQualityCaption={() => handleApplyQualityCaption(post)}
               isRegeneratingCopy={regeneratingPostId === post.id}
               isGeneratingImage={generatingImagePostIds.has(post.id)}
+              isReviewingQuality={reviewingQualityPostId === post.id}
+              isApplyingQualityCaption={applyingQualityPostId === post.id}
             />
           ))}
         </div>
@@ -807,6 +948,10 @@ export default function Drafts() {
             post={previewPost}
             onApprove={canReview(previewPost) ? () => openApprove(previewPost) : undefined}
             onReject={canReview(previewPost) ? () => openReject(previewPost) : undefined}
+            onQualityReview={canReview(previewPost) ? () => handleQualityReview(previewPost) : undefined}
+            onApplyQualityCaption={previewPost ? () => handleApplyQualityCaption(previewPost) : undefined}
+            isReviewingQuality={!!previewPost && reviewingQualityPostId === previewPost.id}
+            isApplyingQualityCaption={!!previewPost && applyingQualityPostId === previewPost.id}
           />
         </div>
       </div>
@@ -822,6 +967,14 @@ export default function Drafts() {
         onClick={() => handleCopyCaption(post.caption, post.hashtags)}
       >
         <Copy className="w-3 h-3 mr-1" /> Copy
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 text-xs px-2"
+        onClick={() => openRewrite(post)}
+      >
+        <RefreshCw className="w-3 h-3 mr-1" /> Rewrite for platform
       </Button>
       {post.selectedImageUrl && (
         <Button
@@ -1045,7 +1198,10 @@ export default function Drafts() {
                   onEdit={() => openEdit(post)}
                   onDelete={() => handleDelete(post.id)}
                   onPublish={() => handlePublish(post.id)}
+                  onRewrite={() => openRewrite(post)}
+                  onApplyQualityCaption={() => handleApplyQualityCaption(post)}
                   isPublishing={publishingPostId === post.id}
+                  isApplyingQualityCaption={applyingQualityPostId === post.id}
                   actionBar={<PostActionBar post={post} />}
                 />
               ))}
@@ -1073,6 +1229,8 @@ export default function Drafts() {
                   post={post}
                   onEdit={() => openEdit(post)}
                   onDelete={() => handleDelete(post.id)}
+                  onApplyQualityCaption={() => handleApplyQualityCaption(post)}
+                  isApplyingQualityCaption={applyingQualityPostId === post.id}
                 />
               ))}
             </div>
@@ -1178,6 +1336,44 @@ export default function Drafts() {
             <Button variant="ghost" onClick={() => setRejectingPost(null)}>Cancel</Button>
             <Button variant="destructive" onClick={handleReject} disabled={isRejecting}>
               {isRejecting ? "Rejecting…" : "Reject Draft"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Platform Rewrite Dialog */}
+      <Dialog open={!!rewritePost} onOpenChange={(open) => { if (!open && !isRewritingPlatform) setRewritePost(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rewrite for platform</DialogTitle>
+            <DialogDescription>
+              Create a new draft using Brand DNA, AI Memory, active Storyline, and recent posts.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label>Target platform</Label>
+              <Select value={rewriteTargetPlatform} onValueChange={setRewriteTargetPlatform}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {REWRITE_TARGET_PLATFORMS.map((platform) => (
+                    <SelectItem key={platform.value} value={platform.value}>{platform.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {rewritePost && (
+              <div className="rounded-md border bg-muted/30 p-3">
+                <p className="text-xs font-semibold text-muted-foreground">Source draft</p>
+                <p className="text-sm line-clamp-3 mt-1">{schemaPreview(rewritePost) || rewritePost.caption}</p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRewritePost(null)} disabled={isRewritingPlatform}>Cancel</Button>
+            <Button onClick={handlePlatformRewrite} disabled={isRewritingPlatform}>
+              {isRewritingPlatform && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Create rewrite
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1293,6 +1489,84 @@ function QualityBadge({ score }: { score?: number | null }) {
     >
       Quality {Math.round(score * 100)}
     </Badge>
+  );
+}
+
+function qualityReport(value: unknown): QualityReviewReport | null {
+  const report = asRecord(value);
+  if (!report || report.skillId !== "quality_review") return null;
+  return report as QualityReviewReport;
+}
+
+function qualityVerdictLabel(verdict?: string): string {
+  if (verdict === "approve") return "Ready";
+  if (verdict === "reject") return "Not recommended";
+  if (verdict === "improve") return "Needs improvement";
+  return "Not reviewed";
+}
+
+function qualityVerdictClass(verdict?: string): string {
+  if (verdict === "approve") return "bg-green-50 text-green-700 border-green-200";
+  if (verdict === "reject") return "bg-red-50 text-red-700 border-red-200";
+  if (verdict === "improve") return "bg-yellow-50 text-yellow-700 border-yellow-200";
+  return "bg-muted text-muted-foreground";
+}
+
+function QualityReviewPanel({
+  report,
+  onApplyCaption,
+  isApplying,
+}: {
+  report: QualityReviewReport | null;
+  onApplyCaption?: () => void;
+  isApplying?: boolean;
+}) {
+  if (!report) return null;
+  const issues = Array.isArray(report.issues) ? report.issues : [];
+  const suggestions = Array.isArray(report.suggestions) ? report.suggestions : [];
+  const canApply = !!report.revisedCaption?.trim() && !!onApplyCaption;
+
+  return (
+    <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline" className={cn("text-xs", qualityVerdictClass(report.verdict))}>
+          {qualityVerdictLabel(report.verdict)}
+        </Badge>
+        {typeof report.score === "number" && (
+          <span className="text-xs text-muted-foreground">Score {report.score}/100</span>
+        )}
+      </div>
+      {issues.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground mb-1">Issues</p>
+          <ul className="list-disc pl-4 space-y-0.5 text-xs">
+            {issues.slice(0, 4).map((item, index) => <li key={index}>{item}</li>)}
+          </ul>
+        </div>
+      )}
+      {suggestions.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground mb-1">Suggestions</p>
+          <ul className="list-disc pl-4 space-y-0.5 text-xs">
+            {suggestions.slice(0, 4).map((item, index) => <li key={index}>{item}</li>)}
+          </ul>
+        </div>
+      )}
+      {(report.brandFitNotes || report.platformFitNotes || report.repeatRiskNotes || report.ctaSuggestion) && (
+        <div className="grid gap-1.5 text-xs text-muted-foreground">
+          {report.brandFitNotes && <p><span className="font-medium text-foreground">Brand:</span> {report.brandFitNotes}</p>}
+          {report.platformFitNotes && <p><span className="font-medium text-foreground">Platform:</span> {report.platformFitNotes}</p>}
+          {report.repeatRiskNotes && <p><span className="font-medium text-foreground">Repeat risk:</span> {report.repeatRiskNotes}</p>}
+          {report.ctaSuggestion && <p><span className="font-medium text-foreground">CTA:</span> {report.ctaSuggestion}</p>}
+        </div>
+      )}
+      {canApply && (
+        <Button size="sm" variant="outline" onClick={onApplyCaption} disabled={isApplying} className="h-8">
+          {isApplying ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5 mr-1.5" />}
+          Apply improved caption
+        </Button>
+      )}
+    </div>
   );
 }
 
@@ -1482,10 +1756,18 @@ function DraftPreviewPanel({
   post,
   onApprove,
   onReject,
+  onQualityReview,
+  onApplyQualityCaption,
+  isReviewingQuality,
+  isApplyingQualityCaption,
 }: {
   post: Post | null;
   onApprove?: () => void;
   onReject?: () => void;
+  onQualityReview?: () => void;
+  onApplyQualityCaption?: () => void;
+  isReviewingQuality?: boolean;
+  isApplyingQualityCaption?: boolean;
 }) {
   if (!post) {
     return (
@@ -1496,6 +1778,8 @@ function DraftPreviewPanel({
       </Card>
     );
   }
+
+  const report = qualityReport(post.qualityReport);
 
   return (
     <Card className="xl:sticky xl:top-4 max-h-[calc(100vh-2rem)] overflow-auto">
@@ -1513,12 +1797,21 @@ function DraftPreviewPanel({
 
         <PostHistoryTimeline post={post} />
 
-        {post.qualityReport != null && (
-          <TextBlock title="Quality report">
-            <pre className="whitespace-pre-wrap rounded-md bg-muted/50 p-3 text-xs overflow-auto">
-              {typeof post.qualityReport === "string" ? post.qualityReport : JSON.stringify(post.qualityReport, null, 2)}
-            </pre>
-          </TextBlock>
+        <div className="flex flex-wrap gap-2">
+          {onQualityReview && (
+            <Button size="sm" variant="outline" onClick={onQualityReview} disabled={isReviewingQuality}>
+              {isReviewingQuality ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />}
+              Review quality
+            </Button>
+          )}
+        </div>
+
+        {report && (
+          <QualityReviewPanel
+            report={report}
+            onApplyCaption={onApplyQualityCaption}
+            isApplying={isApplyingQualityCaption}
+          />
         )}
 
         <DraftPreviewContent post={post} />
@@ -1552,9 +1845,14 @@ function PostCard({
   onDelete,
   onRegenerateCopy,
   onGenerateImage,
+  onRewrite,
+  onQualityReview,
+  onApplyQualityCaption,
   onPublish,
   isRegeneratingCopy,
   isGeneratingImage,
+  isReviewingQuality,
+  isApplyingQualityCaption,
   isPublishing,
   actionBar,
 }: {
@@ -1567,9 +1865,14 @@ function PostCard({
   onDelete: () => void;
   onRegenerateCopy?: () => void;
   onGenerateImage?: () => void;
+  onRewrite?: () => void;
+  onQualityReview?: () => void;
+  onApplyQualityCaption?: () => void;
   onPublish?: () => void;
   isRegeneratingCopy?: boolean;
   isGeneratingImage?: boolean;
+  isReviewingQuality?: boolean;
+  isApplyingQualityCaption?: boolean;
   isPublishing?: boolean;
   actionBar?: ReactNode;
 }) {
@@ -1579,6 +1882,7 @@ function PostCard({
   const isPublished = hasPublishedProof(post);
   const platformClass = PLATFORM_COLORS[post.platform || ""] || "bg-muted text-muted-foreground";
   const imageUrl = postImageUrl(post);
+  const report = qualityReport(post.qualityReport);
 
   const statusBadgeClass = ((post.status === "posted" || post.status === "published") && !post.publishedAt)
     ? "bg-muted text-muted-foreground border border-border"
@@ -1716,8 +2020,24 @@ function PostCard({
           </p>
         )}
 
+        {report && (
+          <div className="mt-2">
+            <QualityReviewPanel
+              report={report}
+              onApplyCaption={onApplyQualityCaption}
+              isApplying={isApplyingQualityCaption}
+            />
+          </div>
+        )}
+
         {isDraft && (
           <div className="mt-3 space-y-2">
+            {onQualityReview && (
+              <Button variant="outline" className="w-full" size="sm" onClick={onQualityReview} disabled={isReviewingQuality}>
+                {isReviewingQuality ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                Review quality
+              </Button>
+            )}
             {onSelect && (
               <Button variant="outline" className="w-full" size="sm" onClick={onSelect}>
                 <Eye className="w-4 h-4 mr-2" /> Review Draft
@@ -1750,6 +2070,18 @@ function PostCard({
                   </Button>
                 )}
               </div>
+            )}
+            {onRewrite && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full h-7 text-xs gap-1"
+                onClick={onRewrite}
+                disabled={isRegeneratingCopy || isGeneratingImage}
+              >
+                <RefreshCw className="w-3 h-3" />
+                Rewrite for platform
+              </Button>
             )}
             {onApprove && (
               <Button className="w-full" size="sm" onClick={onApprove}>

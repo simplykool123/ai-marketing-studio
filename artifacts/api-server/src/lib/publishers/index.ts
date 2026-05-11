@@ -16,6 +16,10 @@ function fullCaption(caption: string, hashtags?: string | null): string {
   return hashtags ? `${caption}\n\n${hashtags}` : caption;
 }
 
+function metaGraphBaseUrl(): string {
+  return `https://graph.facebook.com/${process.env.META_GRAPH_VERSION ?? "v18.0"}`;
+}
+
 async function graphApiPost(url: string, params: Record<string, string>): Promise<Response> {
   return fetch(url, {
     method: "POST",
@@ -29,9 +33,10 @@ export async function publishToInstagram(params: PublishParams): Promise<Publish
   const text = fullCaption(caption, hashtags);
 
   if (!imageUrl) throw new Error("Instagram requires an image URL to publish");
+  const graphBase = metaGraphBaseUrl();
 
   const createRes = await graphApiPost(
-    `https://graph.facebook.com/v18.0/${accountId}/media`,
+    `${graphBase}/${accountId}/media`,
     { image_url: imageUrl, caption: text, access_token: accessToken }
   );
   if (!createRes.ok) {
@@ -41,7 +46,7 @@ export async function publishToInstagram(params: PublishParams): Promise<Publish
   const { id: creationId } = (await createRes.json()) as { id: string };
 
   const publishRes = await graphApiPost(
-    `https://graph.facebook.com/v18.0/${accountId}/media_publish`,
+    `${graphBase}/${accountId}/media_publish`,
     { creation_id: creationId, access_token: accessToken }
   );
   if (!publishRes.ok) {
@@ -51,7 +56,7 @@ export async function publishToInstagram(params: PublishParams): Promise<Publish
   const { id: mediaId } = (await publishRes.json()) as { id: string };
 
   const permalinkRes = await fetch(
-    `https://graph.facebook.com/v18.0/${mediaId}?fields=permalink&access_token=${accessToken}`
+    `${graphBase}/${mediaId}?fields=permalink&access_token=${accessToken}`
   );
   let publishedUrl = `https://www.instagram.com/p/${mediaId}/`;
   if (permalinkRes.ok) {
@@ -65,15 +70,16 @@ export async function publishToInstagram(params: PublishParams): Promise<Publish
 export async function publishToFacebook(params: PublishParams): Promise<PublishResult> {
   const { caption, hashtags, imageUrl, accountId, accessToken } = params;
   const message = fullCaption(caption, hashtags);
+  const graphBase = metaGraphBaseUrl();
 
   let endpoint: string;
   let body: Record<string, string>;
 
   if (imageUrl) {
-    endpoint = `https://graph.facebook.com/v18.0/${accountId}/photos`;
+    endpoint = `${graphBase}/${accountId}/photos`;
     body = { message, url: imageUrl, access_token: accessToken };
   } else {
-    endpoint = `https://graph.facebook.com/v18.0/${accountId}/feed`;
+    endpoint = `${graphBase}/${accountId}/feed`;
     body = { message, access_token: accessToken };
   }
 

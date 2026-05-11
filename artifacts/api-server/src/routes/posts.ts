@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { postsTable, clientsTable, postingLogsTable, campaignsTable } from "@workspace/db/schema";
+import { postsTable, clientsTable, postingLogsTable, campaignsTable, qualityChecksTable, skillConfigsTable } from "@workspace/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import {
   CreatePostBody,
@@ -13,6 +13,7 @@ import {
   EDIT_CONTENT_ROLES,
   MUTATE_CONTENT_ROLES,
   requireClientRole,
+  type AuthRequest,
 } from "../middleware/auth.js";
 import { writeClientMemory } from "../lib/client-memory-packet.js";
 import {
@@ -21,8 +22,114 @@ import {
   getPublishingReadiness,
   markPublished,
 } from "../lib/publishing-destinations.js";
+import { executeSkill } from "../lib/skill-engine.js";
 
 const router = Router();
+
+const QUALITY_REVIEW_SKILL = {
+  skillId: "quality_review",
+  version: "1.0.0",
+  displayName: "Quality Review",
+  category: "quality",
+  config: {
+    skill_id: "quality_review",
+    version: "1.0.0",
+    display_name: "Quality Review",
+    category: "quality",
+    description: "Reviews a draft for brand fit, platform fit, clarity, CTA quality, repetition risk, and artwork/image prompt fit.",
+    required_memory: ["brand_dna", "content_rules", "recent_posts"],
+    optional_memory: ["story_memory", "performance_memory", "rejection_memory", "image_style_memory"],
+    input_schema: {
+      type: "object",
+      required: ["postId", "caption", "platform", "contentType", "topic"],
+      properties: {
+        postId: { type: "string" },
+        caption: { type: "string" },
+        platform: { type: "string" },
+        contentType: { type: "string" },
+        topic: { type: "string" },
+        imagePrompt: { type: "string" },
+        contentSchema: { type: "object" },
+      },
+    },
+    output_schema: {
+      type: "object",
+      required: ["score", "verdict", "issues", "suggestions", "revisedCaption", "revisedHashtags", "brandFitNotes", "platformFitNotes", "repeatRiskNotes", "ctaSuggestion"],
+      properties: {
+        score: { type: "number", minimum: 0, maximum: 100 },
+        verdict: { type: "string", enum: ["approve", "improve", "reject"] },
+        issues: { type: "array", items: { type: "string" } },
+        suggestions: { type: "array", items: { type: "string" } },
+        revisedCaption: { type: "string" },
+        revisedHashtags: { type: "array", items: { type: "string" } },
+        brandFitNotes: { type: "string" },
+        platformFitNotes: { type: "string" },
+        repeatRiskNotes: { type: "string" },
+        ctaSuggestion: { type: "string" },
+      },
+    },
+    prompt_template:
+      "Review this draft before approval.\n\nPost ID: {{postId}}\nTopic: {{topic}}\nPlatform: {{platform}}\nContent type: {{contentType}}\nCaption:\n{{caption}}\nImage/artwork prompt:\n{{imagePrompt}}\nContent schema:\n{{contentSchema}}\n\nUse Brand DNA, AI Memory, active Storyline, recent approved/published posts, rejection memory, and performance memory. Judge brand fit, platform fit, clarity, CTA quality, repetition risk, and artwork/image prompt fit. If the draft can be improved, provide revisedCaption and revisedHashtags, but do not assume the app will apply them automatically. Return only JSON matching the output schema.",
+    quality_gate: {
+      min_score: 0.75,
+      checks: ["brand_voice_match", "platform_fit", "clarity", "cta_quality", "repetition_risk", "artwork_prompt_fit"],
+    },
+    provider_routing: {
+      default_quality_mode: "balanced",
+      allow_fallback: true,
+      max_tokens: 2200,
+    },
+    save_destination: {
+      table: "quality_checks",
+      status: "reviewed",
+    },
+    memory_writeback: {},
+  },
+  isGlobal: true,
+  isActive: true,
+};
+
+async function ensureQualityReviewSkill() {
+  await db
+    .insert(skillConfigsTable)
+    .values(QUALITY_REVIEW_SKILL)
+    .onConflictDoNothing();
+}
+
+function qualityScorePercent(value: unknown): number {
+  const raw = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(raw)) return 0;
+  return Math.round(Math.max(0, Math.min(raw <= 1 ? raw * 100 : raw, 100)));
+}
+
+function numericQualityScore(value: unknown): number {
+  return qualityScorePercent(value) / 100;
+}
+
+function stringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
+  if (typeof value === "string" && value.trim()) return [value.trim()];
+  return [];
+}
+
+function qualityReportFromOutput(output: Record<string, unknown>) {
+  const score = qualityScorePercent(output.score);
+  const verdict = output.verdict === "approve" || output.verdict === "reject" ? output.verdict : "improve";
+  return {
+    skillId: "quality_review",
+    score,
+    verdict,
+    issues: stringList(output.issues),
+    suggestions: stringList(output.suggestions),
+    revisedCaption: typeof output.revisedCaption === "string" ? output.revisedCaption : "",
+    revisedHashtags: stringList(output.revisedHashtags),
+    brandFitNotes: typeof output.brandFitNotes === "string" ? output.brandFitNotes : "",
+    platformFitNotes: typeof output.platformFitNotes === "string" ? output.platformFitNotes : "",
+    repeatRiskNotes: typeof output.repeatRiskNotes === "string" ? output.repeatRiskNotes : "",
+    ctaSuggestion: typeof output.ctaSuggestion === "string" ? output.ctaSuggestion : "",
+    reviewedAt: new Date().toISOString(),
+  };
+}
 
 async function campaignBelongsToClient(campaignId: string | undefined, clientId: string): Promise<boolean> {
   if (!campaignId) return true;
@@ -163,6 +270,66 @@ router.get("/clients/:clientId/posts/:postId", async (req, res): Promise<void> =
     res.json(post);
   } catch (err) {
     res.status(500).json({ error: "Failed to get post" });
+  }
+});
+
+router.post("/clients/:clientId/posts/:postId/quality-review", requireClientRole(MUTATE_CONTENT_ROLES), async (req: AuthRequest, res): Promise<void> => {
+  try {
+    const { clientId, postId } = req.params;
+    const [post] = await db
+      .select()
+      .from(postsTable)
+      .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
+      .limit(1);
+
+    if (!post) {
+      res.status(404).json({ error: "Post not found" });
+      return;
+    }
+
+    await ensureQualityReviewSkill();
+    const result = await executeSkill({
+      clientId,
+      skillId: "quality_review",
+      userId: req.userId,
+      input: {
+        postId: post.id,
+        caption: post.caption,
+        platform: post.platform ?? "instagram",
+        contentType: post.contentType ?? post.postType ?? "social_post",
+        topic: post.topic,
+        imagePrompt: post.imagePrompt ?? "",
+        contentSchema: post.contentSchema ?? {},
+      },
+    });
+
+    const report = qualityReportFromOutput(result.output);
+    const score = numericQualityScore(report.score);
+
+    const [updated] = await db.transaction(async (tx) => {
+      const [updatedPost] = await tx
+        .update(postsTable)
+        .set({
+          qualityScore: score,
+          qualityReport: report,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
+        .returning();
+
+      await tx.insert(qualityChecksTable).values({
+        postId,
+        skillId: "quality_review",
+        score,
+        report,
+      });
+
+      return [updatedPost];
+    });
+
+    res.json({ post: updated, review: report });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to review draft quality" });
   }
 });
 

@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { socialAccountsTable } from "@workspace/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
+import { isEncryptionConfigured } from "../lib/crypto.js";
 import { MANAGE_CLIENT_ROLES, requireClientRole } from "../middleware/auth.js";
 
 const router = Router();
@@ -58,6 +59,60 @@ function toDto(account: FetchedAccount) {
     updatedAt: account.updatedAt instanceof Date ? account.updatedAt.toISOString() : account.updatedAt,
   };
 }
+
+function accountReady(account: FetchedAccount | null) {
+  if (!account) return null;
+  const dto = toDto(account);
+  return {
+    id: dto.id,
+    platform: dto.platform,
+    accountName: dto.accountName,
+    accountHandle: dto.accountHandle,
+    accountId: dto.accountId,
+    hasOauth: dto.hasOauth,
+    tokenExpired: dto.tokenExpired,
+    tokenExpiresAt: dto.tokenExpiresAt,
+    isActive: dto.isActive,
+  };
+}
+
+router.get("/clients/:clientId/meta/status", async (req, res) => {
+  try {
+    const accounts = await db
+      .select(FETCH_COLUMNS)
+      .from(socialAccountsTable)
+      .where(
+        and(
+          eq(socialAccountsTable.clientId, req.params.clientId),
+          eq(socialAccountsTable.isActive, true),
+          inArray(socialAccountsTable.platform, ["facebook", "instagram"])
+        )
+      );
+
+    const facebook = (accounts as FetchedAccount[]).find((account) => account.platform === "facebook") ?? null;
+    const instagram = (accounts as FetchedAccount[]).find((account) => account.platform === "instagram") ?? null;
+    const tokenStorageSafe = isEncryptionConfigured();
+    const facebookReady = !!facebook?.accessToken && !toDto(facebook).tokenExpired;
+    const instagramReady = !!instagram?.accessToken && !toDto(instagram).tokenExpired;
+
+    res.json({
+      provider: "meta",
+      tokenStorageSafe,
+      configured: tokenStorageSafe && (facebookReady || instagramReady),
+      facebookPage: accountReady(facebook),
+      instagramAccount: accountReady(instagram),
+      canPublishFacebook: tokenStorageSafe && facebookReady,
+      canPublishInstagram: tokenStorageSafe && instagramReady,
+      missing: [
+        ...(tokenStorageSafe ? [] : ["TOKEN_ENCRYPTION_KEY"]),
+        ...(facebook ? [] : ["Facebook Page"]),
+        ...(instagram ? [] : ["Instagram Business account"]),
+      ],
+    });
+  } catch {
+    res.status(500).json({ error: "Failed to fetch Meta connection status" });
+  }
+});
 
 router.get("/clients/:clientId/social-accounts", async (req, res) => {
   try {

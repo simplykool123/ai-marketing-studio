@@ -59,8 +59,38 @@ type WebsiteAnalysis = {
   contentPillars: string;
   colorStyleHints: string;
   keywords: string;
+  visualStyle: string;
+  imageStyle: string;
+  fontStyle: string;
+  designNotes: string;
   imageStyleNotes: string;
   confidenceNotes: string;
+};
+
+type WebsiteImageCandidate = {
+  url: string;
+  alt: string;
+  sourcePage: string;
+  reason: string;
+};
+
+type WebsiteColorCandidate = {
+  hex: string;
+  count: number;
+};
+
+type WebsiteAnalysisResponse = {
+  websiteUrl: string;
+  finalUrl?: string;
+  analysis: WebsiteAnalysis;
+  pagesAnalyzed?: Array<{ url: string; title: string }>;
+  logoCandidates?: WebsiteImageCandidate[];
+  imageCandidates?: WebsiteImageCandidate[];
+  colors?: WebsiteColorCandidate[];
+  palette?: { primary?: string; secondary?: string; accent?: string };
+  fontFamilies?: string[];
+  warnings?: string[];
+  cssFetched?: number;
 };
 
 const ASSET_TYPE_LABELS: Record<string, string> = {
@@ -135,13 +165,16 @@ export default function BrandDna() {
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [isAnalyzingWebsite, setIsAnalyzingWebsite] = useState(false);
   const [websiteAnalysis, setWebsiteAnalysis] = useState<WebsiteAnalysis | null>(null);
+  const [websiteAnalysisResult, setWebsiteAnalysisResult] = useState<WebsiteAnalysisResponse | null>(null);
   const [analysisSourceUrl, setAnalysisSourceUrl] = useState("");
   const [replaceFilledFields, setReplaceFilledFields] = useState(false);
+  const [isUsingExtractedLogo, setIsUsingExtractedLogo] = useState(false);
 
   const { data: brandDna, isLoading } = useGetBrandDna(clientId || "");
   const { data: client } = useGetClient(clientId || "");
   const { data: assets, isLoading: assetsLoading } = useListBrandAssets(clientId || "");
   const upsertBrandDna = useUpsertBrandDna();
+  const updateClient = useUpdateClient();
   const deleteAsset = useDeleteBrandAsset();
 
   const form = useForm<BrandDnaFormValues>({
@@ -257,6 +290,7 @@ export default function BrandDna() {
     if (!clientId || !websiteUrl.trim()) return;
     setIsAnalyzingWebsite(true);
     setWebsiteAnalysis(null);
+    setWebsiteAnalysisResult(null);
     try {
       const res = await fetch(`/api/clients/${clientId}/brand-dna/analyze-website`, {
         method: "POST",
@@ -270,8 +304,9 @@ export default function BrandDna() {
         throw new Error("Session expired. Please sign in again.");
       }
       if (!res.ok) throw new Error(await getJsonErrorMessage(res));
-      const data = await res.json() as { websiteUrl: string; analysis: WebsiteAnalysis };
+      const data = await res.json() as WebsiteAnalysisResponse;
       setWebsiteAnalysis(data.analysis);
+      setWebsiteAnalysisResult(data);
       setAnalysisSourceUrl(data.websiteUrl);
       toast({ title: "Website analysis ready", description: "Review the suggestions before applying them to Brand Setup." });
     } catch (err) {
@@ -295,6 +330,7 @@ export default function BrandDna() {
 
   const handleApplyAnalysis = async () => {
     if (!clientId || !websiteAnalysis) return;
+    const palette = websiteAnalysisResult?.palette;
     const context = [
       websiteAnalysis.productsServices ? `Products/services: ${websiteAnalysis.productsServices}` : null,
       websiteAnalysis.usp ? `USP: ${websiteAnalysis.usp}` : null,
@@ -304,8 +340,12 @@ export default function BrandDna() {
     setSuggestedValue("voiceTone", websiteAnalysis.brandTone);
     setSuggestedValue("targetAudience", websiteAnalysis.targetAudience);
     setSuggestedValue("contentThemes", websiteAnalysis.contentPillars);
-    setSuggestedValue("visualStyle", websiteAnalysis.colorStyleHints);
-    setSuggestedValue("designNotes", websiteAnalysis.imageStyleNotes);
+    setSuggestedValue("visualStyle", websiteAnalysis.visualStyle || websiteAnalysis.colorStyleHints);
+    setSuggestedValue("fontStyle", websiteAnalysis.fontStyle || websiteAnalysisResult?.fontFamilies?.join(", ") || "");
+    setSuggestedValue("designNotes", [websiteAnalysis.designNotes, websiteAnalysis.imageStyle || websiteAnalysis.imageStyleNotes].filter(Boolean).join("\n"));
+    setSuggestedValue("primaryColor", palette?.primary || "");
+    setSuggestedValue("secondaryColor", palette?.secondary || "");
+    setSuggestedValue("accentColor", palette?.accent || "");
     setSuggestedValue("additionalContext", context);
 
     const memoryEntries = [
@@ -315,7 +355,11 @@ export default function BrandDna() {
       },
       websiteAnalysis.imageStyleNotes ? {
         key: "Image Style Memory / Website import",
-        value: websiteAnalysis.imageStyleNotes,
+        value: [websiteAnalysis.imageStyleNotes, websiteAnalysis.imageStyle, websiteAnalysis.designNotes].filter(Boolean).join("\n"),
+      } : null,
+      websiteAnalysisResult?.colors?.length ? {
+        key: "Image Style Memory / Website palette",
+        value: `Extracted palette: ${websiteAnalysisResult.colors.map((color) => `${color.hex} (${color.count})`).join(", ")}`,
       } : null,
       websiteAnalysis.keywords ? {
         key: "SEO Memory / Website keywords",
@@ -336,6 +380,25 @@ export default function BrandDna() {
       title: "Suggestions applied",
       description: replaceFilledFields ? "Brand fields were updated. Review and save Brand DNA." : "Empty Brand Setup fields were filled. Existing filled fields were preserved.",
     });
+  };
+
+  const handleUseExtractedLogo = async (url: string) => {
+    if (!clientId) return;
+    setIsUsingExtractedLogo(true);
+    updateClient.mutate(
+      { clientId, data: { logoUrl: url } as any },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetClientQueryKey(clientId) });
+          toast({ title: "Extracted logo applied", description: "The logo URL was saved as the client logo reference." });
+          setIsUsingExtractedLogo(false);
+        },
+        onError: () => {
+          toast({ title: "Could not apply logo", description: "Upload the logo file manually if this URL cannot be used.", variant: "destructive" });
+          setIsUsingExtractedLogo(false);
+        },
+      }
+    );
   };
 
   if (isLoading) {
@@ -396,7 +459,7 @@ export default function BrandDna() {
                 <div>
                   <p className="text-sm font-semibold">Brand suggestions ready</p>
                   <p className="text-xs text-muted-foreground">
-                    Source: {analysisSourceUrl}. Review before applying; this is a one-page import, not a full crawler.
+                    Source: {websiteAnalysisResult?.finalUrl || analysisSourceUrl}. Review before applying; importer analyzed up to five same-domain pages.
                   </p>
                 </div>
                 <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -404,6 +467,94 @@ export default function BrandDna() {
                   Replace filled fields
                 </label>
               </div>
+
+              {replaceFilledFields && (
+                <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                  <span>Replace filled fields is on. Applying suggestions can overwrite existing Brand Setup values.</span>
+                </div>
+              )}
+
+              {(websiteAnalysisResult?.pagesAnalyzed?.length ?? 0) > 0 && (
+                <div className="rounded-md border bg-muted/25 p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Pages analyzed</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {websiteAnalysisResult?.pagesAnalyzed?.map((page) => (
+                      <Badge key={page.url} variant="outline" className="max-w-full truncate text-[10px]" title={page.url}>
+                        {page.title || new URL(page.url).pathname || "Homepage"}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(websiteAnalysisResult?.logoCandidates?.length ?? 0) > 0 && (
+                <div className="rounded-md border bg-muted/25 p-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Extracted logo candidate</p>
+                      <p className="text-xs text-muted-foreground mt-1">{websiteAnalysisResult?.logoCandidates?.[0]?.reason}</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={isUsingExtractedLogo}
+                      onClick={() => websiteAnalysisResult?.logoCandidates?.[0]?.url && handleUseExtractedLogo(websiteAnalysisResult.logoCandidates[0].url)}
+                    >
+                      {isUsingExtractedLogo ? "Applying..." : "Use extracted logo"}
+                    </Button>
+                  </div>
+                  <div className="mt-3 flex items-center gap-3">
+                    <div className="h-16 w-24 rounded-md border bg-white p-2">
+                      <img
+                        src={websiteAnalysisResult?.logoCandidates?.[0]?.url}
+                        alt={websiteAnalysisResult?.logoCandidates?.[0]?.alt || "Extracted logo"}
+                        className="h-full w-full object-contain"
+                      />
+                    </div>
+                    <p className="min-w-0 truncate text-xs text-muted-foreground">{websiteAnalysisResult?.logoCandidates?.[0]?.url}</p>
+                  </div>
+                </div>
+              )}
+
+              {(websiteAnalysisResult?.colors?.length ?? 0) > 0 && (
+                <div className="rounded-md border bg-muted/25 p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Extracted color palette</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {websiteAnalysisResult?.colors?.slice(0, 8).map((color) => (
+                      <div key={color.hex} className="flex items-center gap-2 rounded-md border bg-background px-2 py-1">
+                        <span className="h-5 w-5 rounded border" style={{ backgroundColor: color.hex }} />
+                        <span className="font-mono text-xs">{color.hex}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(websiteAnalysisResult?.imageCandidates?.length ?? 0) > 0 && (
+                <div className="rounded-md border bg-muted/25 p-3">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Top image candidates</p>
+                      <p className="text-xs text-muted-foreground">Reference only: remote URL import to Brand Assets is not supported yet.</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                    {websiteAnalysisResult?.imageCandidates?.slice(0, 4).map((image) => (
+                      <div key={image.url} className="overflow-hidden rounded-md border bg-background">
+                        <div className="aspect-square bg-muted">
+                          <img src={image.url} alt={image.alt || image.reason} className="h-full w-full object-cover" />
+                        </div>
+                        <div className="p-2">
+                          <p className="truncate text-[10px] font-medium">{image.reason}</p>
+                          <p className="truncate text-[10px] text-muted-foreground">{image.alt || "No alt text"}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="grid gap-3 md:grid-cols-2">
                 {[
@@ -414,7 +565,10 @@ export default function BrandDna() {
                   ["Content Pillars", websiteAnalysis.contentPillars],
                   ["Style Hints", websiteAnalysis.colorStyleHints],
                   ["Keywords", websiteAnalysis.keywords],
-                  ["Image Style", websiteAnalysis.imageStyleNotes],
+                  ["Visual Style", websiteAnalysis.visualStyle],
+                  ["Image Style", websiteAnalysis.imageStyle || websiteAnalysis.imageStyleNotes],
+                  ["Font Style", websiteAnalysis.fontStyle || websiteAnalysisResult?.fontFamilies?.join(", ")],
+                  ["Design Notes", websiteAnalysis.designNotes],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-md bg-muted/35 p-3">
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
@@ -427,6 +581,13 @@ export default function BrandDna() {
                 <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                   <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
                   <span>{websiteAnalysis.confidenceNotes}</span>
+                </div>
+              )}
+
+              {(websiteAnalysisResult?.warnings?.length ?? 0) > 0 && (
+                <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                  <span>{websiteAnalysisResult?.warnings?.join(" ")}</span>
                 </div>
               )}
 

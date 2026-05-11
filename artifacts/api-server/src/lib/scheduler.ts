@@ -16,13 +16,14 @@ async function refreshAccountToken(
 
   try {
     if (platform === "facebook" || platform === "instagram") {
-      const appId = process.env.FACEBOOK_APP_ID ?? process.env.INSTAGRAM_APP_ID;
-      const appSecret = process.env.FACEBOOK_APP_SECRET ?? process.env.INSTAGRAM_APP_SECRET;
+      const appId = process.env.META_APP_ID ?? process.env.FACEBOOK_APP_ID ?? process.env.INSTAGRAM_APP_ID;
+      const appSecret = process.env.META_APP_SECRET ?? process.env.FACEBOOK_APP_SECRET ?? process.env.INSTAGRAM_APP_SECRET;
       if (!appId || !appSecret || !account.accessToken) return null;
+      const graphVersion = process.env.META_GRAPH_VERSION ?? "v18.0";
 
       const currentToken = decryptToken(account.accessToken);
       const res = await fetch(
-        `https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${encodeURIComponent(currentToken)}`
+        `https://graph.facebook.com/${graphVersion}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${encodeURIComponent(currentToken)}`
       );
       if (!res.ok) return null;
 

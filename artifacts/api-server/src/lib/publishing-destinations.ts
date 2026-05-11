@@ -1,7 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { clientsTable, postingLogsTable, postsTable, socialAccountsTable } from "@workspace/db/schema";
 import type { Post } from "@workspace/db/schema";
+import { isEncryptionConfigured } from "./crypto.js";
 
 export type PublishingDestinationType =
   | "manual"
@@ -89,6 +90,26 @@ export async function getPublishingDestinations(clientId: string): Promise<Publi
     .limit(1);
 
   const hasWorkflow = !!client?.webhookUrl;
+  const metaAccounts = await db
+    .select({
+      platform: socialAccountsTable.platform,
+      accessToken: socialAccountsTable.accessToken,
+      tokenExpiresAt: socialAccountsTable.tokenExpiresAt,
+    })
+    .from(socialAccountsTable)
+    .where(
+      and(
+        eq(socialAccountsTable.clientId, clientId),
+        eq(socialAccountsTable.isActive, true),
+        inArray(socialAccountsTable.platform, ["facebook", "instagram"])
+      )
+    );
+  const tokenStorageSafe = isEncryptionConfigured();
+  const hasReadyMetaAccount = metaAccounts.some((account) => {
+    const expired = !!account.tokenExpiresAt && new Date(account.tokenExpiresAt).getTime() <= Date.now();
+    return !!account.accessToken && !expired;
+  });
+  const metaConnected = tokenStorageSafe && hasReadyMetaAccount;
 
   return [
     {
@@ -110,10 +131,12 @@ export async function getPublishingDestinations(clientId: string): Promise<Publi
     {
       type: "native_meta_placeholder",
       label: "Native Meta",
-      status: "coming_next",
-      description: "Reserved for the future native Meta connector.",
-      actionLabel: "Connect Meta later",
-      enabled: false,
+      status: metaConnected ? "configured" : "not_configured",
+      description: metaConnected
+        ? "Facebook Page or Instagram Business account is connected with encrypted token storage."
+        : "Connect a Facebook Page and linked Instagram Business account when Meta app credentials are ready.",
+      actionLabel: metaConnected ? "Meta connected" : "Connect Meta",
+      enabled: metaConnected,
     },
     {
       type: "postiz_placeholder",
@@ -147,18 +170,22 @@ export async function getPublishingReadiness(clientId: string) {
 
   const hasWorkflow = destinations.some((destination) => destination.type === "workflow" && destination.enabled);
   const hasManual = destinations.some((destination) => destination.type === "manual" && destination.enabled);
-  const hasNativeReadyAccount = activeAccounts.some((account) => !!account.accessToken);
+  const tokenStorageSafe = isEncryptionConfigured();
+  const hasNativeReadyAccount = activeAccounts.some((account) => {
+    const isMetaPlatform = account.platform === "facebook" || account.platform === "instagram";
+    return isMetaPlatform && !!account.accessToken && tokenStorageSafe;
+  });
 
   return {
     destinations,
     manualAvailable: hasManual,
     workflowConfigured: hasWorkflow,
-    nativeMetaConnected: false,
+    nativeMetaConnected: hasNativeReadyAccount,
     externalConnectorConnected: false,
     activeSocialAccountCount: activeAccounts.length,
     canSendWorkflow: hasWorkflow,
     canExportManual: hasManual,
-    canPublishNatively: hasNativeReadyAccount && false,
+    canPublishNatively: hasNativeReadyAccount,
     blockedReason: hasWorkflow || hasManual
       ? null
       : "No manual or workflow destination is available.",

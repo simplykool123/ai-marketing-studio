@@ -11,6 +11,15 @@ import { markFailed } from "../lib/publishing-destinations.js";
 
 const router = Router();
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function publishImageUrl(post: typeof postsTable.$inferSelect): string | null {
+  const schema = asRecord(post.contentSchema);
+  return String(schema.finalArtworkUrl ?? post.selectedImageUrl ?? post.brandedImageUrl ?? schema.imageUrl ?? "") || null;
+}
+
 // POST /clients/:clientId/posts/:postId/publish
 router.post("/clients/:clientId/posts/:postId/publish", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res) => {
   if (!isEncryptionConfigured()) {
@@ -74,7 +83,7 @@ router.post("/clients/:clientId/posts/:postId/publish", requireClientRole(APPROV
     const result = await publishToPlatform({
       caption: post.caption,
       hashtags: post.hashtags,
-      imageUrl: post.selectedImageUrl,
+      imageUrl: publishImageUrl(post),
       accountId: account.accountId ?? account.id,
       accessToken,
       platform,
