@@ -43,6 +43,17 @@ interface ImageProvider {
   notes: string;
 }
 
+type ImagePreparedPrompt = {
+  improvedPrompt?: string;
+  negativePrompt?: string;
+  headlineSuggestion?: string;
+  sublineSuggestion?: string;
+  styleDirection?: string;
+  paletteSuggestion?: string;
+  layoutSuggestion?: string;
+  platformNotes?: string;
+};
+
 // ---------------------------------------------------------------------------
 // Style colours
 // ---------------------------------------------------------------------------
@@ -69,6 +80,8 @@ export default function ImageStudio() {
   const [topic, setTopic] = useState("");
   const [qualityMode, setQualityMode] = useState("balanced");
   const [loading, setLoading] = useState(false);
+  const [improvingPrompt, setImprovingPrompt] = useState(false);
+  const [preparedPrompt, setPreparedPrompt] = useState<ImagePreparedPrompt | null>(null);
   const [gen, setGen] = useState<GeneratedPrompts | null>(null);
   const [providers, setProviders] = useState<ImageProvider[]>([]);
 
@@ -109,6 +122,43 @@ export default function ImageStudio() {
       });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function improveImagePrompt() {
+    if (!topic.trim()) {
+      toast({ title: "Enter a rough image idea first", variant: "destructive" });
+      return;
+    }
+    setImprovingPrompt(true);
+    try {
+      const res = await fetch(`${BASE}/api/clients/${clientId}/creative/prepare-prompt`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("ams_token")}`,
+        },
+        body: JSON.stringify({
+          mode: "image",
+          userIdea: topic,
+          platform: "image",
+          contentType: "image_asset",
+          aspectRatio: "1:1",
+        }),
+      });
+      const data = await res.json().catch(() => ({})) as { prepared?: ImagePreparedPrompt; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Could not improve prompt.");
+      setPreparedPrompt(data.prepared ?? null);
+      if (data.prepared?.improvedPrompt) setTopic(data.prepared.improvedPrompt);
+      toast({ title: "Prompt improved", description: "Review and edit it before generating." });
+    } catch (err) {
+      toast({
+        title: "Prompt improvement failed",
+        description: err instanceof Error ? err.message : "Could not improve prompt.",
+        variant: "destructive",
+      });
+    } finally {
+      setImprovingPrompt(false);
     }
   }
 
@@ -173,13 +223,23 @@ export default function ImageStudio() {
         <CardContent className="pt-5 space-y-4">
           <div className="space-y-1.5">
             <Label>Topic / Concept</Label>
-            <Input
+            <textarea
+              className="min-h-[92px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               placeholder="e.g. Product launch announcement for a sustainable coffee brand"
               value={topic}
               onChange={e => setTopic(e.target.value)}
               onKeyDown={e => e.key === "Enter" && generatePrompts()}
             />
           </div>
+          {preparedPrompt && (
+            <div className="rounded-md border bg-muted/25 p-3 text-xs text-muted-foreground space-y-1.5">
+              {preparedPrompt.styleDirection && <p><span className="font-medium text-foreground">Style:</span> {preparedPrompt.styleDirection}</p>}
+              {preparedPrompt.paletteSuggestion && <p><span className="font-medium text-foreground">Palette:</span> {preparedPrompt.paletteSuggestion}</p>}
+              {preparedPrompt.layoutSuggestion && <p><span className="font-medium text-foreground">Layout:</span> {preparedPrompt.layoutSuggestion}</p>}
+              {preparedPrompt.headlineSuggestion && <p><span className="font-medium text-foreground">Headline:</span> {preparedPrompt.headlineSuggestion}</p>}
+              {preparedPrompt.negativePrompt && <p><span className="font-medium text-foreground">Avoid:</span> {preparedPrompt.negativePrompt}</p>}
+            </div>
+          )}
           <div className="flex items-end gap-4">
             <div className="space-y-1.5 flex-1">
               <Label>AI Quality</Label>
@@ -192,6 +252,11 @@ export default function ImageStudio() {
                 </SelectContent>
               </Select>
             </div>
+            <Button onClick={improveImagePrompt} disabled={improvingPrompt || loading} variant="outline" className="flex-1">
+              {improvingPrompt
+                ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Improving…</>
+                : <><Wand2 className="w-4 h-4 mr-2" /> Improve prompt with AI</>}
+            </Button>
             <Button onClick={generatePrompts} disabled={loading} className="flex-1">
               {loading
                 ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Generating prompts…</>

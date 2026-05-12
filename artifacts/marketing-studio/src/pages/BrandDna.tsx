@@ -14,6 +14,7 @@ import {
   getGetBrandDnaQueryKey,
   getListBrandAssetsQueryKey,
   getGetClientQueryKey,
+  type BrandDna as SavedBrandDna,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -50,6 +51,48 @@ const brandDnaSchema = z.object({
 });
 
 type BrandDnaFormValues = z.infer<typeof brandDnaSchema>;
+
+const emptyBrandDnaFormValues: BrandDnaFormValues = {
+  brandName: "",
+  voiceTone: "",
+  targetAudience: "",
+  industry: "",
+  brandValues: "",
+  visualStyle: "",
+  competitors: "",
+  additionalContext: "",
+  primaryColor: "",
+  secondaryColor: "",
+  accentColor: "",
+  fontStyle: "",
+  designNotes: "",
+  contentThemes: "",
+  postingCadence: "",
+  audiencePersonas: "",
+  campaignGoals: "",
+};
+
+function toBrandDnaFormValues(brandDna: Partial<SavedBrandDna> | null | undefined, fallbackBrandName = ""): BrandDnaFormValues {
+  return {
+    brandName: brandDna?.brandName || fallbackBrandName || "",
+    voiceTone: brandDna?.voiceTone || "",
+    targetAudience: brandDna?.targetAudience || "",
+    industry: brandDna?.industry || "",
+    brandValues: brandDna?.brandValues || "",
+    visualStyle: brandDna?.visualStyle || "",
+    competitors: brandDna?.competitors || "",
+    additionalContext: brandDna?.additionalContext || "",
+    primaryColor: brandDna?.primaryColor || "",
+    secondaryColor: brandDna?.secondaryColor || "",
+    accentColor: brandDna?.accentColor || "",
+    fontStyle: brandDna?.fontStyle || "",
+    designNotes: brandDna?.designNotes || "",
+    contentThemes: brandDna?.contentThemes || "",
+    postingCadence: brandDna?.postingCadence || "",
+    audiencePersonas: brandDna?.audiencePersonas || "",
+    campaignGoals: brandDna?.campaignGoals || "",
+  };
+}
 
 type WebsiteAnalysis = {
   brandTone: string;
@@ -258,37 +301,15 @@ export default function BrandDna() {
 
   const form = useForm<BrandDnaFormValues>({
     resolver: zodResolver(brandDnaSchema as unknown as Parameters<typeof zodResolver>[0]),
-    defaultValues: {
-      brandName: "", voiceTone: "", targetAudience: "", industry: "",
-      brandValues: "", visualStyle: "", competitors: "", additionalContext: "",
-      primaryColor: "", secondaryColor: "", accentColor: "", fontStyle: "", designNotes: "",
-      contentThemes: "", postingCadence: "", audiencePersonas: "", campaignGoals: "",
-    },
+    defaultValues: emptyBrandDnaFormValues,
   });
+  const isFormDirty = form.formState.isDirty;
 
   useEffect(() => {
-    if (brandDna) {
-      form.reset({
-        brandName: brandDna.brandName || "",
-        voiceTone: brandDna.voiceTone || "",
-        targetAudience: brandDna.targetAudience || "",
-        industry: brandDna.industry || "",
-        brandValues: brandDna.brandValues || "",
-        visualStyle: brandDna.visualStyle || "",
-        competitors: brandDna.competitors || "",
-        additionalContext: brandDna.additionalContext || "",
-        primaryColor: brandDna.primaryColor || "",
-        secondaryColor: brandDna.secondaryColor || "",
-        accentColor: brandDna.accentColor || "",
-        fontStyle: brandDna.fontStyle || "",
-        designNotes: brandDna.designNotes || "",
-        contentThemes: brandDna.contentThemes || "",
-        postingCadence: brandDna.postingCadence || "",
-        audiencePersonas: brandDna.audiencePersonas || "",
-        campaignGoals: brandDna.campaignGoals || "",
-      });
+    if (brandDna && !isFormDirty) {
+      form.reset(toBrandDnaFormValues(brandDna, client?.name || ""));
     }
-  }, [brandDna, form]);
+  }, [brandDna, client?.name, form, isFormDirty]);
 
   const onSubmit = (data: BrandDnaFormValues) => {
     if (!clientId) return;
@@ -315,7 +336,9 @@ export default function BrandDna() {
     upsertBrandDna.mutate(
       { clientId, data: payload },
       {
-        onSuccess: async () => {
+        onSuccess: async (savedBrandDna) => {
+          queryClient.setQueryData(getGetBrandDnaQueryKey(clientId), savedBrandDna);
+          form.reset(toBrandDnaFormValues(savedBrandDna, payload.brandName));
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: getGetBrandDnaQueryKey(clientId) }),
             queryClient.invalidateQueries({ queryKey: getGetClientQueryKey(clientId) }),
@@ -324,7 +347,11 @@ export default function BrandDna() {
           ]);
           toast({ title: "Brand DNA saved" });
         },
-        onError: () => toast({ title: "Failed to save Brand DNA", description: "Your changes were not saved. Please try again.", variant: "destructive" }),
+        onError: (err) => toast({
+          title: "Failed to save Brand DNA",
+          description: err instanceof Error ? err.message : "Your changes were not saved. Please try again.",
+          variant: "destructive",
+        }),
       }
     );
   };
@@ -446,6 +473,8 @@ export default function BrandDna() {
     }
     setSuggestedValue("voiceTone", websiteAnalysis.brandTone);
     setSuggestedValue("targetAudience", websiteAnalysis.targetAudience);
+    setSuggestedValue("industry", websiteAnalysis.productsServices);
+    setSuggestedValue("brandValues", websiteAnalysis.usp);
     setSuggestedValue("contentThemes", websiteAnalysis.contentPillars);
     setSuggestedValue("visualStyle", websiteAnalysis.visualStyle || websiteAnalysis.colorStyleHints);
     setSuggestedValue("fontStyle", websiteAnalysis.fontStyle || websiteAnalysisResult?.fontFamilies?.join(", ") || "");

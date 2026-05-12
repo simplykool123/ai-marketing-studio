@@ -16,6 +16,7 @@
  */
 
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { db } from "@workspace/db";
 import { postsTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -28,6 +29,7 @@ import {
 import { resolveTextProviderForMode, VIDEO_PROVIDERS, type QualityMode } from "../lib/provider-router.js";
 import { EDIT_CONTENT_ROLES, requireClientRole, type AuthRequest } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
+import { uploadToSupabase } from "./upload.js";
 import {
   defaultVideoModel,
   generateVideo,
@@ -37,6 +39,7 @@ import {
 } from "../lib/video-generator.js";
 
 const router = Router();
+const MAX_DURABLE_VIDEO_BYTES = 50 * 1024 * 1024;
 
 function cleanVideoDuration(value: unknown): number | undefined {
   const duration = Number(value);
@@ -50,6 +53,90 @@ function cleanAspectRatio(value: unknown): VideoAspectRatio | undefined {
 
 function modelFromQuery(value: unknown): string {
   return typeof value === "string" && value.trim() ? value.trim() : defaultVideoModel();
+}
+
+function isSafePublicUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    return ["http:", "https:"].includes(url.protocol) && !(
+      host === "localhost" ||
+      host.endsWith(".local") ||
+      host === "127.0.0.1" ||
+      host === "0.0.0.0" ||
+      host === "::1" ||
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function videoExtension(contentType: string, url: string): string {
+  if (contentType.includes("webm")) return "webm";
+  if (contentType.includes("quicktime")) return "mov";
+  if (contentType.includes("mpeg")) return "mpeg";
+  const pathExt = url.match(/\.([a-z0-9]{2,5})(?:\?|$)/i)?.[1]?.toLowerCase();
+  if (pathExt && ["mp4", "webm", "mov", "mpeg", "mpg"].includes(pathExt)) return pathExt;
+  return "mp4";
+}
+
+async function downloadRemoteVideo(videoUrl: string): Promise<{ buffer: Buffer; contentType: string; size: number }> {
+  if (!isSafePublicUrl(videoUrl)) {
+    throw Object.assign(new Error("Video URL must be a public http or https URL."), { statusCode: 400 });
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45000);
+  try {
+    const response = await fetch(videoUrl, {
+      redirect: "follow",
+      signal: controller.signal,
+      headers: {
+        "user-agent": "AI Marketing Studio Video Saver/1.0",
+        "accept": "video/mp4,video/webm,video/quicktime,video/*,*/*;q=0.8",
+      },
+    });
+    if (!response.ok) {
+      throw Object.assign(new Error(`Could not download provider video (HTTP ${response.status}).`), { statusCode: 502 });
+    }
+    const contentType = (response.headers.get("content-type") ?? "video/mp4").split(";")[0]?.trim().toLowerCase() || "video/mp4";
+    if (!contentType.startsWith("video/") && contentType !== "application/octet-stream") {
+      throw Object.assign(new Error("The provider URL did not return a video file."), { statusCode: 415 });
+    }
+    const contentLength = Number(response.headers.get("content-length") ?? 0);
+    if (contentLength > MAX_DURABLE_VIDEO_BYTES) {
+      throw Object.assign(new Error("Video is too large to save to Review. Maximum size is 50 MB."), { statusCode: 413 });
+    }
+
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const reader = response.body?.getReader();
+    if (!reader) {
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.byteLength > MAX_DURABLE_VIDEO_BYTES) {
+        throw Object.assign(new Error("Video is too large to save to Review. Maximum size is 50 MB."), { statusCode: 413 });
+      }
+      return { buffer, contentType: contentType === "application/octet-stream" ? "video/mp4" : contentType, size: buffer.byteLength };
+    }
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      total += chunk.byteLength;
+      if (total > MAX_DURABLE_VIDEO_BYTES) {
+        throw Object.assign(new Error("Video is too large to save to Review. Maximum size is 50 MB."), { statusCode: 413 });
+      }
+      chunks.push(chunk);
+    }
+    return { buffer: Buffer.concat(chunks), contentType: contentType === "application/octet-stream" ? "video/mp4" : contentType, size: total };
+  } catch (err) {
+    if (err instanceof Error && "statusCode" in err) throw err;
+    throw Object.assign(new Error("Could not download provider video. The URL may have expired."), { statusCode: 502 });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // POST /clients/:clientId/video/generate
@@ -99,6 +186,87 @@ router.post(
 
 // Future phase: download completed provider video URLs to durable storage before
 // attaching them to Review, because provider-hosted media URLs may expire.
+
+router.post(
+  "/clients/:clientId/video/save-to-review",
+  requireClientRole(EDIT_CONTENT_ROLES),
+  async (req: AuthRequest, res): Promise<void> => {
+    const body = req.body as {
+      videoUrl?: string;
+      prompt?: string;
+      platform?: string;
+      aspectRatio?: VideoAspectRatio;
+      title?: string;
+      caption?: string;
+      provider?: string;
+      model?: string;
+      jobId?: string;
+    };
+
+    if (!body.videoUrl?.trim()) {
+      res.status(400).json({ error: "videoUrl is required" });
+      return;
+    }
+    if (!body.prompt?.trim()) {
+      res.status(400).json({ error: "prompt is required" });
+      return;
+    }
+
+    try {
+      const downloaded = await downloadRemoteVideo(body.videoUrl.trim());
+      const ext = videoExtension(downloaded.contentType, body.videoUrl);
+      const path = `videos/${req.params.clientId}/${Date.now()}-${randomUUID()}.${ext}`;
+      const durableVideoUrl = await uploadToSupabase(downloaded.buffer, path, downloaded.contentType);
+      const title = body.title?.trim() || "Generated video draft";
+      const caption = body.caption?.trim() || body.prompt.trim();
+      const platform = typeof body.platform === "string" && body.platform.trim() ? body.platform.trim() : "instagram";
+      const aspectRatio = cleanAspectRatio(body.aspectRatio) ?? "9:16";
+
+      const [post] = await db
+        .insert(postsTable)
+        .values({
+          clientId: req.params.clientId,
+          contentType: "video",
+          postType: "video",
+          status: "draft",
+          platform,
+          title,
+          topic: title,
+          caption,
+          imagePrompt: body.prompt.trim(),
+          contentSchema: {
+            videoUrl: durableVideoUrl,
+            providerVideoUrl: body.videoUrl.trim(),
+            prompt: body.prompt.trim(),
+            title,
+            caption,
+            platform,
+            aspectRatio,
+            source: "video_studio",
+            storagePath: path,
+            fileSizeBytes: downloaded.size,
+            // TODO: add durable archive/cleanup policy, optionally mirrored to Google Drive.
+          },
+          generationMetadata: {
+            provider: body.provider ?? "fal.ai",
+            model: body.model ?? null,
+            jobId: body.jobId ?? null,
+            originalVideoUrl: body.videoUrl.trim(),
+            savedFrom: "video_studio",
+            savedAt: new Date().toISOString(),
+          },
+        })
+        .returning();
+
+      res.status(201).json(post);
+    } catch (err) {
+      const statusCode = err instanceof Error && "statusCode" in err ? Number((err as { statusCode: number }).statusCode) : 500;
+      const message = err instanceof Error ? err.message : "Could not save video to Review.";
+      logger.error({ error: safeErrorMessage(err) }, "Video save-to-review error");
+      res.status(Number.isFinite(statusCode) ? statusCode : 500).json({ error: message });
+    }
+  }
+);
 
 router.get(
   "/clients/:clientId/video/status/:jobId",

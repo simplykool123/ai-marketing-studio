@@ -144,7 +144,7 @@ export const PROVIDER_PRIORITY = ["openai", "gemini", "anthropic"] as const;
 
 export const DEFAULT_MODELS: Record<string, string> = {
   openai:    "gpt-4o",
-  gemini:    "gemini-1.5-pro",
+  gemini:    "gemini-2.5-flash",
   anthropic: "claude-sonnet-4-6",
 };
 
@@ -287,7 +287,7 @@ export async function generateTextWithProvider(
 
       if (provider === "gemini") {
         const genai = new GoogleGenerativeAI(candidate.key);
-        const geminiModel = genai.getGenerativeModel({ model: model || "gemini-1.5-pro" });
+        const geminiModel = genai.getGenerativeModel({ model: model || DEFAULT_MODELS.gemini });
         const res = await geminiModel.generateContent(prompt);
         return res.response.text();
       }

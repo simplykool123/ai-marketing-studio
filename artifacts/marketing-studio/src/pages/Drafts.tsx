@@ -140,7 +140,7 @@ const CONTENT_FILTERS = [
   { value: "blog", label: "Blog" },
   { value: "newsletter", label: "Newsletter" },
   { value: "image", label: "Image prompts/assets" },
-  { value: "video", label: "Video scripts" },
+  { value: "video", label: "Videos" },
 ] as const;
 
 const REJECT_CATEGORIES = [
@@ -193,6 +193,11 @@ function postImageUrl(post: Post): string | null {
     schema.generatedImageUrl ||
     null
   );
+}
+
+function postVideoUrl(post: Post): string | null {
+  const schema = asRecord(post.contentSchema);
+  return firstString(schema.videoUrl, schema.durableVideoUrl, schema.finalVideoUrl);
 }
 
 function artworkBaseImageUrl(post: Post): string | null {
@@ -1625,8 +1630,23 @@ function ListBlock({ title, items }: { title: string; items?: unknown[] }) {
 
 function DraftImagePreview({ post, large = false }: { post: Post; large?: boolean }) {
   const [failed, setFailed] = useState(false);
+  const [videoFailed, setVideoFailed] = useState(false);
+  const videoUrl = postVideoUrl(post);
   const imageUrl = postImageUrl(post);
   const prompt = postImagePrompt(post);
+
+  if (videoUrl && !videoFailed) {
+    return (
+      <video
+        src={videoUrl}
+        controls={large}
+        muted={!large}
+        preload="metadata"
+        className="w-full h-full object-contain bg-black"
+        onError={() => setVideoFailed(true)}
+      />
+    );
+  }
 
   if (imageUrl && !failed) {
     return (
@@ -1643,8 +1663,13 @@ function DraftImagePreview({ post, large = false }: { post: Post; large?: boolea
     <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-muted px-4 text-center">
       <ImagePlus className={cn(large ? "w-8 h-8" : "w-6 h-6", "text-muted-foreground/35")} />
       <p className={cn("font-medium text-muted-foreground", large ? "text-sm" : "text-xs")}>
-        {imageUrl ? "Image expired or unavailable" : "No image yet"}
+        {videoUrl ? "Video unavailable" : imageUrl ? "Image expired or unavailable" : "No image yet"}
       </p>
+      {videoUrl && (
+        <a href={videoUrl} target="_blank" rel="noreferrer" className="text-xs text-primary underline">
+          Open video
+        </a>
+      )}
       {prompt && (
         <p className={cn("text-muted-foreground line-clamp-3", large ? "text-xs" : "text-[10px]")}>
           {prompt}
@@ -1684,9 +1709,21 @@ function DraftPreviewContent({ post }: { post: Post }) {
 
   if (type === "video") {
     const scenes = Array.isArray(schema.scenes) ? schema.scenes : [];
+    const videoUrl = postVideoUrl(post);
     return (
       <div className="space-y-4">
+        {videoUrl && (
+          <div className="space-y-2">
+            <div className="overflow-hidden rounded-lg border bg-black">
+              <video src={videoUrl} controls className="w-full max-h-[520px]" />
+            </div>
+            <a href={videoUrl} target="_blank" rel="noreferrer" className="text-xs text-primary underline inline-flex items-center gap-1">
+              Open video file <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+        )}
         <TextBlock title="Hook">{schema.hook || post.topic}</TextBlock>
+        <TextBlock title="Prompt">{schema.prompt || post.imagePrompt}</TextBlock>
         <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scenes</p>
           {scenes.length > 0 ? scenes.map((scene: any, index: number) => (

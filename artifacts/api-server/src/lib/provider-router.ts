@@ -62,22 +62,22 @@ export interface VideoProviderOption {
 
 export const TEXT_PROVIDERS: Record<QualityMode, TextProviderOption[]> = {
   cheap: [
-    { name: "gemini",    label: "Gemini Flash",      model: "gemini-1.5-flash",  internalKey: "gemini",    notes: "Fast, cost-effective" },
+    { name: "gemini",    label: "Gemini Flash",      model: "gemini-2.5-flash",  internalKey: "gemini",    notes: "Fast, cost-effective" },
     { name: "openai",    label: "GPT-4o-mini",       model: "gpt-4o-mini",       internalKey: "openai",    notes: "Cheap OpenAI option" },
     { name: "anthropic", label: "Claude Haiku",      model: "claude-haiku-4-5-20251001", internalKey: "anthropic", notes: "Fast Anthropic" },
   ],
   balanced: [
     { name: "openai",    label: "GPT-4o",            model: "gpt-4o",            internalKey: "openai",    notes: "Strong all-rounder" },
     { name: "anthropic", label: "Claude Sonnet",     model: "claude-sonnet-4-6", internalKey: "anthropic", notes: "Balanced Anthropic" },
-    { name: "gemini",    label: "Gemini Pro",        model: "gemini-1.5-pro",    internalKey: "gemini",    notes: "Balanced Google" },
+    { name: "gemini",    label: "Gemini Flash",      model: "gemini-2.5-flash",  internalKey: "gemini",    notes: "Balanced Google" },
   ],
   best_quality: [
     { name: "anthropic", label: "Claude Opus",       model: "claude-opus-4-7",   internalKey: "anthropic", notes: "Highest reasoning quality" },
     { name: "openai",    label: "GPT-4o",            model: "gpt-4o",            internalKey: "openai",    notes: "Best OpenAI option" },
-    { name: "gemini",    label: "Gemini Pro",        model: "gemini-1.5-pro",    internalKey: "gemini",    notes: "Best Google option" },
+    { name: "gemini",    label: "Gemini Flash",      model: "gemini-2.5-flash",  internalKey: "gemini",    notes: "Best Google option" },
   ],
   fastest: [
-    { name: "gemini",    label: "Gemini Flash",      model: "gemini-1.5-flash",  internalKey: "gemini",    notes: "Lowest latency" },
+    { name: "gemini",    label: "Gemini Flash",      model: "gemini-2.5-flash",  internalKey: "gemini",    notes: "Lowest latency" },
     { name: "openai",    label: "GPT-4o-mini",       model: "gpt-4o-mini",       internalKey: "openai",    notes: "Fast OpenAI" },
     { name: "anthropic", label: "Claude Haiku",      model: "claude-haiku-4-5-20251001", internalKey: "anthropic", notes: "Fast Claude" },
   ],

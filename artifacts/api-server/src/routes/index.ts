@@ -23,6 +23,7 @@ import campaignGenerateRouter from "./campaign_generate.js";
 import blogStudioRouter from "./blog_studio.js";
 import imageStudioRouter from "./image_studio.js";
 import videoStudioRouter from "./video_studio.js";
+import creativeRouter from "./creative.js";
 import skillsRouter from "./skills.js";
 import occasionsRouter from "./occasions.js";
 import { requireAuth, requireClientAccess } from "../middleware/auth.js";
@@ -57,6 +58,7 @@ router.use(campaignGenerateRouter);
 router.use(blogStudioRouter);
 router.use(imageStudioRouter);
 router.use(videoStudioRouter);
+router.use(creativeRouter);
 router.use(skillsRouter);
 router.use(occasionsRouter);
 

@@ -14,7 +14,8 @@ const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const BUCKET = "post-images";
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+const STORAGE_MIME_TYPES = ["image/*", "application/pdf", "video/*"];
 
 class SafeUploadError extends Error {
   constructor(
@@ -48,7 +49,7 @@ async function ensureStorageBucketOnce(): Promise<void> {
     const { error: createError } = await supabase.storage.createBucket(BUCKET, {
       public: true,
       fileSizeLimit: MAX_FILE_SIZE_BYTES,
-      allowedMimeTypes: ["image/*", "application/pdf"],
+      allowedMimeTypes: STORAGE_MIME_TYPES,
     });
 
     if (createError) {
@@ -64,8 +65,8 @@ async function ensureStorageBucketOnce(): Promise<void> {
   if (!bucket.public) {
     const { error: updateError } = await supabase.storage.updateBucket(BUCKET, {
       public: true,
-      fileSizeLimit: bucket.file_size_limit ?? MAX_FILE_SIZE_BYTES,
-      allowedMimeTypes: bucket.allowed_mime_types ?? ["image/*", "application/pdf"],
+      fileSizeLimit: Math.max(Number(bucket.file_size_limit ?? 0), MAX_FILE_SIZE_BYTES),
+      allowedMimeTypes: Array.from(new Set([...(bucket.allowed_mime_types ?? []), ...STORAGE_MIME_TYPES])),
     });
 
     if (updateError) {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "wouter";
+import { Link, useParams } from "wouter";
 import {
   Video, Sparkles, RefreshCw, Lock, ChevronDown,
   ChevronRight, Mic, Eye, Type, Zap, ExternalLink,
@@ -65,6 +65,18 @@ interface VideoGenerationJob {
   error?: string;
 }
 
+type VideoPreparedPrompt = {
+  improvedPrompt?: string;
+  visualStory?: string;
+  sceneBreakdown?: string[];
+  cameraStyle?: string;
+  motionStyle?: string;
+  textOverlaySuggestions?: string[];
+  brandOverlayNotes?: string;
+  durationSuggestion?: string;
+  platformNotes?: string;
+};
+
 // ---------------------------------------------------------------------------
 // Platform display labels
 // ---------------------------------------------------------------------------
@@ -99,9 +111,16 @@ export default function VideoStudio() {
   const [videoAspectRatio, setVideoAspectRatio] = useState<VideoAspectRatio>("9:16");
   const [videoDurationSeconds, setVideoDurationSeconds] = useState<5 | 10>(5);
   const [submittingVideo, setSubmittingVideo] = useState(false);
+  const [improvingVideoPrompt, setImprovingVideoPrompt] = useState(false);
+  const [preparedVideoPrompt, setPreparedVideoPrompt] = useState<VideoPreparedPrompt | null>(null);
   const [videoJob, setVideoJob] = useState<VideoGenerationJob | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [fetchingVideoResult, setFetchingVideoResult] = useState(false);
+  const [videoDraftTitle, setVideoDraftTitle] = useState("");
+  const [videoDraftCaption, setVideoDraftCaption] = useState("");
+  const [videoDraftPlatform, setVideoDraftPlatform] = useState("instagram");
+  const [savingVideoDraft, setSavingVideoDraft] = useState(false);
+  const [savedVideoPostId, setSavedVideoPostId] = useState<string | null>(null);
 
   async function generate() {
     if (!topic.trim()) {
@@ -166,6 +185,9 @@ export default function VideoStudio() {
         throw new Error(message);
       }
       setVideoJob(data);
+      setSavedVideoPostId(null);
+      setVideoDraftTitle((current) => current || "Generated video draft");
+      setVideoDraftCaption((current) => current || videoPrompt.trim());
       toast({
         title: data.status === "completed" ? "Video generated" : "Video job queued",
         description: data.jobId ? `Job ${data.jobId}` : undefined,
@@ -176,6 +198,43 @@ export default function VideoStudio() {
       toast({ title: "Video generation failed", description: message, variant: "destructive" });
     } finally {
       setSubmittingVideo(false);
+    }
+  }
+
+  async function improveVideoPrompt() {
+    if (!videoPrompt.trim()) {
+      toast({ title: "Enter a rough video story first", variant: "destructive" });
+      return;
+    }
+    setImprovingVideoPrompt(true);
+    try {
+      const res = await fetch(`${BASE}/api/clients/${clientId}/creative/prepare-prompt`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("ams_token")}`,
+        },
+        body: JSON.stringify({
+          mode: "video",
+          userIdea: videoPrompt,
+          platform,
+          contentType: "video",
+          aspectRatio: videoAspectRatio,
+        }),
+      });
+      const data = await res.json().catch(() => ({})) as { prepared?: VideoPreparedPrompt; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Could not improve video prompt.");
+      setPreparedVideoPrompt(data.prepared ?? null);
+      if (data.prepared?.improvedPrompt) setVideoPrompt(data.prepared.improvedPrompt);
+      toast({ title: "Video prompt improved", description: "Review and edit it before generating." });
+    } catch (err) {
+      toast({
+        title: "Prompt improvement failed",
+        description: err instanceof Error ? err.message : "Could not improve video prompt.",
+        variant: "destructive",
+      });
+    } finally {
+      setImprovingVideoPrompt(false);
     }
   }
 
@@ -208,6 +267,7 @@ export default function VideoStudio() {
         throw new Error(data.error ?? "Could not retrieve video result.");
       }
       setVideoJob((current) => current ? { ...current, ...data } : data);
+      if (data.videoUrl) setSavedVideoPostId(null);
       if (!data.videoUrl && data.status !== "completed") {
         setVideoError("Video is not ready yet. Keep polling for the final result.");
       }
@@ -215,6 +275,40 @@ export default function VideoStudio() {
       setVideoError(err instanceof Error ? err.message : "Could not retrieve video result.");
     } finally {
       setFetchingVideoResult(false);
+    }
+  }
+
+  async function saveVideoToReview() {
+    if (!videoJob?.videoUrl) return;
+    setSavingVideoDraft(true);
+    try {
+      const res = await fetch(`${BASE}/api/clients/${clientId}/video/save-to-review`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("ams_token")}`,
+        },
+        body: JSON.stringify({
+          videoUrl: videoJob.videoUrl,
+          prompt: videoPrompt,
+          platform: videoDraftPlatform,
+          aspectRatio: videoAspectRatio,
+          title: videoDraftTitle,
+          caption: videoDraftCaption,
+          provider: videoJob.provider,
+          model: videoJob.model,
+          jobId: videoJob.jobId,
+        }),
+      });
+      const data = await res.json().catch(() => ({})) as { id?: string; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Could not save video to Review.");
+      setSavedVideoPostId(data.id ?? null);
+      toast({ title: "Video draft saved to Review." });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not save video to Review.";
+      toast({ title: "Save failed", description: message, variant: "destructive" });
+    } finally {
+      setSavingVideoDraft(false);
     }
   }
 
@@ -252,13 +346,13 @@ export default function VideoStudio() {
             AI Video Generation Test
           </CardTitle>
           <p className="text-xs text-muted-foreground">
-            This tests the backend provider only. It does not save to Review, Assets, posts, or Publish Queue.
+            Generate a provider video, preview it, then save it to Review only when you are ready.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
             <p>Video generation may take 1-3 minutes and may use credits.</p>
-            <p>Generated provider URLs may expire until storage saving is added.</p>
+            <p>Generated provider URLs may expire until you save the video to Review.</p>
           </div>
           <div className="space-y-1.5">
             <Label>Prompt</Label>
@@ -269,6 +363,22 @@ export default function VideoStudio() {
               onChange={(event) => setVideoPrompt(event.target.value)}
             />
           </div>
+          {preparedVideoPrompt && (
+            <div className="rounded-md border bg-muted/25 p-3 text-xs text-muted-foreground space-y-2">
+              {preparedVideoPrompt.visualStory && <p><span className="font-medium text-foreground">Visual story:</span> {preparedVideoPrompt.visualStory}</p>}
+              {preparedVideoPrompt.sceneBreakdown?.length ? (
+                <div>
+                  <p className="font-medium text-foreground">Scene breakdown</p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    {preparedVideoPrompt.sceneBreakdown.map((scene, index) => <li key={index}>{scene}</li>)}
+                  </ul>
+                </div>
+              ) : null}
+              {preparedVideoPrompt.cameraStyle && <p><span className="font-medium text-foreground">Camera:</span> {preparedVideoPrompt.cameraStyle}</p>}
+              {preparedVideoPrompt.motionStyle && <p><span className="font-medium text-foreground">Motion:</span> {preparedVideoPrompt.motionStyle}</p>}
+              {preparedVideoPrompt.brandOverlayNotes && <p><span className="font-medium text-foreground">Brand overlay:</span> {preparedVideoPrompt.brandOverlayNotes}</p>}
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="space-y-1.5">
               <Label>Aspect Ratio</Label>
@@ -300,11 +410,18 @@ export default function VideoStudio() {
               />
             </div>
           </div>
-          <Button onClick={generateProviderVideo} disabled={submittingVideo} className="w-full">
-            {submittingVideo
-              ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Submitting video job...</>
-              : <><Video className="w-4 h-4 mr-2" /> Generate Video</>}
-          </Button>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button onClick={improveVideoPrompt} disabled={improvingVideoPrompt || submittingVideo} variant="outline">
+              {improvingVideoPrompt
+                ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Improving prompt...</>
+                : <><Sparkles className="w-4 h-4 mr-2" /> Improve video prompt with AI</>}
+            </Button>
+            <Button onClick={generateProviderVideo} disabled={submittingVideo}>
+              {submittingVideo
+                ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Submitting video job...</>
+                : <><Video className="w-4 h-4 mr-2" /> Generate Video</>}
+            </Button>
+          </div>
 
           {(videoJob || videoError) && (
             <div className="rounded-lg border bg-background p-4 space-y-3">
@@ -367,6 +484,56 @@ export default function VideoStudio() {
                   >
                     Open provider video URL <ExternalLink className="w-3 h-3" />
                   </a>
+                  <div className="rounded-md border bg-muted/20 p-3 space-y-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label>Review title</Label>
+                        <Input
+                          value={videoDraftTitle}
+                          onChange={(event) => setVideoDraftTitle(event.target.value)}
+                          placeholder="Generated video draft"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Platform</Label>
+                        <Select value={videoDraftPlatform} onValueChange={setVideoDraftPlatform}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="instagram">Instagram</SelectItem>
+                            <SelectItem value="facebook">Facebook</SelectItem>
+                            <SelectItem value="linkedin">LinkedIn</SelectItem>
+                            <SelectItem value="youtube">YouTube</SelectItem>
+                            <SelectItem value="tiktok">TikTok</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Caption</Label>
+                      <textarea
+                        className="min-h-[82px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        value={videoDraftCaption}
+                        onChange={(event) => setVideoDraftCaption(event.target.value)}
+                        placeholder="Caption for Review"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Button onClick={saveVideoToReview} disabled={savingVideoDraft || !!savedVideoPostId} className="flex-1">
+                        {savingVideoDraft ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Video className="w-4 h-4 mr-2" />}
+                        {savedVideoPostId ? "Saved to Review" : "Save to Review"}
+                      </Button>
+                      {savedVideoPostId && (
+                        <Button asChild variant="outline" className="flex-1">
+                          <Link href={`/clients/${clientId}/drafts?tab=drafts`}>
+                            Open Review
+                          </Link>
+                        </Button>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Saving downloads the provider video and stores a durable Review draft. It does not publish or add the video to Publish Queue automatically.
+                    </p>
+                  </div>
                 </div>
               )}
             </div>

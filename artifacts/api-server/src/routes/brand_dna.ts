@@ -802,6 +802,52 @@ function parseAnalysisResponse(text: string): BrandWebsiteAnalysis {
   return { ...emptyAnalysis(), ...JSON.parse(jsonMatch[0]) };
 }
 
+function stringValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean).join(", ");
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function appendLines(existing: unknown, lines: string[]): string {
+  const parts = [stringValue(existing), ...lines.map((line) => line.trim()).filter(Boolean)];
+  return Array.from(new Set(parts.filter(Boolean))).join("\n");
+}
+
+function normalizeBrandDnaBody(raw: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = { ...raw };
+  const colors = raw.colors;
+
+  if (!normalized.voiceTone) normalized.voiceTone = raw.tone || raw.language || raw.brandTone;
+  if (!normalized.contentThemes) normalized.contentThemes = raw.contentPillars;
+  if (!normalized.industry) normalized.industry = raw.productsServices;
+  if (!normalized.brandValues) normalized.brandValues = raw.usp;
+  if (!normalized.visualStyle) normalized.visualStyle = raw.imageStyle || raw.colorStyleHints;
+
+  if (colors && typeof colors === "object") {
+    const colorRecord = colors as Record<string, unknown>;
+    if (!normalized.primaryColor) normalized.primaryColor = colorRecord.primary || colorRecord.primaryColor;
+    if (!normalized.secondaryColor) normalized.secondaryColor = colorRecord.secondary || colorRecord.secondaryColor;
+    if (!normalized.accentColor) normalized.accentColor = colorRecord.accent || colorRecord.accentColor;
+  } else if (Array.isArray(colors)) {
+    if (!normalized.primaryColor) normalized.primaryColor = colors[0];
+    if (!normalized.secondaryColor) normalized.secondaryColor = colors[1];
+    if (!normalized.accentColor) normalized.accentColor = colors[2];
+  }
+
+  normalized.designNotes = appendLines(normalized.designNotes, [
+    raw.imageStyle ? `Image style: ${stringValue(raw.imageStyle)}` : "",
+    raw.designNotes ? stringValue(raw.designNotes) : "",
+  ]);
+  normalized.additionalContext = appendLines(normalized.additionalContext, [
+    raw.productsServices ? `Products/services: ${stringValue(raw.productsServices)}` : "",
+    raw.usp ? `USP: ${stringValue(raw.usp)}` : "",
+    raw.keywords ? `Keywords: ${stringValue(raw.keywords)}` : "",
+    raw.platforms ? `Platforms: ${stringValue(raw.platforms)}` : "",
+  ]);
+
+  return normalized;
+}
+
 router.get("/clients/:clientId/brand-dna", async (req, res): Promise<void> => {
   try {
     const [dna] = await db
@@ -818,7 +864,15 @@ router.get("/clients/:clientId/brand-dna", async (req, res): Promise<void> => {
 
 router.put("/clients/:clientId/brand-dna", requireClientRole(EDIT_CONTENT_ROLES), async (req, res): Promise<void> => {
   try {
-    const body = UpsertBrandDnaBody.parse(req.body);
+    const parsed = UpsertBrandDnaBody.safeParse(normalizeBrandDnaBody(req.body as Record<string, unknown>));
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "Failed to upsert Brand DNA",
+        details: parsed.error.message,
+      });
+      return;
+    }
+    const body = parsed.data;
     const [existing] = await db
       .select()
       .from(brandDnaTable)
@@ -840,7 +894,8 @@ router.put("/clients/:clientId/brand-dna", requireClientRole(EDIT_CONTENT_ROLES)
       .returning();
     res.status(200).json(created);
   } catch (err) {
-    res.status(400).json({ error: "Failed to upsert brand DNA" });
+    logger.error({ error: safeErrorMessage(err), clientId: req.params.clientId }, "Brand DNA upsert error");
+    res.status(400).json({ error: "Failed to upsert Brand DNA" });
   }
 });
 

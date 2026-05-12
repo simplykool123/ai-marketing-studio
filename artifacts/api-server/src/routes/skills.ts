@@ -226,6 +226,9 @@ function hashtagsFromOutput(output: Record<string, unknown>): string {
   const hashtags = output.hashtags;
   if (Array.isArray(hashtags)) return hashtags.map(String).join(" ");
   if (typeof hashtags === "string") return hashtags;
+  const caption = stringFromOutput(output, ["caption", "rewrittenCaption", "revisedCaption"]);
+  const extracted = caption.match(/#[\p{L}\p{N}_]+/gu);
+  if (extracted?.length) return extracted.join(" ");
   return "";
 }
 
@@ -268,7 +271,7 @@ router.post(
       const contentType = saveDestination.content_type ?? result.skill.category ?? "social_post";
       const platform = stringFromOutput(result.output, ["platform"], saveDestination.platform ?? "social");
       const topic = stringFromOutput(result.output, ["topic", "title", "seoTitle", "subject"], typeof input.topic === "string" ? input.topic : "Untitled skill draft");
-      const caption = stringFromOutput(result.output, ["caption", "metaDescription", "preheader", "hook"], "");
+      const caption = stringFromOutput(result.output, ["caption", "rewrittenCaption", "revisedCaption", "metaDescription", "preheader", "hook"], "");
       const imagePrompt = stringFromOutput(result.output, ["imagePrompt", "visualDirection"], "");
       const title = stringFromOutput(result.output, ["title", "seoTitle", "subject"], "");
       const longFormBody = stringFromOutput(result.output, ["fullDraft", "body", "voiceoverFull"], "");
@@ -286,6 +289,7 @@ router.post(
             contentSchema: skillId === "platform_rewrite"
               ? {
                   ...result.output,
+                  caption,
                   sourcePostId: typeof input.sourcePostId === "string" ? input.sourcePostId : null,
                   sourcePlatform: typeof input.sourcePlatform === "string" ? input.sourcePlatform : null,
                   targetPlatform: typeof input.targetPlatform === "string" ? input.targetPlatform : platform,
