@@ -17,6 +17,7 @@ import {
   ImageIcon,
   Filter,
   Link2,
+  Archive,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -205,11 +206,22 @@ export default function AssetLibrary() {
 
       <div className="flex items-start gap-2.5 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
         <ImageIcon className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground/60" />
-        <p className="text-xs leading-relaxed">
-          AI-generated image URLs expire after a short time. If an image shows as expired, regenerate it in{" "}
-          <strong className="text-foreground/70">Image Studio</strong>.{" "}
-          Future images will be saved to persistent storage once storage is configured.
-        </p>
+        <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs leading-relaxed">
+            Assets saved through Review, Image Studio, Brand Setup, and Video Studio use Supabase active storage.{" "}
+            Large videos and old published media can be archived later to reduce storage cost.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 self-start text-xs sm:self-center"
+            disabled
+            title="Google Drive archive is scaffolded for a later phase. V1 never deletes Supabase files."
+          >
+            <Archive className="w-3.5 h-3.5" />
+            Archive to Google Drive
+          </Button>
+        </div>
       </div>
 
       {/* Status filter row */}
@@ -297,6 +309,15 @@ export default function AssetLibrary() {
                       title="Attach to a draft post"
                     >
                       <Link2 className="w-3 h-3" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="secondary"
+                      className="h-8 w-8"
+                      disabled
+                      title="Archive to Google Drive is coming later. V1 never deletes Supabase files."
+                    >
+                      <Archive className="w-3 h-3" />
                     </Button>
                     {img.status !== "rejected" ? (
                       <Button

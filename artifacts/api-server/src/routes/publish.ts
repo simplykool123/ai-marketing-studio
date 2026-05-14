@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { postsTable, socialAccountsTable } from "@workspace/db/schema";
 import { and, eq } from "drizzle-orm";
 import { isEncryptionConfigured } from "../lib/crypto.js";
-import { resolveAccessToken } from "../lib/scheduler.js";
+import { resolveAccessToken, runScheduledPublish } from "../lib/scheduler.js";
 import { publishToPlatform } from "../lib/publishers/index.js";
 import { APPROVE_CONTENT_ROLES, requireClientRole } from "../middleware/auth.js";
 import { writeClientMemory } from "../lib/client-memory-packet.js";
@@ -144,6 +144,19 @@ router.post("/clients/:clientId/posts/:postId/publish", requireClientRole(APPROV
     const message = err instanceof Error ? err.message : "Publish failed";
     await markFailed(req.params.postId, req.params.clientId, message).catch(() => {});
 
+    res.status(500).json({ error: message });
+  }
+});
+
+// POST /clients/:clientId/publishing/run-due-check
+// Manual reliability hook for admin/dev operations. It uses the same scheduler
+// safety checks as the interval runner and respects ENABLE_AUTO_PUBLISH=false.
+router.post("/clients/:clientId/publishing/run-due-check", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res): Promise<void> => {
+  try {
+    const result = await runScheduledPublish({ reason: "manual", clientId: req.params.clientId });
+    res.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to run due publish check";
     res.status(500).json({ error: message });
   }
 });

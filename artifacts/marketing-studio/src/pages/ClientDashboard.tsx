@@ -75,6 +75,7 @@ type EnhancedDashboard = {
     scheduledAt?: string | null;
   }>;
   pendingApprovals: number;
+  needsAttentionCount: number;
   recentlyPublished?: Post[];
   storageReady: boolean;
   storageStatusMessage?: string;
@@ -352,6 +353,14 @@ export default function ClientDashboard() {
     return [...published, ...recent].slice(0, 5);
   })();
   const nextStep = (() => {
+    if (dashboard.needsAttentionCount > 0) {
+      return {
+        title: `${dashboard.needsAttentionCount} post${dashboard.needsAttentionCount === 1 ? "" : "s"} need attention`,
+        detail: "A publish attempt failed or was blocked. Open the Publish Queue to review the reason and choose manual export, reconnect, or retry.",
+        href: `/clients/${clientId}/queue`,
+        button: "Open Publish Queue",
+      };
+    }
     if (!dashboard.aiProviderConfigured) {
       return {
         title: "Configure AI provider",
@@ -481,6 +490,29 @@ export default function ClientDashboard() {
         <PipelineStep label="Scheduled" count={dashboard.scheduledCount} icon={Clock} />
         <PipelineStep label="Published" count={dashboard.publishedCount} icon={Globe} />
       </div>
+
+      {dashboard.needsAttentionCount > 0 && (
+        <Card className="border-red-200 bg-red-50/70">
+          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 shrink-0 text-red-600 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-red-900">
+                  {dashboard.needsAttentionCount} post{dashboard.needsAttentionCount === 1 ? "" : "s"} need attention
+                </p>
+                <p className="text-xs text-red-800/90 mt-0.5">
+                  Publish attempts that fail stay visible with their reason so they can be retried, exported, or fixed.
+                </p>
+              </div>
+            </div>
+            <Link href={`/clients/${clientId}/queue`}>
+              <Button variant="outline" size="sm" className="border-red-200 bg-white text-red-800 hover:bg-red-100">
+                Review failures
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between py-3">

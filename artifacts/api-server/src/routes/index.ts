@@ -29,6 +29,7 @@ import occasionsRouter from "./occasions.js";
 import analyticsRouter from "./analytics.js";
 import socialIntelligenceRouter from "./social_intelligence.js";
 import reportsRouter from "./reports.js";
+import storageArchiveRouter from "./storage_archive.js";
 import { requireAuth, requireClientAccess } from "../middleware/auth.js";
 
 const router: IRouter = Router();
@@ -67,5 +68,6 @@ router.use(occasionsRouter);
 router.use(analyticsRouter);
 router.use(socialIntelligenceRouter);
 router.use(reportsRouter);
+router.use(storageArchiveRouter);
 
 export default router;

@@ -528,6 +528,7 @@ export default function PostingQueue() {
 
   const selectedPosts = sortedPosts.filter((post) => selectedIds.has(post.id));
   const readyPosts = sortedPosts.filter((post) => ["approved", "export_ready"].includes(post.status) && !post.scheduledAt);
+  const failedPosts = (posts as any[]).filter((post) => post.status === "failed");
   const clientName = clientData?.name ?? "Client";
   const hasWorkflow = !!publishingReadiness?.workflowConfigured;
   const manualDestination = publishingReadiness?.destinations.find((destination) => destination.type === "manual");
@@ -680,6 +681,27 @@ export default function PostingQueue() {
             </Select>
           </div>
         </div>
+
+        {failedPosts.length > 0 && (
+          <Card className="border-red-200 bg-red-50/70">
+            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 shrink-0 text-red-600 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-red-900">
+                    {failedPosts.length} post{failedPosts.length === 1 ? "" : "s"} need attention
+                  </p>
+                  <p className="text-xs text-red-800/90 mt-0.5">
+                    Failed posts keep their publish error. Reconnect the destination, add missing media, export manually, or retry after fixing the setup.
+                  </p>
+                </div>
+              </div>
+              <Button variant="outline" size="sm" className="border-red-200 bg-white text-red-800 hover:bg-red-100" onClick={() => setFilter("failed")}>
+                Show failed posts
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         <Card className="border-primary/15 bg-gradient-to-br from-primary/5 via-background to-background">
           <CardContent className="p-4">

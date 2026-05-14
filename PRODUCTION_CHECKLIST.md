@@ -26,6 +26,9 @@ Set these on the API server host. Do not expose these values in the frontend.
 | `GEMINI_KEY` | One AI key required | Server fallback key for Gemini. |
 | `ANTHROPIC_KEY` | One AI key required | Server fallback key for Anthropic. |
 | `FAL_KEY` | Video only | Optional. Without it, Video Studio should show the configured missing-key message. |
+| `GOOGLE_CLIENT_ID` | Archive only | Optional. Prepares future Google Drive archive support; not required for MVP usage. |
+| `GOOGLE_CLIENT_SECRET` | Archive only | Optional backend-only secret for future Google Drive archive support. |
+| `GOOGLE_REDIRECT_URI` | Archive only | Optional future callback URL, for example `https://api.yourdomain.com/api/auth/google/callback`. |
 | `ENABLE_AUTO_PUBLISH` | Strongly recommended | Set `false` until OAuth/social publishing is fully configured and tested. |
 | `LOG_LEVEL` | Optional | Use `info` or stricter in production. |
 
@@ -130,6 +133,7 @@ Before real client use:
 - Ensure `post-images` allows `image/*`, `application/pdf`, and `video/*`.
 - Ensure `post-images` has at least a 50 MB file size limit.
 - Keep `brand-assets` public and image-only for future storage separation.
+- See `STORAGE_POLICY.md` for the non-destructive Supabase active storage and Google Drive archive plan.
 
 Current server-side limits:
 
@@ -209,17 +213,31 @@ Safety guards already present:
 
 - Scheduler skips entirely when `ENABLE_AUTO_PUBLISH=false`.
 - Scheduler skips when `TOKEN_ENCRYPTION_KEY` is missing.
+- Scheduler runs a due-post recovery pass on API startup when auto-publish is enabled.
+- A manual scoped check is available at `POST /api/clients/:clientId/publishing/run-due-check` for admin/dev recovery.
 - Only `scheduled` posts with `scheduledAt <= now` and no `publishedAt` are considered.
 - Duplicate in-flight attempts are skipped.
+- Current duplicate protection is process-local only.
 - Unsupported platforms fail safely with a reason.
 - Video auto-publishing is blocked.
 - Instagram auto-publishing requires an image/final artwork URL.
 - Published state is written only after successful platform publish response.
+- Failed attempts stay in `failed` with `publishError` for dashboard and queue visibility.
+
+Reliability decision:
+
+| Option | Fit |
+|---|---|
+| Current `setInterval` | Good for local and one API server. Lowest change risk. |
+| BullMQ + Redis | Stronger retries/locking, but adds Redis and operational overhead. |
+| Upstash QStash | Good managed delivery for serverless/hosted cron style deployments, but changes deployment shape. |
+| Hosted cron hitting an endpoint | Good next step if paired with an external lock/idempotency check. |
 
 Production recommendation:
 
 - Keep `ENABLE_AUTO_PUBLISH=false` for first real client usage testing.
 - Enable only after Meta OAuth, token encryption, connected account refresh, and one manual publish test pass.
+- Before multi-server production, move scheduled publishing to a persistent queue or a hosted cron with a cross-process lock.
 
 ## CORS And Callback URLs
 
@@ -289,6 +307,7 @@ Do not deploy multiple API replicas with auto-publish enabled until there is a d
 - Auto-publish should remain disabled until connector OAuth and token encryption are configured and tested.
 - Existing local provider logs showed OpenAI auth failure with Gemini fallback succeeding; verify production AI keys before client demos.
 - Browser print reports are MVP-grade exports, not archived/report-versioned PDFs.
+- Google Drive archive is V1 scaffold-only; no Drive upload, token storage, automatic deletion, or cleanup job is enabled.
 - Auth tokens live in `localStorage`; acceptable for MVP testing, not enterprise hardening.
 - Supabase service role key gives broad backend access; keep it only in server secrets.
 
@@ -309,6 +328,7 @@ Do not deploy multiple API replicas with auto-publish enabled until there is a d
 - Meta/LinkedIn/Twitter OAuth buttons should be treated as unavailable until provider credentials and callbacks are configured.
 - Social Intelligence import and analytics refresh from connected platforms require `TOKEN_ENCRYPTION_KEY` and connected OAuth accounts.
 - Video generation should be treated as unavailable unless `FAL_KEY` is configured.
+- Google Drive archiving should be treated as unavailable until OAuth/token storage and a verified upload path are implemented.
 
 ## Final Release Gate
 

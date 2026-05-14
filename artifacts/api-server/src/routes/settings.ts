@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { userSettingsTable, userApiKeysTable } from "@workspace/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 import {
   getProviderKeyStatus,
@@ -12,12 +12,23 @@ import {
   safeErrorMessage,
 } from "../lib/ai-provider.js";
 import { encrypt, decrypt, maskKey, extractHint } from "../lib/encryption.js";
+import { isEncryptionConfigured } from "../lib/crypto.js";
+import { ensureStorageBucket } from "./upload.js";
 import { logger } from "../lib/logger.js";
 
 const router = Router();
 
 const VALID_PROVIDERS = ["anthropic", "openai", "gemini"] as const;
 type Provider = typeof VALID_PROVIDERS[number];
+type HealthStatus = "green" | "yellow" | "red";
+
+function envConfigured(...keys: string[]): boolean {
+  return keys.every((key) => Boolean(process.env[key]));
+}
+
+function healthItem(id: string, label: string, status: HealthStatus, message: string) {
+  return { id, label, status, message };
+}
 
 // GET /settings/provider-status — which AI provider keys are configured (DB or env)
 router.get("/settings/provider-status", requireAuth, async (req: AuthRequest, res): Promise<void> => {
@@ -27,6 +38,95 @@ router.get("/settings/provider-status", requireAuth, async (req: AuthRequest, re
   } catch {
     res.status(500).json({ error: "Failed to get provider status" });
   }
+});
+
+// GET /settings/health — operational readiness without exposing secrets
+router.get("/settings/health", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const items: ReturnType<typeof healthItem>[] = [];
+
+  try {
+    await db.execute(sql`select 1`);
+    items.push(healthItem("database", "Database connected", "green", "Postgres responded to a simple health query."));
+  } catch {
+    items.push(healthItem("database", "Database connected", "red", "Database query failed. Check DATABASE_URL and Supabase availability."));
+  }
+
+  try {
+    await ensureStorageBucket();
+    items.push(healthItem("storage", "Supabase storage configured", "green", "post-images bucket is reachable and configured for current uploads."));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Storage check failed.";
+    items.push(healthItem("storage", "Supabase storage configured", "red", message));
+  }
+
+  try {
+    const providerStatus = await getProviderKeyStatus(req.userId);
+    const configuredProviders = Object.entries(providerStatus)
+      .filter(([, status]) => status.keyExists)
+      .map(([provider, status]) => `${provider} (${status.source})`);
+    items.push(healthItem(
+      "ai_provider",
+      "AI provider available",
+      configuredProviders.length > 0 ? "green" : "red",
+      configuredProviders.length > 0
+        ? `Configured: ${configuredProviders.join(", ")}.`
+        : "No AI provider key is configured in Settings or backend env."
+    ));
+  } catch {
+    items.push(healthItem("ai_provider", "AI provider available", "red", "Could not check AI provider status."));
+  }
+
+  const tokenEncryptionReady = isEncryptionConfigured();
+  items.push(healthItem(
+    "token_encryption",
+    "TOKEN_ENCRYPTION_KEY configured",
+    tokenEncryptionReady ? "green" : "red",
+    tokenEncryptionReady ? "Encrypted token storage is available." : "Required before OAuth tokens, analytics refresh, and auto-publish."
+  ));
+
+  const autoPublishEnabled = process.env.ENABLE_AUTO_PUBLISH !== "false";
+  items.push(healthItem(
+    "auto_publish",
+    "Auto-publish",
+    autoPublishEnabled ? "yellow" : "green",
+    autoPublishEnabled
+      ? "Enabled for this API process. Use only after real social connectors are tested."
+      : "Disabled. Recommended until live social connectors are tested."
+  ));
+
+  const metaConfigured = envConfigured("META_APP_ID", "META_APP_SECRET", "META_REDIRECT_URI");
+  items.push(healthItem(
+    "meta_credentials",
+    "Meta credentials",
+    metaConfigured ? "green" : "yellow",
+    metaConfigured ? "Meta app credentials are present." : "Missing one or more Meta app credentials; Meta OAuth/publishing stays unavailable."
+  ));
+
+  const falConfigured = envConfigured("FAL_KEY");
+  items.push(healthItem(
+    "fal_key",
+    "FAL_KEY",
+    falConfigured ? "green" : "yellow",
+    falConfigured ? "Video generation key is configured." : "Missing. Video Studio should show the configured missing-key message."
+  ));
+
+  const googleDriveConfigured = envConfigured("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI");
+  items.push(healthItem(
+    "google_drive_archive",
+    "Google Drive archive",
+    googleDriveConfigured ? "yellow" : "yellow",
+    googleDriveConfigured
+      ? "Archive env is present, but Drive OAuth/upload is scaffold-only in V1."
+      : "Missing. Optional; app storage still uses Supabase as active working storage."
+  ));
+
+  const hasRed = items.some((item) => item.status === "red");
+  const hasYellow = items.some((item) => item.status === "yellow");
+  res.json({
+    status: hasRed ? "red" : hasYellow ? "yellow" : "green",
+    generatedAt: new Date().toISOString(),
+    items,
+  });
 });
 
 // GET /settings/api-keys — returns masked key info (never plaintext)

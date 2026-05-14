@@ -12,6 +12,22 @@ const DIRECT_PUBLISH_PLATFORMS = new Set(["instagram", "facebook", "linkedin", "
 const inFlightPostIds = new Set<string>();
 let schedulerRunning = false;
 
+export type ScheduledPublishRunResult = {
+  reason: string;
+  disabled: boolean;
+  skippedReason: string | null;
+  dueCount: number;
+  attemptedCount: number;
+  publishedCount: number;
+  failedCount: number;
+  skippedCount: number;
+};
+
+type ScheduledPublishRunOptions = {
+  reason?: "interval" | "startup_recovery" | "manual";
+  clientId?: string;
+};
+
 async function refreshAccountToken(
   account: typeof socialAccountsTable.$inferSelect
 ): Promise<string | null> {
@@ -195,20 +211,42 @@ function autoPublishErrorForPost(post: typeof postsTable.$inferSelect, platform:
   return null;
 }
 
-async function runScheduledPublish(): Promise<void> {
+// Queue decision for this reliability pass:
+// - setInterval remains low-risk for local/single-server MVP operation.
+// - BullMQ + Redis is stronger for retries and multi-server locking, but adds infra.
+// - Upstash QStash is good for hosted delivery but changes deployment shape.
+// - Hosted cron hitting a locked endpoint is the simplest next production step.
+// Current implementation stays process-local and must not run on multiple API replicas.
+export async function runScheduledPublish(options: ScheduledPublishRunOptions = {}): Promise<ScheduledPublishRunResult> {
+  const reason = options.reason ?? "interval";
+  const result: ScheduledPublishRunResult = {
+    reason,
+    disabled: false,
+    skippedReason: null,
+    dueCount: 0,
+    attemptedCount: 0,
+    publishedCount: 0,
+    failedCount: 0,
+    skippedCount: 0,
+  };
+
   if (process.env.ENABLE_AUTO_PUBLISH === "false") {
-    logger.info("Scheduler cycle skipped: ENABLE_AUTO_PUBLISH=false");
-    return;
+    result.disabled = true;
+    result.skippedReason = "ENABLE_AUTO_PUBLISH=false";
+    logger.info({ reason }, "Scheduler cycle skipped: ENABLE_AUTO_PUBLISH=false");
+    return result;
   }
 
   if (schedulerRunning) {
-    logger.info("Scheduler cycle skipped: previous auto-publish cycle still running");
-    return;
+    result.skippedReason = "previous auto-publish cycle still running";
+    logger.info({ reason }, "Scheduler cycle skipped: previous auto-publish cycle still running");
+    return result;
   }
 
   if (!isEncryptionConfigured()) {
-    logger.warn("Scheduler skipped: TOKEN_ENCRYPTION_KEY not configured");
-    return;
+    result.skippedReason = "TOKEN_ENCRYPTION_KEY not configured";
+    logger.warn({ reason }, "Scheduler skipped: TOKEN_ENCRYPTION_KEY not configured");
+    return result;
   }
 
   schedulerRunning = true;
@@ -216,17 +254,17 @@ async function runScheduledPublish(): Promise<void> {
 
   try {
     const now = new Date();
-    logger.info({ now: now.toISOString() }, "Scheduler cycle started");
+    logger.info({ now: now.toISOString(), reason, clientId: options.clientId }, "Scheduler cycle started");
+    const conditions = [
+      eq(postsTable.status, "scheduled"),
+      lte(postsTable.scheduledAt, now),
+      isNull(postsTable.publishedAt),
+    ];
+    if (options.clientId) conditions.push(eq(postsTable.clientId, options.clientId));
     due = await db
       .select()
       .from(postsTable)
-      .where(
-        and(
-          eq(postsTable.status, "scheduled"),
-          lte(postsTable.scheduledAt, now),
-          isNull(postsTable.publishedAt)
-        )
-      )
+      .where(and(...conditions))
       .limit(20);
   } catch (err) {
     // DB unreachable (DNS failure, pooler down, etc.) — skip this cycle quietly
@@ -235,18 +273,22 @@ async function runScheduledPublish(): Promise<void> {
     } else {
       logger.warn({ error: safeErrMsg(err) }, "Scheduler: failed to query due posts — skipping cycle");
     }
+    result.skippedReason = "failed to query due posts";
     schedulerRunning = false;
-    return;
+    return result;
   }
 
-  logger.info({ count: due.length }, "Scheduler: due posts found");
+  result.dueCount = due.length;
+  logger.info({ count: due.length, reason, clientId: options.clientId }, "Scheduler: due posts found");
 
   for (const post of due) {
     if (inFlightPostIds.has(post.id)) {
       logger.info({ postId: post.id }, "Scheduler: post already in flight — skipping duplicate attempt");
+      result.skippedCount++;
       continue;
     }
     inFlightPostIds.add(post.id);
+    result.attemptedCount++;
     try {
       const platform = normalizePlatform(post.platform);
       const safetyError = autoPublishErrorForPost(post, platform);
@@ -256,6 +298,7 @@ async function runScheduledPublish(): Promise<void> {
           .set({ status: "failed", publishError: safetyError, updatedAt: new Date() })
           .where(and(eq(postsTable.id, post.id), eq(postsTable.status, "scheduled"), isNull(postsTable.publishedAt)));
         logger.warn({ postId: post.id, platform, reason: safetyError }, "Scheduler: post blocked by safety guard");
+        result.failedCount++;
         continue;
       }
 
@@ -290,15 +333,16 @@ async function runScheduledPublish(): Promise<void> {
           })
           .where(and(eq(postsTable.id, post.id), eq(postsTable.status, "scheduled"), isNull(postsTable.publishedAt)));
         logger.warn({ postId: post.id, platform }, "Scheduler: no connected direct publishing account");
+        result.failedCount++;
         continue;
       }
 
       const accessToken = await resolveAccessToken(account);
       const imageUrl = publishImageUrl(post);
 
-      logger.info({ postId: post.id, platform, hasImage: !!imageUrl }, "Scheduler: publish attempted");
+      logger.info({ postId: post.id, platform, hasImage: !!imageUrl, reason }, "Scheduler: publish attempted");
 
-      const result = await publishToPlatform({
+      const publishResult = await publishToPlatform({
         caption: post.caption,
         hashtags: post.hashtags,
         imageUrl,
@@ -311,9 +355,9 @@ async function runScheduledPublish(): Promise<void> {
         .update(postsTable)
         .set({
           status: "posted",
-          publishedAt: result.publishedAt,
-          publishedUrl: result.publishedUrl,
-          contentSchema: publishMetadata(post, result),
+          publishedAt: publishResult.publishedAt,
+          publishedUrl: publishResult.publishedUrl,
+          contentSchema: publishMetadata(post, publishResult),
           publishError: null,
           updatedAt: new Date(),
         })
@@ -324,7 +368,8 @@ async function runScheduledPublish(): Promise<void> {
           logger.warn({ postId: post.id, error: safeErrMsg(memoryErr) }, "Scheduler: publish succeeded but memory write failed");
         });
 
-      logger.info({ postId: post.id, platform, publishedUrl: result.publishedUrl }, "Scheduler: post published");
+      result.publishedCount++;
+      logger.info({ postId: post.id, platform, publishedUrl: publishResult.publishedUrl, reason }, "Scheduler: post published");
     } catch (err) {
       const message = safeErrMsg(err);
       // Best-effort status update — if DB is also down here, just log
@@ -338,13 +383,16 @@ async function runScheduledPublish(): Promise<void> {
             "Scheduler: could not persist publish failure to DB"
           );
         });
-      logger.warn({ postId: post.id, error: message }, "Scheduler: publish failed");
+      result.failedCount++;
+      logger.warn({ postId: post.id, error: message, reason }, "Scheduler: publish failed");
     } finally {
       inFlightPostIds.delete(post.id);
     }
   }
 
   schedulerRunning = false;
+  logger.info({ result }, "Scheduler cycle finished");
+  return result;
 }
 
 export function startScheduler(): void {
@@ -353,6 +401,9 @@ export function startScheduler(): void {
     return;
   }
   const INTERVAL_MS = 60_000;
-  setInterval(runScheduledPublish, INTERVAL_MS);
+  void runScheduledPublish({ reason: "startup_recovery" });
+  setInterval(() => {
+    void runScheduledPublish({ reason: "interval" });
+  }, INTERVAL_MS);
   logger.info("Scheduler started (1-minute interval)");
 }

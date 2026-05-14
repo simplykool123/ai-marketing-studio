@@ -106,6 +106,8 @@ cp artifacts/api-server/.env.example artifacts/api-server/.env
 
 `FAL_KEY` is optional. Without it, Video Studio should show a clear fal.ai configuration message instead of generating provider video.
 
+Google Drive archive variables are optional. `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` only prepare the future archive scaffold and are not required for local app use.
+
 **Optional (OAuth social platforms):**
 
 | Variable | Purpose |
@@ -194,6 +196,18 @@ pnpm --filter @workspace/marketing-studio run dev
 Open http://localhost:5173 in your browser.
 
 The Vite dev server automatically proxies `/api/*` → `http://localhost:8080` so there's no CORS issue.
+
+### Scheduler note
+
+The current scheduled publisher uses the API process scheduler. It is suitable for local development and a single API server, but it is not safe to run on multiple API replicas because the in-flight lock is process-local.
+
+Keep `ENABLE_AUTO_PUBLISH=false` until real social connectors, token encryption, and one manual publish path have been tested. When auto-publish is enabled, the API runs one missed due-post recovery pass on startup and exposes a guarded manual check:
+
+```text
+POST /api/clients/:clientId/publishing/run-due-check
+```
+
+For real multi-server production, use a persistent queue or hosted cron with a cross-process lock before enabling auto-publish broadly.
 
 ### Startup checks
 

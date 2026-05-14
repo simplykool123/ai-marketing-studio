@@ -46,6 +46,19 @@ type KeyEditorState = {
   testResult: TestResult | null;
 };
 
+type HealthStatus = "green" | "yellow" | "red";
+type HealthItem = {
+  id: string;
+  label: string;
+  status: HealthStatus;
+  message: string;
+};
+type SettingsHealth = {
+  status: HealthStatus;
+  generatedAt: string;
+  items: HealthItem[];
+};
+
 // Current valid model IDs per provider
 const AI_PROVIDERS = [
   {
@@ -95,6 +108,8 @@ export default function SettingsPage() {
   const { toast } = useToast();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
+  const [health, setHealth] = useState<SettingsHealth | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -115,9 +130,11 @@ export default function SettingsPage() {
     Promise.all([
       fetch("/api/settings", { headers }).then(r => r.json() as Promise<Settings>),
       fetch("/api/settings/provider-status", { headers }).then(r => r.json() as Promise<ProviderStatus>),
+      fetch("/api/settings/health", { headers }).then(r => r.json() as Promise<SettingsHealth>),
     ])
-      .then(([s, ps]) => {
+      .then(([s, ps, h]) => {
         setProviderStatus(ps);
+        setHealth(h);
         // Migrate stale model IDs transparently
         const migratedModel = STALE_MODEL_MAP[s.aiModel];
         if (migratedModel) {
@@ -250,8 +267,31 @@ export default function SettingsPage() {
     }
   };
 
+  const loadHealth = async () => {
+    setHealthLoading(true);
+    try {
+      const res = await fetch("/api/settings/health", { headers });
+      const data = await res.json() as SettingsHealth;
+      setHealth(data);
+    } catch {
+      toast({ title: "Failed to load health check", variant: "destructive" });
+    } finally {
+      setHealthLoading(false);
+    }
+  };
+
   const selectedAiProvider = AI_PROVIDERS.find(p => p.value === settings?.aiProvider);
   const selectedImageProvider = IMAGE_PROVIDERS.find(p => p.value === settings?.imageProvider);
+  const healthTone = (status: HealthStatus) => {
+    if (status === "green") return "border-green-200 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950/30 dark:text-green-400";
+    if (status === "yellow") return "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400";
+    return "border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400";
+  };
+  const HealthIcon = ({ status }: { status: HealthStatus }) => {
+    if (status === "green") return <CheckCircle2 className="w-4 h-4 shrink-0" />;
+    if (status === "yellow") return <AlertTriangle className="w-4 h-4 shrink-0" />;
+    return <XCircle className="w-4 h-4 shrink-0" />;
+  };
 
   // Is the currently selected AI provider key actually configured in the backend?
   const aiProviderConfigured =
@@ -260,7 +300,7 @@ export default function SettingsPage() {
     providerStatus[settings.aiProvider as keyof ProviderStatus]?.keyExists === true;
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-3xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground mt-1">Manage your account and AI preferences</p>
@@ -272,6 +312,7 @@ export default function SettingsPage() {
           <TabsTrigger value="ai" className="gap-1.5"><Bot className="w-3.5 h-3.5" />AI Provider</TabsTrigger>
           <TabsTrigger value="images" className="gap-1.5"><ImageIcon className="w-3.5 h-3.5" />Image AI</TabsTrigger>
           <TabsTrigger value="keys" className="gap-1.5" onClick={loadApiKeys}><Key className="w-3.5 h-3.5" />AI Keys</TabsTrigger>
+          <TabsTrigger value="health" className="gap-1.5" onClick={loadHealth}><CheckCircle2 className="w-3.5 h-3.5" />Health</TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile" className="mt-4">
@@ -619,6 +660,55 @@ export default function SettingsPage() {
                       </div>
                     );
                   })}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="health" className="mt-4">
+          <Card>
+            <CardHeader className="flex flex-row items-start justify-between gap-4">
+              <div>
+                <CardTitle className="text-base">Settings Health</CardTitle>
+                <CardDescription>Environment and operational readiness. Secrets are never shown.</CardDescription>
+              </div>
+              <Button variant="outline" size="sm" onClick={loadHealth} disabled={healthLoading}>
+                {healthLoading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5 mr-1.5" />}
+                Refresh
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {!health ? (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading health check…
+                </div>
+              ) : (
+                <>
+                  <div className={`flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm ${healthTone(health.status)}`}>
+                    <HealthIcon status={health.status} />
+                    <span>
+                      {health.status === "green"
+                        ? "Core setup looks ready."
+                        : health.status === "yellow"
+                          ? "Setup is usable, with optional or production-readiness items to review."
+                          : "One or more required services need attention before reliable use."}
+                    </span>
+                  </div>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {health.items.map((item) => (
+                      <div key={item.id} className={`rounded-md border p-3 ${healthTone(item.status)}`}>
+                        <div className="flex items-center gap-2">
+                          <HealthIcon status={item.status} />
+                          <p className="text-sm font-semibold">{item.label}</p>
+                        </div>
+                        <p className="mt-1 text-xs leading-relaxed opacity-90">{item.message}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Last checked {new Date(health.generatedAt).toLocaleString()}.
+                  </p>
                 </>
               )}
             </CardContent>

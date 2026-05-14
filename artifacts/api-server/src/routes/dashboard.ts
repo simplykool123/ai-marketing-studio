@@ -137,6 +137,7 @@ router.get("/clients/:clientId/dashboard", async (req: AuthRequest, res) => {
     });
 
     const pendingApprovals = allPosts.filter(p => p.status === "in_review");
+    const needsAttentionCount = allPosts.filter(p => p.status === "failed").length;
     const publishedPosts = allPosts.filter(p => (p.status === "posted" || p.status === "published") && p.publishedAt);
     const campaignDraftCount = allPosts.filter(p => p.status === "draft" && p.campaignId).length;
     const settings = userSettings[0] ?? null;
@@ -169,6 +170,7 @@ router.get("/clients/:clientId/dashboard", async (req: AuthRequest, res) => {
       recentlyPublished,
       todaysPosts,
       pendingApprovals: pendingApprovals.length,
+      needsAttentionCount,
     });
   } catch (err) {
     res.status(500).json({ error: "Failed to get dashboard" });
