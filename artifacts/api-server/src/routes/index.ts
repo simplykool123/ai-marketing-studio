@@ -35,11 +35,11 @@ const router: IRouter = Router();
 
 router.use(authRouter);
 router.use(oauthRouter);
+router.use(healthRouter);
 
 router.use(requireAuth);
 router.use("/clients/:clientId", requireClientAccess());
 
-router.use(healthRouter);
 router.use(settingsRouter);
 router.use(clientsRouter);
 router.use(brandDnaRouter);

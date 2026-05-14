@@ -93,15 +93,18 @@ Copy the example and fill in values:
 cp artifacts/api-server/.env.example artifacts/api-server/.env
 ```
 
-**Required variables:**
+**Required for local startup:**
 
 | Variable | Where to get it |
 |---|---|
 | `DATABASE_URL` | Supabase → Project Settings → Database → Connection string (URI, port 5432) |
 | `SUPABASE_URL` | Supabase → Project Settings → API → Project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API → service_role key |
-| `TOKEN_ENCRYPTION_KEY` | Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `ANTHROPIC_KEY` / `OPENAI_KEY` / `GEMINI_KEY` | At least one AI key required |
+
+`TOKEN_ENCRYPTION_KEY` is optional for basic local startup and content QA. It is required when testing OAuth token storage, social publishing, analytics refresh from connected platforms, or Social Intelligence import.
+
+`FAL_KEY` is optional. Without it, Video Studio should show a clear fal.ai configuration message instead of generating provider video.
 
 **Optional (OAuth social platforms):**
 
@@ -133,10 +136,13 @@ cp artifacts/marketing-studio/.env.example artifacts/marketing-studio/.env
 This pushes all Drizzle schema tables to your Supabase PostgreSQL database.
 Run this once on first setup and again any time the schema changes.
 
-```bash
-# Make sure DATABASE_URL is set in artifacts/api-server/.env OR exported:
-export DATABASE_URL="postgresql://postgres.[ref]:[password]@..."
+`lib/db` reads `DATABASE_URL` from the shell environment. The safest local command is to source the backend env file, then the db env file if you keep a separate copy there:
 
+```bash
+set -a
+source artifacts/api-server/.env
+[ -f lib/db/.env ] && source lib/db/.env
+set +a
 pnpm --filter @workspace/db run push
 ```
 
@@ -149,7 +155,9 @@ This creates all tables:
 
 ## 5 — Run Locally
 
-Open **two terminals**:
+Open **two terminals** from the repo root.
+
+The API and shared `lib/db` package do not auto-load `.env` files. Source the env files in the shell before starting the backend.
 
 ### Optional — enable Brand Importer visual screenshot analysis
 
@@ -163,21 +171,50 @@ If Chromium is not installed or a website blocks rendering, the importer still f
 
 **Terminal 1 — API server:**
 ```bash
-cd artifacts/api-server
-pnpm dev
+cd ~/Desktop/ai-marketing-studio
+set -a
+source artifacts/api-server/.env
+[ -f lib/db/.env ] && source lib/db/.env
+set +a
+pnpm --filter @workspace/api-server run build
+pnpm --filter @workspace/api-server run start
 # → Server listening on port 8080
 ```
 
 **Terminal 2 — Frontend:**
 ```bash
-cd artifacts/marketing-studio
-pnpm dev
+cd ~/Desktop/ai-marketing-studio
+set -a
+source artifacts/marketing-studio/.env
+set +a
+pnpm --filter @workspace/marketing-studio run dev
 # → Vite dev server on http://localhost:5173
 ```
 
 Open http://localhost:5173 in your browser.
 
 The Vite dev server automatically proxies `/api/*` → `http://localhost:8080` so there's no CORS issue.
+
+### Startup checks
+
+With both servers running:
+
+```bash
+node -e "fetch('http://localhost:8080/api/health').then(async r => { console.log(r.status, await r.text()) })"
+node -e "fetch('http://localhost:5173/login').then(r => console.log(r.status, r.url))"
+```
+
+Expected:
+- API health returns `200 {"status":"ok"}`.
+- Frontend route returns `200` and serves the Vite app.
+
+### Common port fixes
+
+If the backend port is busy, change `PORT` in `artifacts/api-server/.env`, then restart the backend.
+
+If the frontend port is busy, change `PORT` in `artifacts/marketing-studio/.env`.
+
+If backend `PORT` changes, update `API_PORT` in `artifacts/marketing-studio/.env` to match so Vite still proxies `/api/*` correctly.
 
 ---
 
@@ -334,10 +371,11 @@ ngrok http 8080
 | `DATABASE_URL` | ✅ | Supabase Postgres connection string |
 | `SUPABASE_URL` | ✅ | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Supabase service role secret |
-| `TOKEN_ENCRYPTION_KEY` | ✅ | 32+ byte hex string for encrypting OAuth tokens |
+| `TOKEN_ENCRYPTION_KEY` | OAuth/social only | 32+ byte secret for encrypting OAuth tokens |
 | `ANTHROPIC_KEY` | One required | Anthropic Claude API key |
 | `OPENAI_KEY` | One required | OpenAI API key |
 | `GEMINI_KEY` | One required | Google Gemini API key |
+| `FAL_KEY` | Video only | fal.ai key for provider video generation |
 | `PORT` | ❌ | API server port (default: 8080) |
 | `NODE_ENV` | ❌ | `development` or `production` |
 | `LOG_LEVEL` | ❌ | Pino log level (default: `info`) |

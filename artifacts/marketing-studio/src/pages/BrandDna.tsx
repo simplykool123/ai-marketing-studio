@@ -290,6 +290,7 @@ export default function BrandDna() {
   const [websiteAnalysisResult, setWebsiteAnalysisResult] = useState<WebsiteAnalysisResponse | null>(null);
   const [analysisSourceUrl, setAnalysisSourceUrl] = useState("");
   const [replaceFilledFields, setReplaceFilledFields] = useState(false);
+  const [applySummary, setApplySummary] = useState<string | null>(null);
   const [isUsingExtractedLogo, setIsUsingExtractedLogo] = useState(false);
   const [showBlockedFallback, setShowBlockedFallback] = useState(false);
   const [fallbackScreenshot, setFallbackScreenshot] = useState<File | null>(null);
@@ -512,12 +513,24 @@ export default function BrandDna() {
     }
   };
 
-  const setSuggestedValue = (field: keyof BrandDnaFormValues, value: string) => {
-    if (!value || value === "Not clear from the page") return;
+  const setSuggestedValue = (field: keyof BrandDnaFormValues, value: string, forceReplace = replaceFilledFields) => {
+    if (!value || value === "Not clear from the page") return false;
     const current = form.getValues(field);
-    if (replaceFilledFields || !current?.trim()) {
+    if (forceReplace || !current?.trim()) {
       form.setValue(field, value, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
+      return false;
     }
+    return true;
+  };
+
+  const applyImportedColors = () => {
+    const palette = websiteAnalysisResult?.palette;
+    if (!palette?.primary && !palette?.secondary && !palette?.accent) return;
+    if (palette.primary) form.setValue("primaryColor", palette.primary, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
+    if (palette.secondary) form.setValue("secondaryColor", palette.secondary, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
+    if (palette.accent) form.setValue("accentColor", palette.accent, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
+    setApplySummary("Imported colors were applied to Primary, Secondary, and Accent. Click Save Brand DNA to persist them.");
+    toast({ title: "Imported colors applied", description: "Click Save Brand DNA to keep these colors." });
   };
 
   const handleApplyAnalysis = async () => {
@@ -532,18 +545,20 @@ export default function BrandDna() {
     if (!form.getValues("brandName")?.trim() && client?.name) {
       form.setValue("brandName", client.name, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
     }
-    setSuggestedValue("voiceTone", websiteAnalysis.brandTone);
-    setSuggestedValue("targetAudience", websiteAnalysis.targetAudience);
-    setSuggestedValue("industry", websiteAnalysis.productsServices);
-    setSuggestedValue("brandValues", websiteAnalysis.usp);
-    setSuggestedValue("contentThemes", websiteAnalysis.contentPillars);
-    setSuggestedValue("visualStyle", websiteAnalysis.visualStyle || websiteAnalysis.colorStyleHints);
-    setSuggestedValue("fontStyle", websiteAnalysis.fontStyle || websiteAnalysisResult?.fontFamilies?.join(", ") || "");
-    setSuggestedValue("designNotes", [websiteAnalysis.designNotes, websiteAnalysis.imageStyle || websiteAnalysis.imageStyleNotes, websiteAnalysis.colorStyleHints].filter(Boolean).join("\n"));
-    setSuggestedValue("primaryColor", palette?.primary || "");
-    setSuggestedValue("secondaryColor", palette?.secondary || "");
-    setSuggestedValue("accentColor", palette?.accent || "");
-    setSuggestedValue("additionalContext", context);
+    const skippedFields = [
+      setSuggestedValue("voiceTone", websiteAnalysis.brandTone) ? "tone" : null,
+      setSuggestedValue("targetAudience", websiteAnalysis.targetAudience) ? "audience" : null,
+      setSuggestedValue("industry", websiteAnalysis.productsServices) ? "industry" : null,
+      setSuggestedValue("brandValues", websiteAnalysis.usp) ? "brand values" : null,
+      setSuggestedValue("contentThemes", websiteAnalysis.contentPillars) ? "content pillars" : null,
+      setSuggestedValue("visualStyle", websiteAnalysis.visualStyle || websiteAnalysis.colorStyleHints) ? "visual style" : null,
+      setSuggestedValue("fontStyle", websiteAnalysis.fontStyle || websiteAnalysisResult?.fontFamilies?.join(", ") || "") ? "font style" : null,
+      setSuggestedValue("designNotes", [websiteAnalysis.designNotes, websiteAnalysis.imageStyle || websiteAnalysis.imageStyleNotes, websiteAnalysis.colorStyleHints].filter(Boolean).join("\n")) ? "design notes" : null,
+      setSuggestedValue("primaryColor", palette?.primary || "") ? "primary color" : null,
+      setSuggestedValue("secondaryColor", palette?.secondary || "") ? "secondary color" : null,
+      setSuggestedValue("accentColor", palette?.accent || "") ? "accent color" : null,
+      setSuggestedValue("additionalContext", context) ? "additional context" : null,
+    ].filter(Boolean) as string[];
 
     const memoryEntries = [
       {
@@ -573,10 +588,13 @@ export default function BrandDna() {
       body: JSON.stringify(entry),
     }).catch(() => null)));
 
-    toast({
-      title: "Suggestions applied. Click Save Brand DNA to keep changes.",
-      description: replaceFilledFields ? "Brand fields were updated from the importer." : "Empty Brand Setup fields were filled. Existing filled fields were preserved.",
-    });
+    const summary = replaceFilledFields
+      ? "Brand DNA fields were replaced with importer suggestions. Click Save Brand DNA to persist them."
+      : skippedFields.length
+        ? `${skippedFields.length} existing fields were preserved. Turn on Replace filled fields to overwrite ${skippedFields.slice(0, 4).join(", ")}${skippedFields.length > 4 ? ", and more" : ""}.`
+        : "Empty Brand Setup fields were filled. Click Save Brand DNA to persist them.";
+    setApplySummary(summary);
+    toast({ title: "Suggestions applied. Click Save Brand DNA to keep changes.", description: summary });
   };
 
   const handleUseExtractedLogo = async (url: string) => {
@@ -588,7 +606,7 @@ export default function BrandDna() {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetClientQueryKey(clientId) });
           queryClient.refetchQueries({ queryKey: getGetClientQueryKey(clientId) });
-          toast({ title: "Extracted logo applied", description: "The logo URL was saved as the client logo reference." });
+          toast({ title: "Logo URL applied", description: "This saves the remote logo URL as the client logo reference; it does not upload a Brand Asset file." });
           setIsUsingExtractedLogo(false);
         },
         onError: () => {
@@ -728,14 +746,25 @@ export default function BrandDna() {
                 </div>
                 <label className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Checkbox checked={replaceFilledFields} onCheckedChange={(checked) => setReplaceFilledFields(checked === true)} />
-                  Replace filled fields
+                  Replace filled fields with imported suggestions
                 </label>
               </div>
 
-              {replaceFilledFields && (
-                <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
-                  <span>Replace filled fields is on. Applying suggestions can overwrite existing Brand Setup values.</span>
+              <div className={cn(
+                "flex items-start gap-2 rounded-md border p-3 text-xs",
+                replaceFilledFields ? "border-amber-200 bg-amber-50 text-amber-900" : "bg-muted/25 text-muted-foreground"
+              )}>
+                <AlertCircle className={cn("w-4 h-4 shrink-0", replaceFilledFields ? "text-amber-600" : "text-muted-foreground")} />
+                <span>
+                  {replaceFilledFields
+                    ? "Replace mode is on. Applying suggestions will overwrite current tone, audience, colors, pillars, and other filled Brand DNA fields."
+                    : "Preserve mode is on. Applying suggestions fills empty fields only and keeps existing Brand DNA values unchanged."}
+                </span>
+              </div>
+
+              {applySummary && (
+                <div className="rounded-md border bg-muted/25 p-3 text-xs text-muted-foreground">
+                  {applySummary}
                 </div>
               )}
 
@@ -766,7 +795,7 @@ export default function BrandDna() {
                       disabled={isUsingExtractedLogo}
                       onClick={() => handleUseExtractedLogo(extractedLogo.url)}
                     >
-                      {isUsingExtractedLogo ? "Applying..." : "Use extracted logo"}
+                      {isUsingExtractedLogo ? "Applying..." : "Use logo URL"}
                     </Button>
                   </div>
                   <div className="mt-3 flex items-center gap-3">
@@ -780,7 +809,7 @@ export default function BrandDna() {
                     </div>
                     <div className="min-w-0">
                       <p className="truncate text-xs text-muted-foreground">{extractedLogo.url}</p>
-                      <p className="text-[10px] text-muted-foreground">Validated preview from the website source.</p>
+                      <p className="text-[10px] text-muted-foreground">Saves a URL reference only. It does not upload a Brand Assets file.</p>
                     </div>
                   </div>
                 </div>
@@ -812,6 +841,10 @@ export default function BrandDna() {
                       </div>
                     ))}
                   </div>
+                  <Button type="button" variant="outline" size="sm" className="mt-3" onClick={applyImportedColors}>
+                    <Palette className="mr-2 h-4 w-4" />
+                    Apply these colors
+                  </Button>
                   {moreDetectedColors.length > 0 && (
                     <details className="mt-3 text-xs text-muted-foreground">
                       <summary className="cursor-pointer">{hasVisiblePalette ? "More visible colors" : "More detected colors"}</summary>
@@ -846,8 +879,17 @@ export default function BrandDna() {
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Hero / brand images</p>
-                      <p className="text-xs text-muted-foreground">Rendered hero, slideshow, and product images are prioritized when available. Reference only: remote URL import to Brand Assets is not supported yet.</p>
+                      <p className="text-xs text-muted-foreground">Reference only — not saved to Brand Assets yet.</p>
                     </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled
+                      title="Image import to Brand Assets coming next."
+                    >
+                      Import selected images to Brand Assets
+                    </Button>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
                     {websiteAnalysisResult?.imageCandidates?.slice(0, 4).map((image) => (
@@ -907,7 +949,7 @@ export default function BrandDna() {
 
               <Button type="button" onClick={handleApplyAnalysis} className="gap-2">
                 <Save className="w-4 h-4" />
-                Apply suggestions to Brand Setup
+                {replaceFilledFields ? "Replace Brand DNA with suggestions" : "Fill empty fields only"}
               </Button>
             </div>
           )}
