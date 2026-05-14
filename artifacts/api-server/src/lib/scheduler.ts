@@ -1,6 +1,6 @@
 import { db } from "@workspace/db";
 import { postsTable, socialAccountsTable } from "@workspace/db/schema";
-import { eq, and, lte } from "drizzle-orm";
+import { eq, and, lte, isNull } from "drizzle-orm";
 import { decryptToken, encryptToken, isEncryptionConfigured } from "./crypto.js";
 import { publishToPlatform } from "./publishers/index.js";
 import { logger } from "./logger.js";
@@ -8,6 +8,9 @@ import { isNetworkError } from "./supabase.js";
 import { writeClientMemory } from "./client-memory-packet.js";
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
+const DIRECT_PUBLISH_PLATFORMS = new Set(["instagram", "facebook", "linkedin", "twitter"]);
+const inFlightPostIds = new Set<string>();
+let schedulerRunning = false;
 
 async function refreshAccountToken(
   account: typeof socialAccountsTable.$inferSelect
@@ -150,23 +153,78 @@ function safeErrMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function publishImageUrl(post: typeof postsTable.$inferSelect): string | null {
+  const schema = asRecord(post.contentSchema);
+  return String(schema.finalArtworkUrl ?? post.selectedImageUrl ?? post.brandedImageUrl ?? schema.imageUrl ?? "") || null;
+}
+
+function publishMetadata(post: typeof postsTable.$inferSelect, result: {
+  platformPostId: string;
+  provider: string;
+  publishedUrl: string;
+  rawPublishResponse?: unknown;
+}) {
+  const schema = asRecord(post.contentSchema);
+  return {
+    ...schema,
+    publish: {
+      ...asRecord(schema.publish),
+      platformPostId: result.platformPostId,
+      provider: result.provider,
+      publishedUrl: result.publishedUrl,
+      rawPublishResponse: result.rawPublishResponse,
+    },
+  };
+}
+
+function normalizePlatform(platform?: string | null): string {
+  return platform || "instagram";
+}
+
+function autoPublishErrorForPost(post: typeof postsTable.$inferSelect, platform: string): string | null {
+  if (post.publishedAt) return "Post already has a published time.";
+  if (post.status !== "scheduled") return `Post status '${post.status}' is not eligible for auto-publish.`;
+  if (!post.scheduledAt || new Date(post.scheduledAt).getTime() > Date.now()) return "Post is not due yet.";
+  if (!DIRECT_PUBLISH_PLATFORMS.has(platform)) return `${platform} auto-publishing is not implemented yet.`;
+  if ((post.contentType ?? "").toLowerCase().includes("video")) return "Video auto-publishing is not supported yet.";
+  if (platform === "instagram" && !publishImageUrl(post)) return "Instagram auto-publishing requires final artwork or an image URL.";
+  return null;
+}
+
 async function runScheduledPublish(): Promise<void> {
+  if (process.env.ENABLE_AUTO_PUBLISH === "false") {
+    logger.info("Scheduler cycle skipped: ENABLE_AUTO_PUBLISH=false");
+    return;
+  }
+
+  if (schedulerRunning) {
+    logger.info("Scheduler cycle skipped: previous auto-publish cycle still running");
+    return;
+  }
+
   if (!isEncryptionConfigured()) {
     logger.warn("Scheduler skipped: TOKEN_ENCRYPTION_KEY not configured");
     return;
   }
 
+  schedulerRunning = true;
   let due: (typeof postsTable.$inferSelect)[];
 
   try {
     const now = new Date();
+    logger.info({ now: now.toISOString() }, "Scheduler cycle started");
     due = await db
       .select()
       .from(postsTable)
       .where(
         and(
           eq(postsTable.status, "scheduled"),
-          lte(postsTable.scheduledAt, now)
+          lte(postsTable.scheduledAt, now),
+          isNull(postsTable.publishedAt)
         )
       )
       .limit(20);
@@ -177,16 +235,29 @@ async function runScheduledPublish(): Promise<void> {
     } else {
       logger.warn({ error: safeErrMsg(err) }, "Scheduler: failed to query due posts — skipping cycle");
     }
+    schedulerRunning = false;
     return;
   }
 
-  if (due.length === 0) return;
-
-  logger.info({ count: due.length }, "Scheduler: publishing due posts");
+  logger.info({ count: due.length }, "Scheduler: due posts found");
 
   for (const post of due) {
+    if (inFlightPostIds.has(post.id)) {
+      logger.info({ postId: post.id }, "Scheduler: post already in flight — skipping duplicate attempt");
+      continue;
+    }
+    inFlightPostIds.add(post.id);
     try {
-      const platform = post.platform ?? "instagram";
+      const platform = normalizePlatform(post.platform);
+      const safetyError = autoPublishErrorForPost(post, platform);
+      if (safetyError) {
+        await db
+          .update(postsTable)
+          .set({ status: "failed", publishError: safetyError, updatedAt: new Date() })
+          .where(and(eq(postsTable.id, post.id), eq(postsTable.status, "scheduled"), isNull(postsTable.publishedAt)));
+        logger.warn({ postId: post.id, platform, reason: safetyError }, "Scheduler: post blocked by safety guard");
+        continue;
+      }
 
       let account: typeof socialAccountsTable.$inferSelect | undefined;
       try {
@@ -204,7 +275,7 @@ async function runScheduledPublish(): Promise<void> {
       } catch (err) {
         if (isNetworkError(err)) {
           logger.warn({ error: safeErrMsg(err) }, "Scheduler: DB unreachable mid-cycle — aborting remaining posts");
-          return; // abort the whole cycle; next tick will retry
+          break; // abort the remaining posts; next tick will retry
         }
         throw err;
       }
@@ -214,19 +285,23 @@ async function runScheduledPublish(): Promise<void> {
           .update(postsTable)
           .set({
             status: "failed",
-            publishError: `No active ${platform} account connected for this brand`,
+            publishError: `No direct ${platform} publishing account connected for this brand. Manual export and workflow send are still available.`,
             updatedAt: new Date(),
           })
-          .where(eq(postsTable.id, post.id));
+          .where(and(eq(postsTable.id, post.id), eq(postsTable.status, "scheduled"), isNull(postsTable.publishedAt)));
+        logger.warn({ postId: post.id, platform }, "Scheduler: no connected direct publishing account");
         continue;
       }
 
       const accessToken = await resolveAccessToken(account);
+      const imageUrl = publishImageUrl(post);
+
+      logger.info({ postId: post.id, platform, hasImage: !!imageUrl }, "Scheduler: publish attempted");
 
       const result = await publishToPlatform({
         caption: post.caption,
         hashtags: post.hashtags,
-        imageUrl: post.selectedImageUrl,
+        imageUrl,
         accountId: account.accountId ?? account.id,
         accessToken,
         platform,
@@ -238,21 +313,25 @@ async function runScheduledPublish(): Promise<void> {
           status: "posted",
           publishedAt: result.publishedAt,
           publishedUrl: result.publishedUrl,
+          contentSchema: publishMetadata(post, result),
           publishError: null,
           updatedAt: new Date(),
         })
-        .where(eq(postsTable.id, post.id));
+        .where(and(eq(postsTable.id, post.id), eq(postsTable.status, "scheduled"), isNull(postsTable.publishedAt)));
 
-      await writeClientMemory(post.clientId, "Performance Memory / Published post", `Scheduled publisher posted ${platform} post "${post.topic}". Treat this as an accepted final content direction.`);
+      await writeClientMemory(post.clientId, "Performance Memory / Published post", `Scheduled publisher posted ${platform} post "${post.topic}". Treat this as an accepted final content direction.`)
+        .catch((memoryErr: unknown) => {
+          logger.warn({ postId: post.id, error: safeErrMsg(memoryErr) }, "Scheduler: publish succeeded but memory write failed");
+        });
 
-      logger.info({ postId: post.id, platform }, "Scheduler: post published");
+      logger.info({ postId: post.id, platform, publishedUrl: result.publishedUrl }, "Scheduler: post published");
     } catch (err) {
       const message = safeErrMsg(err);
       // Best-effort status update — if DB is also down here, just log
       await db
         .update(postsTable)
         .set({ status: "failed", publishError: message, updatedAt: new Date() })
-        .where(eq(postsTable.id, post.id))
+        .where(and(eq(postsTable.id, post.id), eq(postsTable.status, "scheduled"), isNull(postsTable.publishedAt)))
         .catch((dbErr: unknown) => {
           logger.warn(
             { postId: post.id, dbError: safeErrMsg(dbErr) },
@@ -260,11 +339,19 @@ async function runScheduledPublish(): Promise<void> {
           );
         });
       logger.warn({ postId: post.id, error: message }, "Scheduler: publish failed");
+    } finally {
+      inFlightPostIds.delete(post.id);
     }
   }
+
+  schedulerRunning = false;
 }
 
 export function startScheduler(): void {
+  if (process.env.ENABLE_AUTO_PUBLISH === "false") {
+    logger.info("Scheduler disabled: ENABLE_AUTO_PUBLISH=false");
+    return;
+  }
   const INTERVAL_MS = 60_000;
   setInterval(runScheduledPublish, INTERVAL_MS);
   logger.info("Scheduler started (1-minute interval)");

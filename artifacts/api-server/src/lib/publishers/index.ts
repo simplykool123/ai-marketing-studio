@@ -10,6 +10,9 @@ export interface PublishParams {
 export interface PublishResult {
   publishedUrl: string;
   publishedAt: Date;
+  platformPostId: string;
+  provider: string;
+  rawPublishResponse?: unknown;
 }
 
 function fullCaption(caption: string, hashtags?: string | null): string {
@@ -53,7 +56,8 @@ export async function publishToInstagram(params: PublishParams): Promise<Publish
     const err = await publishRes.json().catch(() => ({}));
     throw new Error(`Instagram publish error: ${JSON.stringify(err)}`);
   }
-  const { id: mediaId } = (await publishRes.json()) as { id: string };
+  const publishData = (await publishRes.json()) as { id: string };
+  const mediaId = publishData.id;
 
   const permalinkRes = await fetch(
     `${graphBase}/${mediaId}?fields=permalink&access_token=${accessToken}`
@@ -64,7 +68,13 @@ export async function publishToInstagram(params: PublishParams): Promise<Publish
     if (permalink) publishedUrl = permalink;
   }
 
-  return { publishedUrl, publishedAt: new Date() };
+  return {
+    publishedUrl,
+    publishedAt: new Date(),
+    platformPostId: mediaId,
+    provider: "instagram_graph",
+    rawPublishResponse: { mediaId, creationId },
+  };
 }
 
 export async function publishToFacebook(params: PublishParams): Promise<PublishResult> {
@@ -88,7 +98,8 @@ export async function publishToFacebook(params: PublishParams): Promise<PublishR
     const err = await res.json().catch(() => ({}));
     throw new Error(`Facebook publish error: ${JSON.stringify(err)}`);
   }
-  const { id } = (await res.json()) as { id: string };
+  const publishData = (await res.json()) as { id: string };
+  const id = publishData.id;
   const parts = id.split("_");
   const pageId = parts[0];
   const postId = parts[1];
@@ -96,6 +107,9 @@ export async function publishToFacebook(params: PublishParams): Promise<PublishR
   return {
     publishedUrl: `https://www.facebook.com/${pageId ?? accountId}/posts/${postId ?? id}/`,
     publishedAt: new Date(),
+    platformPostId: id,
+    provider: "facebook_graph",
+    rawPublishResponse: { id },
   };
 }
 
@@ -218,6 +232,9 @@ export async function publishToLinkedIn(params: PublishParams): Promise<PublishR
   return {
     publishedUrl: `https://www.linkedin.com/feed/update/${encodedId}/`,
     publishedAt: new Date(),
+    platformPostId: result.id,
+    provider: "linkedin_ugc",
+    rawPublishResponse: { id: result.id },
   };
 }
 
@@ -229,23 +246,27 @@ export async function publishToTwitter(params: PublishParams): Promise<PublishRe
 
   if (imageUrl) {
     const imgRes = await fetch(imageUrl);
-    if (imgRes.ok) {
-      const imgBuffer = await imgRes.arrayBuffer();
-      const contentType = imgRes.headers.get("content-type") ?? "image/jpeg";
-      const blob = new Blob([imgBuffer], { type: contentType });
-      const form = new FormData();
-      form.append("media", blob, "upload.jpg");
-      form.append("media_category", "tweet_image");
-      const uploadRes = await fetch("https://api.x.com/2/media/upload", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: form,
-      });
-      if (uploadRes.ok) {
-        const { data } = (await uploadRes.json()) as { data?: { id?: string } };
-        if (data?.id) mediaIds = [data.id];
-      }
+    if (!imgRes.ok) {
+      throw new Error(`Failed to download image for X upload: ${imageUrl}`);
     }
+    const imgBuffer = await imgRes.arrayBuffer();
+    const contentType = imgRes.headers.get("content-type") ?? "image/jpeg";
+    const blob = new Blob([imgBuffer], { type: contentType });
+    const form = new FormData();
+    form.append("media", blob, "upload.jpg");
+    form.append("media_category", "tweet_image");
+    const uploadRes = await fetch("https://api.x.com/2/media/upload", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: form,
+    });
+    if (!uploadRes.ok) {
+      const err = await uploadRes.json().catch(() => ({}));
+      throw new Error(`X image upload failed: ${JSON.stringify(err)}`);
+    }
+    const { data } = (await uploadRes.json()) as { data?: { id?: string } };
+    if (!data?.id) throw new Error("X image upload did not return a media id");
+    mediaIds = [data.id];
   }
 
   const tweetBody: Record<string, unknown> = { text };
@@ -268,6 +289,9 @@ export async function publishToTwitter(params: PublishParams): Promise<PublishRe
   return {
     publishedUrl: `https://twitter.com/i/web/status/${data.id}/`,
     publishedAt: new Date(),
+    platformPostId: data.id,
+    provider: "twitter_api_v2",
+    rawPublishResponse: { id: data.id },
   };
 }
 

@@ -11,7 +11,7 @@ import {
   type BrandDna,
   type MemoryEntry,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,7 @@ import {
   Plus,
   Search,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Video,
 } from "lucide-react";
@@ -39,6 +40,7 @@ type SectionId =
   | "story"
   | "rules"
   | "performance"
+  | "social"
   | "rejection"
   | "image"
   | "video"
@@ -80,6 +82,13 @@ const SECTIONS: SectionConfig[] = [
     icon: BarChart3,
     fields: ["best performing posts", "weak posts", "what worked", "what did not work"],
     terms: ["performance", "worked", "weak", "approved", "published", "posted", "liked"],
+  },
+  {
+    id: "social",
+    title: "Social Intelligence",
+    icon: Sparkles,
+    fields: ["historical view", "recommendations", "platform gaps", "related topics"],
+    terms: ["social intelligence", "content_strategy", "platform_learning", "avoid_repeat", "related topics", "campaign angles"],
   },
   {
     id: "rejection",
@@ -141,11 +150,60 @@ const EMPTY_STATE: Partial<Record<SectionId, string>> = {
   story:       "Create an active storyline so campaigns have a running narrative.",
   rules:       "Add strict rules the AI should always follow.",
   performance: "Approve drafts and mark posted content to teach AI what works.",
+  social:      "Import connected social history to build strategic recommendations.",
   rejection:   "Reject drafts to teach AI which angles, tones, or formats to avoid.",
   image:       "Save final artwork or import website style notes to build visual memory.",
   video:       "Video memory is reserved for a later sprint.",
   seo:         "Use the website importer or blog drafts to build keyword memory.",
 };
+
+type SocialIntelligenceResponse = {
+  importedPosts: number;
+  platformsAnalyzed: string[];
+  skipped: Array<{ platform: string; reason: string }>;
+  historicalView: {
+    summary: string;
+    whatWorked: string[];
+    whatDidNotWork: string[];
+    whyNotPerforming: string[];
+    contentGaps: string[];
+    platformGaps: string[];
+  };
+  recommendationView: {
+    nextBestTopics: string[];
+    relatedTopics: string[];
+    campaignIdeas: string[];
+    quickWins: string[];
+    longTermStrategy: string[];
+  };
+  memoryEntries: Array<{ key: string; value: string }>;
+};
+
+async function importSocialIntelligence(clientId: string): Promise<SocialIntelligenceResponse> {
+  const token = localStorage.getItem("ams_token");
+  const res = await fetch(`/api/clients/${clientId}/social/intelligence/import`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ limit: 25 }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Failed to import social intelligence");
+  return data;
+}
+
+function BulletList({ items, empty }: { items: string[]; empty: string }) {
+  if (!items.length) return <p className="text-sm text-muted-foreground italic">{empty}</p>;
+  return (
+    <ul className="space-y-1.5">
+      {items.slice(0, 6).map((item) => (
+        <li key={item} className="text-sm text-muted-foreground leading-relaxed">- {item}</li>
+      ))}
+    </ul>
+  );
+}
 
 export default function Memory() {
   const { clientId } = useParams<{ clientId: string }>();
@@ -162,11 +220,32 @@ export default function Memory() {
   const [selectedSection, setSelectedSection] = useState<SectionId>("rules");
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
+  const [socialIntelligence, setSocialIntelligence] = useState<SocialIntelligenceResponse | null>(null);
 
   const activeStoryline = storylines.find((story) => story.isActive);
   const approvedPosts = posts.filter((post) => ["approved", "export_ready", "scheduled", "posted", "published"].includes(post.status));
   const rejectedPosts = posts.filter((post) => post.status === "rejected");
   const isLoading = memoryLoading || brandLoading || storyLoading || postsLoading;
+  const socialMemories = memories.filter((memory) => `${memory.key} ${memory.value}`.toLowerCase().includes("social intelligence"));
+
+  const socialImport = useMutation({
+    mutationFn: () => importSocialIntelligence(clientId!),
+    onSuccess: (result) => {
+      setSocialIntelligence(result);
+      queryClient.invalidateQueries({ queryKey: getListMemoryQueryKey(clientId!) });
+      toast({
+        title: result.importedPosts ? "Social intelligence updated" : "No social posts imported",
+        description: result.importedPosts
+          ? `${result.importedPosts} past posts analyzed. Insights were saved to AI Memory.`
+          : "Connect a platform with readable history, then try again.",
+      });
+    },
+    onError: (err) => toast({
+      title: "Social intelligence failed",
+      description: err instanceof Error ? err.message : "Could not analyze connected social history.",
+      variant: "destructive",
+    }),
+  });
 
   const groupedMemories = useMemo(() => {
     const groups = new Map<SectionId, MemoryEntry[]>();
@@ -182,6 +261,7 @@ export default function Memory() {
     { label: "Rules",        count: groupedMemories.get("rules")?.length ?? 0,                                             icon: Lightbulb,      color: "text-amber-600 bg-amber-50 border-amber-100" },
     { label: "Rejections",   count: (groupedMemories.get("rejection")?.length ?? 0) + rejectedPosts.length,                icon: MessageSquareX, color: "text-red-500 bg-red-50 border-red-100" },
     { label: "Performance",  count: (groupedMemories.get("performance")?.length ?? 0) + approvedPosts.length,              icon: BarChart3,      color: "text-green-600 bg-green-50 border-green-100" },
+    { label: "Social Intel",  count: socialMemories.length,                                                                 icon: Sparkles,       color: "text-purple-600 bg-purple-50 border-purple-100" },
     { label: "Image Style",  count: groupedMemories.get("image")?.length ?? 0,                                             icon: Image,          color: "text-pink-600 bg-pink-50 border-pink-100" },
     { label: "SEO",          count: groupedMemories.get("seo")?.length ?? 0,                                               icon: Search,         color: "text-sky-600 bg-sky-50 border-sky-100" },
   ];
@@ -240,7 +320,7 @@ export default function Memory() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
         {memorySummary.map((item) => {
           const Icon = item.icon;
           return (
@@ -275,6 +355,105 @@ export default function Memory() {
           ))}
         </div>
       </div>
+
+      <Card className="border-primary/20">
+        <CardContent className="p-5 space-y-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-primary" />
+                Social Intelligence
+              </h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Analyze connected social history, then save concise strategic learnings into AI Memory.
+              </p>
+            </div>
+            <Button
+              onClick={() => socialImport.mutate()}
+              disabled={!clientId || socialImport.isPending}
+              className="gap-2"
+            >
+              <BarChart3 className="w-4 h-4" />
+              {socialImport.isPending ? "Analyzing..." : "Import & analyze past social content"}
+            </Button>
+          </div>
+
+          {!socialIntelligence ? (
+            <div className="rounded-md border border-dashed p-4">
+              <p className="text-sm text-muted-foreground">
+                {socialMemories.length
+                  ? `${socialMemories.length} saved social intelligence memories are already available to AI Ideas, Campaign Planner, Marketing Calendar, and rewrite skills.`
+                  : "Connect Instagram, Facebook, LinkedIn, or X/Twitter to import recent public content. YouTube import is coming later."}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-2 text-xs">
+                <Badge variant="outline">{socialIntelligence.importedPosts} posts analyzed</Badge>
+                {socialIntelligence.platformsAnalyzed.map((platform) => (
+                  <Badge key={platform} variant="secondary" className="capitalize">{platform}</Badge>
+                ))}
+              </div>
+              {socialIntelligence.skipped.length > 0 && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+                  <p className="text-xs font-semibold text-amber-900 mb-1">Skipped platforms</p>
+                  <div className="space-y-1">
+                    {socialIntelligence.skipped.map((item) => (
+                      <p key={`${item.platform}-${item.reason}`} className="text-xs text-amber-800 capitalize">
+                        {item.platform}: {item.reason}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="rounded-lg border bg-muted/20 p-4 space-y-4">
+                  <div>
+                    <p className="text-sm font-semibold">Historical View</p>
+                    <p className="text-xs text-muted-foreground mt-1">{socialIntelligence.historicalView.summary}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-2">What worked</p>
+                    <BulletList items={socialIntelligence.historicalView.whatWorked} empty="No strong pattern detected yet." />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-2">What did not work</p>
+                    <BulletList items={socialIntelligence.historicalView.whatDidNotWork} empty="No weak pattern detected yet." />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-2">Why performance may be weak</p>
+                    <BulletList items={socialIntelligence.historicalView.whyNotPerforming} empty="More history is needed." />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-2">Platform gaps</p>
+                    <BulletList items={socialIntelligence.historicalView.platformGaps} empty="No platform gaps detected." />
+                  </div>
+                </div>
+
+                <div className="rounded-lg border bg-primary/5 p-4 space-y-4">
+                  <p className="text-sm font-semibold">Recommendations</p>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-2">Related topics</p>
+                    <BulletList items={socialIntelligence.recommendationView.relatedTopics} empty="No related topics yet." />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-2">Next best content angles</p>
+                    <BulletList items={socialIntelligence.recommendationView.nextBestTopics} empty="No recommendation yet." />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-2">Campaign ideas</p>
+                    <BulletList items={socialIntelligence.recommendationView.campaignIdeas} empty="No campaign ideas yet." />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide mb-2">Quick wins</p>
+                    <BulletList items={socialIntelligence.recommendationView.quickWins} empty="No quick wins yet." />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="border-primary/20">
         <CardContent className="p-5 space-y-4">

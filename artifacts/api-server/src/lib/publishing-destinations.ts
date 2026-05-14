@@ -20,6 +20,8 @@ export type PublishingDestination = {
   enabled: boolean;
 };
 
+const DIRECT_PUBLISH_PLATFORMS = ["instagram", "facebook", "linkedin", "twitter"];
+
 export type PublishPackagePost = {
   clientName: string;
   postId: string;
@@ -164,6 +166,7 @@ export async function getPublishingReadiness(clientId: string) {
       platform: socialAccountsTable.platform,
       isActive: socialAccountsTable.isActive,
       accessToken: socialAccountsTable.accessToken,
+      tokenExpiresAt: socialAccountsTable.tokenExpiresAt,
     })
     .from(socialAccountsTable)
     .where(and(eq(socialAccountsTable.clientId, clientId), eq(socialAccountsTable.isActive, true)));
@@ -171,9 +174,17 @@ export async function getPublishingReadiness(clientId: string) {
   const hasWorkflow = destinations.some((destination) => destination.type === "workflow" && destination.enabled);
   const hasManual = destinations.some((destination) => destination.type === "manual" && destination.enabled);
   const tokenStorageSafe = isEncryptionConfigured();
+  const directConnectedPlatforms = activeAccounts
+    .filter((account) => DIRECT_PUBLISH_PLATFORMS.includes(account.platform))
+    .filter((account) => {
+      const expired = !!account.tokenExpiresAt && new Date(account.tokenExpiresAt).getTime() <= Date.now();
+      return !!account.accessToken && tokenStorageSafe && !expired;
+    })
+    .map((account) => account.platform);
   const hasNativeReadyAccount = activeAccounts.some((account) => {
     const isMetaPlatform = account.platform === "facebook" || account.platform === "instagram";
-    return isMetaPlatform && !!account.accessToken && tokenStorageSafe;
+    const expired = !!account.tokenExpiresAt && new Date(account.tokenExpiresAt).getTime() <= Date.now();
+    return isMetaPlatform && !!account.accessToken && tokenStorageSafe && !expired;
   });
 
   return {
@@ -183,9 +194,10 @@ export async function getPublishingReadiness(clientId: string) {
     nativeMetaConnected: hasNativeReadyAccount,
     externalConnectorConnected: false,
     activeSocialAccountCount: activeAccounts.length,
+    directConnectedPlatforms: Array.from(new Set(directConnectedPlatforms)),
     canSendWorkflow: hasWorkflow,
     canExportManual: hasManual,
-    canPublishNatively: hasNativeReadyAccount,
+    canPublishNatively: directConnectedPlatforms.length > 0,
     blockedReason: hasWorkflow || hasManual
       ? null
       : "No manual or workflow destination is available.",

@@ -1,14 +1,13 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useParams } from "wouter";
 import {
   Image as ImageIcon, Sparkles, RefreshCw, CheckCircle2,
-  Download, Wand2, Lock, ExternalLink,
+  Download, Wand2, Upload, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -22,6 +21,11 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 // Types
 // ---------------------------------------------------------------------------
 
+interface ReferenceImage {
+  file: File;
+  previewUrl: string;
+}
+
 interface ImagePromptVariation {
   variation: number;
   style: string;
@@ -33,14 +37,6 @@ interface GeneratedPrompts {
   topic: string;
   brandContext: string;
   variations: ImagePromptVariation[];
-}
-
-interface ImageProvider {
-  name: string;
-  label: string;
-  model: string;
-  available: boolean;
-  notes: string;
 }
 
 type ImagePreparedPrompt = {
@@ -83,12 +79,31 @@ export default function ImageStudio() {
   const [improvingPrompt, setImprovingPrompt] = useState(false);
   const [preparedPrompt, setPreparedPrompt] = useState<ImagePreparedPrompt | null>(null);
   const [gen, setGen] = useState<GeneratedPrompts | null>(null);
-  const [providers, setProviders] = useState<ImageProvider[]>([]);
+  const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Per-variation state
-  const [generating, setGenerating] = useState<number | null>(null); // variation index
-  const [generatedImages, setGeneratedImages] = useState<Record<number, string>>({}); // variation index → url
+  const [generating, setGenerating] = useState<number | null>(null);
+  const [generatedImages, setGeneratedImages] = useState<Record<number, string>>({});
+  const [savedImages, setSavedImages] = useState<Set<number>>(new Set());
   const [selectedVariation, setSelectedVariation] = useState<number | null>(null);
+
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Please select an image file", variant: "destructive" });
+      return;
+    }
+    const previewUrl = URL.createObjectURL(file);
+    setReferenceImage({ file, previewUrl });
+  }
+
+  function removeReferenceImage() {
+    if (referenceImage) URL.revokeObjectURL(referenceImage.previewUrl);
+    setReferenceImage(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
 
   async function generatePrompts() {
     if (!topic.trim()) {
@@ -98,6 +113,7 @@ export default function ImageStudio() {
     setLoading(true);
     setGen(null);
     setGeneratedImages({});
+    setSavedImages(new Set());
     setSelectedVariation(null);
     try {
       const res = await fetch(`${BASE}/api/clients/${clientId}/image-studio/generate-prompts`, {
@@ -112,7 +128,6 @@ export default function ImageStudio() {
       if (!res.ok) throw new Error(data.error ?? "Generation failed");
 
       setGen(data.generated);
-      setProviders(data.providers ?? []);
       toast({ title: "4 prompt variations ready" });
     } catch (err) {
       toast({
@@ -177,7 +192,8 @@ export default function ImageStudio() {
       if (!res.ok) throw new Error(data.error ?? "Image generation failed");
 
       setGeneratedImages(prev => ({ ...prev, [index]: data.imageUrl }));
-      toast({ title: "Image generated" });
+      setSavedImages(prev => new Set(prev).add(index));
+      toast({ title: "Image generated", description: "Saved to your image library automatically." });
     } catch (err) {
       toast({
         title: "Image generation failed",
@@ -221,6 +237,39 @@ export default function ImageStudio() {
       {/* Input */}
       <Card>
         <CardContent className="pt-5 space-y-4">
+          {/* Reference image upload */}
+          <div className="space-y-1.5">
+            <Label>Reference Image <span className="text-muted-foreground font-normal">(optional)</span></Label>
+            {referenceImage ? (
+              <div className="flex items-center gap-3 rounded-md border bg-muted/30 p-2">
+                <img src={referenceImage.previewUrl} alt="reference" className="w-14 h-14 rounded object-cover shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{referenceImage.file.name}</p>
+                  <p className="text-xs text-muted-foreground">Used as visual context for prompt generation</p>
+                </div>
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0 shrink-0" onClick={removeReferenceImage}>
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 w-full rounded-md border border-dashed border-input bg-background px-3 py-3 text-sm text-muted-foreground hover:bg-muted/30 transition-colors"
+              >
+                <Upload className="w-4 h-4 shrink-0" />
+                Upload a photo or image to use as a style reference
+              </button>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleFileSelect}
+            />
+          </div>
+
           <div className="space-y-1.5">
             <Label>Topic / Concept</Label>
             <textarea
@@ -293,6 +342,7 @@ export default function ImageStudio() {
               const imgUrl = generatedImages[i];
               const isGenerating = generating === i;
               const isSelected = selectedVariation === v.variation;
+              const isSaved = savedImages.has(i);
 
               return (
                 <Card
@@ -303,8 +353,21 @@ export default function ImageStudio() {
                   )}
                 >
                   {imgUrl && (
-                    <div className="aspect-square overflow-hidden rounded-t-lg">
+                    <div className="aspect-square overflow-hidden rounded-t-lg relative group">
                       <img src={imgUrl} alt={v.style} className="w-full h-full object-cover" />
+                      <a
+                        href={imgUrl}
+                        download={`${v.style.replace(/\s+/g, "-")}.png`}
+                        className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white rounded p-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Download image"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </a>
+                      {isSaved && (
+                        <div className="absolute bottom-2 left-2 bg-black/60 text-white text-[10px] px-2 py-1 rounded flex items-center gap-1">
+                          <CheckCircle2 className="w-2.5 h-2.5 text-green-400" /> Saved to library
+                        </div>
+                      )}
                     </div>
                   )}
                   <CardContent className={cn("pt-3 pb-3", imgUrl ? "" : "pt-4")}>
@@ -317,7 +380,7 @@ export default function ImageStudio() {
                       </span>
                       {isSelected && (
                         <Badge variant="outline" className="text-green-700 border-green-300 bg-green-50 text-[10px]">
-                          <CheckCircle2 className="w-2.5 h-2.5 mr-1" /> Saved
+                          <CheckCircle2 className="w-2.5 h-2.5 mr-1" /> Style saved
                         </Badge>
                       )}
                     </div>
@@ -334,7 +397,9 @@ export default function ImageStudio() {
                       >
                         {isGenerating
                           ? <><RefreshCw className="w-3 h-3 mr-1 animate-spin" /> Generating…</>
-                          : <><Wand2 className="w-3 h-3 mr-1" /> Generate Image</>}
+                          : imgUrl
+                            ? <><RefreshCw className="w-3 h-3 mr-1" /> Regenerate</>
+                            : <><Wand2 className="w-3 h-3 mr-1" /> Generate Image</>}
                       </Button>
                       <Button
                         size="sm"
@@ -353,27 +418,6 @@ export default function ImageStudio() {
         </div>
       )}
 
-      {/* Provider catalogue */}
-      {providers.length > 0 && (
-        <div className="space-y-3">
-          <h2 className="text-base font-semibold">Image Providers</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {providers.map(p => (
-              <Card key={p.name} className={cn(!p.available && "opacity-60")}>
-                <CardContent className="py-3 px-4">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-medium text-sm">{p.label}</span>
-                    {p.available
-                      ? <Badge variant="outline" className="text-green-700 border-green-300 bg-green-50 text-[10px]">Active</Badge>
-                      : <Badge variant="outline" className="text-muted-foreground text-[10px]"><Lock className="w-2.5 h-2.5 mr-0.5" /> Coming soon</Badge>}
-                  </div>
-                  <p className="text-[10px] text-muted-foreground">{p.notes}</p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

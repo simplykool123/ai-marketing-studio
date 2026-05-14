@@ -195,8 +195,8 @@ async function getUploadErrorMessage(res: Response): Promise<string> {
 }
 
 async function getJsonErrorMessage(res: Response): Promise<string> {
-  const data = await res.json().catch(() => null) as { error?: string } | null;
-  return data?.error ?? `Request failed with status ${res.status}`;
+  const data = await res.json().catch(() => null) as { error?: string; details?: string; stage?: string } | null;
+  return [data?.error, data?.details, data?.stage ? `Stage: ${data.stage}` : ""].filter(Boolean).join(" ") || `Request failed with status ${res.status}`;
 }
 
 function remotePreviewSrc(image?: WebsiteImageCandidate | null): string {
@@ -291,6 +291,10 @@ export default function BrandDna() {
   const [analysisSourceUrl, setAnalysisSourceUrl] = useState("");
   const [replaceFilledFields, setReplaceFilledFields] = useState(false);
   const [isUsingExtractedLogo, setIsUsingExtractedLogo] = useState(false);
+  const [showBlockedFallback, setShowBlockedFallback] = useState(false);
+  const [fallbackScreenshot, setFallbackScreenshot] = useState<File | null>(null);
+  const [fallbackText, setFallbackText] = useState("");
+  const [isAnalyzingFallback, setIsAnalyzingFallback] = useState(false);
 
   const { data: brandDna, isLoading } = useGetBrandDna(clientId || "");
   const { data: client } = useGetClient(clientId || "");
@@ -422,6 +426,7 @@ export default function BrandDna() {
     setIsAnalyzingWebsite(true);
     setWebsiteAnalysis(null);
     setWebsiteAnalysisResult(null);
+    setShowBlockedFallback(false);
     try {
       const res = await fetch(`/api/clients/${clientId}/brand-dna/analyze-website`, {
         method: "POST",
@@ -434,12 +439,21 @@ export default function BrandDna() {
       if (res.status === 401) {
         throw new Error("Session expired. Please sign in again.");
       }
-      if (!res.ok) throw new Error(await getJsonErrorMessage(res));
+      if (!res.ok) {
+        const data = await res.json().catch(() => null) as { error?: string; details?: string; stage?: string } | null;
+        if (data?.stage === "website_fetch_and_extraction") setShowBlockedFallback(true);
+        throw new Error([data?.error, data?.details, data?.stage ? `Stage: ${data.stage}` : ""].filter(Boolean).join(" ") || `Request failed with status ${res.status}`);
+      }
       const data = await res.json() as WebsiteAnalysisResponse;
       setWebsiteAnalysis(data.analysis);
       setWebsiteAnalysisResult(data);
       setAnalysisSourceUrl(data.websiteUrl);
-      toast({ title: "Website analysis ready", description: "Review the suggestions before applying them to Brand Setup." });
+      toast({
+        title: "Website analysis ready",
+        description: data.warnings?.length
+          ? data.warnings.join(" ")
+          : "Review the suggestions before applying them to Brand Setup.",
+      });
     } catch (err) {
       toast({
         title: "Could not analyze website",
@@ -448,6 +462,53 @@ export default function BrandDna() {
       });
     } finally {
       setIsAnalyzingWebsite(false);
+    }
+  };
+
+  const handleAnalyzeFallback = async () => {
+    if (!clientId) return;
+    if (!fallbackScreenshot && fallbackText.trim().length < 30) {
+      toast({
+        title: "Add fallback input",
+        description: "Upload a homepage screenshot or paste key website text before analyzing.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsAnalyzingFallback(true);
+    try {
+      const formData = new FormData();
+      if (fallbackScreenshot) formData.append("screenshot", fallbackScreenshot);
+      if (fallbackText.trim()) formData.append("websiteText", fallbackText.trim());
+      if (websiteUrl.trim()) formData.append("websiteUrl", websiteUrl.trim());
+
+      const res = await fetch(`/api/clients/${clientId}/brand-dna/analyze-fallback`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      if (res.status === 401) throw new Error("Session expired. Please sign in again.");
+      if (!res.ok) throw new Error(await getJsonErrorMessage(res));
+
+      const data = await res.json() as WebsiteAnalysisResponse;
+      setWebsiteAnalysis(data.analysis);
+      setWebsiteAnalysisResult(data);
+      setAnalysisSourceUrl(data.websiteUrl);
+      toast({
+        title: "Fallback analysis ready",
+        description: data.warnings?.length
+          ? data.warnings.join(" ")
+          : "Review the suggestions before applying them to Brand Setup.",
+      });
+    } catch (err) {
+      toast({
+        title: "Fallback analysis failed",
+        description: err instanceof Error ? err.message : "Try a smaller screenshot or paste website text manually.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsAnalyzingFallback(false);
     }
   };
 
@@ -605,6 +666,53 @@ export default function BrandDna() {
               Analyze Website
             </Button>
           </div>
+
+          {showBlockedFallback && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-950 space-y-4">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                <div>
+                  <p className="text-sm font-semibold">This website blocked server-side reading.</p>
+                  <p className="text-xs text-amber-900">
+                    Upload a homepage screenshot or paste key website text.
+                  </p>
+                </div>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-wide">Upload screenshot</label>
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => setFallbackScreenshot(event.target.files?.[0] ?? null)}
+                    className="bg-background"
+                  />
+                  {fallbackScreenshot && (
+                    <p className="text-xs text-amber-900">{fallbackScreenshot.name}</p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-wide">Paste website text</label>
+                  <Textarea
+                    value={fallbackText}
+                    onChange={(event) => setFallbackText(event.target.value)}
+                    placeholder="Paste homepage, about, product, or service copy here..."
+                    rows={4}
+                    className="bg-background"
+                  />
+                </div>
+              </div>
+              <Button
+                type="button"
+                onClick={handleAnalyzeFallback}
+                disabled={isAnalyzingFallback || (!fallbackScreenshot && fallbackText.trim().length < 30)}
+                className="gap-2"
+              >
+                {isAnalyzingFallback ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                Analyze fallback
+              </Button>
+            </div>
+          )}
 
           {websiteAnalysis && (
             <div className="rounded-lg border bg-background p-4 space-y-4">

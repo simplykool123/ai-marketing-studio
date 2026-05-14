@@ -32,6 +32,7 @@ import BlogStudio from "@/pages/BlogStudio";
 import ImageStudio from "@/pages/ImageStudio";
 import VideoStudio from "@/pages/VideoStudio";
 import MarketingCalendar from "@/pages/MarketingCalendar";
+import Reports from "@/pages/Reports";
 
 const queryClient = new QueryClient();
 
@@ -148,6 +149,9 @@ function Router() {
       </Route>
       <Route path="/clients/:clientId/memory">
         {() => <ProtectedClientRoute><Memory /></ProtectedClientRoute>}
+      </Route>
+      <Route path="/clients/:clientId/reports">
+        {() => <ProtectedClientRoute><Reports /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/campaigns">
         {() => <ProtectedClientRoute><CampaignPlanner /></ProtectedClientRoute>}

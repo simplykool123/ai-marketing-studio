@@ -26,6 +26,9 @@ import videoStudioRouter from "./video_studio.js";
 import creativeRouter from "./creative.js";
 import skillsRouter from "./skills.js";
 import occasionsRouter from "./occasions.js";
+import analyticsRouter from "./analytics.js";
+import socialIntelligenceRouter from "./social_intelligence.js";
+import reportsRouter from "./reports.js";
 import { requireAuth, requireClientAccess } from "../middleware/auth.js";
 
 const router: IRouter = Router();
@@ -61,5 +64,8 @@ router.use(videoStudioRouter);
 router.use(creativeRouter);
 router.use(skillsRouter);
 router.use(occasionsRouter);
+router.use(analyticsRouter);
+router.use(socialIntelligenceRouter);
+router.use(reportsRouter);
 
 export default router;

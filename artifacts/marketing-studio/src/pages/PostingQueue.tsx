@@ -62,6 +62,7 @@ type PublishingReadiness = {
   nativeMetaConnected: boolean;
   externalConnectorConnected: boolean;
   activeSocialAccountCount: number;
+  directConnectedPlatforms: string[];
   canSendWorkflow: boolean;
   canExportManual: boolean;
   canPublishNatively: boolean;
@@ -235,6 +236,16 @@ function postStatusLabel(post: any): string {
   return "Not posted yet";
 }
 
+function friendlyPublishError(post: any): string {
+  const error = String(post.publishError ?? "");
+  if (/no direct .*publishing account|no active .*account|no .*account connected/i.test(error)) return "Blocked: no connected publishing destination";
+  if (/requires final artwork|requires .*image/i.test(error)) return "Blocked: final artwork or media is missing";
+  if (/not implemented|not supported/i.test(error)) return "Blocked: this format is not supported yet";
+  if (/expired|reconnect/i.test(error)) return "Blocked: reconnect the publishing account";
+  if (!error) return "Last publish attempt failed";
+  return "Last publish attempt failed";
+}
+
 function exportableStatus(post: any): string {
   return post.publishedAt ? "published" : post.status;
 }
@@ -276,6 +287,19 @@ function destinationStatusLabel(destination: PublishingDestination): string {
 
 function isMetaPlatform(platform?: string | null): platform is "facebook" | "instagram" {
   return platform === "facebook" || platform === "instagram";
+}
+
+function scheduledReadinessLabel(post: any, publishingReadiness?: PublishingReadiness): string | null {
+  if (post.status !== "scheduled" || post.publishedAt) return null;
+  const platform = post.platform ?? "instagram";
+  const directPlatforms = publishingReadiness?.directConnectedPlatforms ?? [];
+  if (directPlatforms.includes(platform)) return "Auto-publish ready";
+  if (publishingReadiness?.workflowConfigured) return "Blocked: no direct connector. Workflow send is manual.";
+  return "Blocked: no publishing destination connected";
+}
+
+function platformPostId(post: any): string {
+  return String(asRecord(asRecord(post.contentSchema).publish).platformPostId || "");
 }
 
 function downloadJson(filename: string, payload: unknown) {
@@ -608,8 +632,8 @@ export default function PostingQueue() {
               <p className="font-medium">{metaConnected ? "Meta publishing is connected." : "Direct platform publishing is not connected yet."}</p>
               <p className="text-xs text-amber-800/90 mt-0.5">
                 {metaConnected
-                  ? "Facebook and Instagram posts now require a real Meta publish action before they become Published."
-                  : "Approved and scheduled posts wait here. Nothing is posted automatically."}
+                  ? "Scheduled Meta posts can auto-publish when the API server scheduler is enabled. Published only appears after a successful publish time is saved."
+                  : "Approved and scheduled posts wait here. Auto-publishing is blocked until a valid direct connector is connected."}
               </p>
             </div>
             <button
@@ -783,6 +807,7 @@ export default function PostingQueue() {
               const hasPublishedProof = isPublished && !!post.publishedAt;
               const canAct = ["approved", "export_ready", "scheduled", "failed"].includes(post.status);
               const platform = post.platform ?? "instagram";
+              const scheduledReadiness = scheduledReadinessLabel(post, publishingReadiness);
               const canPublishToMeta =
                 canAct &&
                 isMetaPlatform(platform) &&
@@ -834,10 +859,21 @@ export default function PostingQueue() {
                       <p className="text-xs text-muted-foreground truncate">{post.caption?.slice(0, 110)}{post.caption?.length > 110 ? "..." : ""}</p>
                       {post.hashtags && <p className="text-[11px] text-muted-foreground/80 truncate">{post.hashtags}</p>}
                       <PostTimeline post={post} />
+                      {scheduledReadiness && (
+                        <p className={cn(
+                          "text-xs mt-0.5",
+                          scheduledReadiness.startsWith("Auto") ? "text-emerald-700" : "text-amber-700"
+                        )}>
+                          {scheduledReadiness}
+                        </p>
+                      )}
+                      {hasPublishedProof && platformPostId(post) && (
+                        <p className="text-xs text-emerald-700 mt-0.5">Platform ID saved</p>
+                      )}
                       {isFailed && post.publishError && (
                         <p className="text-xs text-red-600 flex items-center gap-1 mt-0.5">
                           <AlertCircle className="w-3 h-3 shrink-0" />
-                          <span className="truncate">{post.publishError}</span>
+                          <span className="truncate" title={post.publishError}>{friendlyPublishError(post)}</span>
                         </p>
                       )}
                     </div>

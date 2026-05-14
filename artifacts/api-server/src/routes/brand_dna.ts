@@ -1,4 +1,5 @@
 import { Router } from "express";
+import multer from "multer";
 import sharp from "sharp";
 import { db } from "@workspace/db";
 import { brandDnaTable, userSettingsTable } from "@workspace/db/schema";
@@ -14,6 +15,7 @@ import {
 import { logger } from "../lib/logger.js";
 
 const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 type BrandWebsiteAnalysis = {
   brandTone: string;
@@ -75,12 +77,38 @@ type RenderedWebsiteAnalysis = {
   logoCandidates: WebsiteImageCandidate[];
 };
 
+type UploadedFile = {
+  buffer: Buffer;
+  mimetype: string;
+  size: number;
+  originalname: string;
+};
+
 const IMAGE_PROXY_PATH = "/api/brand-assets/proxy-image";
 const IMAGE_FETCH_HEADERS = {
   "user-agent": "AI Marketing Studio Brand Importer/2.0",
   "accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
 };
+const BASIC_HTML_FETCH_HEADERS = {
+  "user-agent": "AI Marketing Studio Brand Importer/2.0",
+  "accept": "text/html,application/xhtml+xml",
+};
+const BROWSER_HTML_FETCH_HEADERS = {
+  "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+  "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "accept-language": "en-US,en;q=0.9",
+  "upgrade-insecure-requests": "1",
+};
 const MAX_PROXY_IMAGE_BYTES = 8 * 1024 * 1024;
+
+type FetchHtmlResult = {
+  url: URL;
+  html: string;
+  warning?: string;
+  status?: number;
+  attempt?: "normal_fetch" | "browser_header_fetch" | "playwright_rendered_html";
+  failureType?: "timeout" | "dns" | "blocked" | "http_status" | "content_type" | "network" | "unknown";
+};
 
 async function getUserSettings(userId?: string) {
   if (!userId) return null;
@@ -191,29 +219,81 @@ function pageTitle(html: string): string {
   return html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim() ?? "";
 }
 
-async function fetchHtml(url: URL, timeoutMs = 8000): Promise<{ url: URL; html: string; warning?: string }> {
+function fetchFailureType(err: unknown): FetchHtmlResult["failureType"] {
+  const message = err instanceof Error ? err.message.toLowerCase() : "";
+  const name = err instanceof Error ? err.name.toLowerCase() : "";
+  if (name.includes("abort") || message.includes("abort") || message.includes("timeout")) return "timeout";
+  if (message.includes("enotfound") || message.includes("dns") || message.includes("getaddrinfo")) return "dns";
+  if (message.includes("econnreset") || message.includes("socket") || message.includes("network")) return "network";
+  if (message.includes("forbidden") || message.includes("blocked")) return "blocked";
+  return "unknown";
+}
+
+async function fetchHtmlAttempt(
+  url: URL,
+  timeoutMs: number,
+  attempt: FetchHtmlResult["attempt"],
+  headers: Record<string, string>,
+): Promise<FetchHtmlResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const page = await fetch(url, {
       redirect: "follow",
       signal: controller.signal,
-      headers: {
-        "user-agent": "AI Marketing Studio Brand Importer/2.0",
-        "accept": "text/html,application/xhtml+xml",
-      },
+      headers,
     });
-    if (!page.ok) return { url, html: "", warning: `Could not read ${url.toString()} (HTTP ${page.status}).` };
+    if (!page.ok) {
+      return {
+        url,
+        html: "",
+        warning: `${attempt} could not read ${url.toString()} (HTTP ${page.status}).`,
+        status: page.status,
+        attempt,
+        failureType: page.status === 403 || page.status === 401 ? "blocked" : "http_status",
+      };
+    }
     const contentType = page.headers.get("content-type") ?? "";
     if (!contentType.includes("text/html") && !contentType.includes("application/xhtml")) {
-      return { url, html: "", warning: `${url.toString()} did not return readable HTML.` };
+      return {
+        url,
+        html: "",
+        warning: `${attempt} reached ${url.toString()} but it did not return readable HTML (${contentType || "unknown content type"}).`,
+        status: page.status,
+        attempt,
+        failureType: "content_type",
+      };
     }
-    return { url: new URL(page.url), html: await page.text() };
-  } catch {
-    return { url, html: "", warning: `Could not read ${url.toString()}.` };
+    return { url: new URL(page.url), html: await page.text(), status: page.status, attempt };
+  } catch (err) {
+    const failureType = fetchFailureType(err);
+    return {
+      url,
+      html: "",
+      warning: `${attempt} could not read ${url.toString()} (${failureType}).`,
+      attempt,
+      failureType,
+    };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchHtml(url: URL, timeoutMs = 8000, retryWithBrowserHeaders = false): Promise<FetchHtmlResult> {
+  const first = await fetchHtmlAttempt(url, timeoutMs, "normal_fetch", BASIC_HTML_FETCH_HEADERS);
+  if (first.html || !retryWithBrowserHeaders) return first;
+
+  const retryHeaders: Record<string, string> = {
+    ...BROWSER_HTML_FETCH_HEADERS,
+    "referer": `${url.protocol}//${url.hostname}/`,
+  };
+  const second = await fetchHtmlAttempt(url, Math.max(timeoutMs + 4000, 12000), "browser_header_fetch", retryHeaders);
+  if (second.html) return second;
+
+  return {
+    ...second,
+    warning: `Homepage fetch failed after normal_fetch and browser_header_fetch. ${first.warning ?? ""} ${second.warning ?? ""}`.trim(),
+  };
 }
 
 function scoreLink(url: URL): number {
@@ -615,6 +695,7 @@ type OptionalPlaywrightBrowser = {
     goto(url: string, options?: unknown): Promise<unknown>;
     waitForLoadState(state: string, options?: unknown): Promise<unknown>;
     waitForTimeout(ms: number): Promise<unknown>;
+    content(): Promise<string>;
     screenshot(options?: unknown): Promise<Buffer>;
     evaluate<T>(fn: () => T): Promise<T>;
     close(): Promise<void>;
@@ -629,6 +710,39 @@ async function loadPlaywrightChromium(): Promise<{ launch(options?: unknown): Pr
     return mod.chromium ?? null;
   } catch {
     return null;
+  }
+}
+
+async function fetchRenderedHtml(url: URL): Promise<FetchHtmlResult> {
+  const chromium = await loadPlaywrightChromium();
+  if (!chromium) {
+    return {
+      url,
+      html: "",
+      warning: "Playwright rendered HTML fallback skipped because Playwright is not installed in this runtime.",
+      attempt: "playwright_rendered_html",
+      failureType: "unknown",
+    };
+  }
+  let browser: OptionalPlaywrightBrowser | null = null;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1200 }, deviceScaleFactor: 1 });
+    await page.goto(url.toString(), { waitUntil: "domcontentloaded", timeout: 16000 });
+    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => null);
+    await page.waitForTimeout(500);
+    const html = await page.content();
+    return { url, html, attempt: "playwright_rendered_html" };
+  } catch (err) {
+    return {
+      url,
+      html: "",
+      warning: `Playwright rendered HTML fallback failed (${fetchFailureType(err)}).`,
+      attempt: "playwright_rendered_html",
+      failureType: fetchFailureType(err),
+    };
+  } finally {
+    await browser?.close().catch(() => null);
   }
 }
 
@@ -719,9 +833,32 @@ async function captureRenderedWebsite(url: URL, warnings: string[]): Promise<Ren
 async function crawlWebsite(startUrl: URL): Promise<WebsiteExtraction> {
   const warnings: string[] = [];
   const pages: WebsitePageSnapshot[] = [];
-  const first = await fetchHtml(startUrl);
+  let first = await fetchHtml(startUrl, 10000, true);
   if (first.warning || !first.html) {
-    throw new Error("Website could not be fully read. Try another page URL or add details manually.");
+    if (first.warning) warnings.push(first.warning);
+    logger.warn({
+      url: startUrl.toString(),
+      stage: "homepage_fetch_failed",
+      attempt: first.attempt,
+      status: first.status,
+      failureType: first.failureType,
+      warning: first.warning,
+    }, "Brand importer homepage fetch failed; trying Playwright rendered HTML fallback");
+    const renderedHtml = await fetchRenderedHtml(startUrl);
+    if (renderedHtml.warning) warnings.push(renderedHtml.warning);
+    if (renderedHtml.html) {
+      first = renderedHtml;
+      warnings.push("Homepage HTML was read using rendered browser fallback because backend fetch was blocked or timed out.");
+    } else {
+      throw new Error(
+        [
+          "Website could not be fetched from the local backend. It may be blocking server requests. Try again or paste a specific page URL.",
+          `Last attempt: ${renderedHtml.attempt ?? first.attempt ?? "unknown"}.`,
+          `Failure: ${renderedHtml.failureType ?? first.failureType ?? "unknown"}.`,
+          first.status ? `HTTP status: ${first.status}.` : "",
+        ].filter(Boolean).join(" ")
+      );
+    }
   }
   const homeUrl = first.url;
   pages.push({ url: homeUrl.toString(), title: pageTitle(first.html), text: extractReadableWebsiteText(first.html), html: first.html });
@@ -800,6 +937,65 @@ function parseAnalysisResponse(text: string): BrandWebsiteAnalysis {
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("AI response was not valid JSON.");
   return { ...emptyAnalysis(), ...JSON.parse(jsonMatch[0]) };
+}
+
+function firstMeaningfulLine(text: string): string {
+  return text
+    .split(/[.\n]/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .find((line) => line.length > 28 && line.length < 240) ?? "";
+}
+
+function buildExtractionFallbackAnalysis(extraction: WebsiteExtraction, url: URL, warning: string): BrandWebsiteAnalysis {
+  const text = extraction.pages.map((page) => page.text).join("\n").slice(0, 8000);
+  const title = extraction.pages.find((page) => page.title)?.title || url.hostname.replace(/^www\./, "");
+  const metaLine = firstMeaningfulLine(text);
+  const palette = extraction.colors.slice(0, 3).map((color) => color.hex).join(", ");
+  const imageNotes = extraction.imageCandidates
+    .slice(0, 4)
+    .map((image) => image.alt || image.reason)
+    .filter(Boolean)
+    .join(", ");
+
+  return {
+    brandTone: "Use the website copy as directional tone; AI extraction was unavailable.",
+    targetAudience: metaLine || "Not clear from the page",
+    productsServices: title,
+    usp: metaLine || "Not clear from the page",
+    contentPillars: "Product/service highlights, brand story, customer education, seasonal campaigns",
+    colorStyleHints: palette || "Not clear from the page",
+    keywords: text.match(/\b[A-Za-z][A-Za-z -]{3,24}\b/g)?.slice(0, 12).join(", ") || "Not clear from the page",
+    visualStyle: [palette ? `Palette: ${palette}` : "", imageNotes ? `Images: ${imageNotes}` : ""].filter(Boolean).join(" | ") || "Not clear from the page",
+    imageStyle: imageNotes || "Not clear from the page",
+    fontStyle: extraction.fontFamilies.join(", ") || "Not clear from the page",
+    designNotes: [palette ? `Use detected colors: ${palette}.` : "", extraction.rendered?.screenshotNote || ""].filter(Boolean).join(" "),
+    imageStyleNotes: imageNotes || "Use website imagery as reference; image extraction was partial.",
+    confidenceNotes: `${warning} These suggestions are based on website text/assets only and should be reviewed before saving.`,
+  };
+}
+
+function buildManualFallbackAnalysis(params: {
+  text: string;
+  colors: WebsiteColorCandidate[];
+  warning?: string;
+}): BrandWebsiteAnalysis {
+  const palette = params.colors.slice(0, 3).map((color) => color.hex).join(", ");
+  const firstLine = firstMeaningfulLine(params.text);
+  return {
+    brandTone: firstLine ? "Derived from pasted website text." : "Not clear from the page",
+    targetAudience: firstLine || "Not clear from the page",
+    productsServices: firstLine || "Not clear from the page",
+    usp: firstLine || "Not clear from the page",
+    contentPillars: "Product/service highlights, brand story, customer education, seasonal campaigns",
+    colorStyleHints: palette || "Not clear from the page",
+    keywords: params.text.match(/\b[A-Za-z][A-Za-z -]{3,24}\b/g)?.slice(0, 12).join(", ") || "Not clear from the page",
+    visualStyle: palette ? `Visible screenshot palette: ${palette}` : "Not clear from the page",
+    imageStyle: params.colors.length ? "Use uploaded homepage screenshot as the visual reference." : "Not clear from the page",
+    fontStyle: "Not clear from the page",
+    designNotes: palette ? `Use detected colors: ${palette}.` : "Review manually; no screenshot palette was detected.",
+    imageStyleNotes: params.colors.length ? "Base artwork direction on the uploaded homepage screenshot." : "Not clear from the page",
+    confidenceNotes: params.warning || "Fallback suggestions are based on user-provided text and/or screenshot only.",
+  };
 }
 
 function stringValue(value: unknown): string {
@@ -937,17 +1133,46 @@ router.get("/brand-assets/proxy-image", async (req, res): Promise<void> => {
 });
 
 router.post("/clients/:clientId/brand-dna/analyze-website", requireClientRole(EDIT_CONTENT_ROLES), async (req: AuthRequest, res): Promise<void> => {
+  let stage = "start";
+  let normalizedUrl = "";
   try {
+    stage = "url_normalization";
     const url = normalizeWebsiteUrl((req.body as { websiteUrl?: string }).websiteUrl);
+    normalizedUrl = url.toString();
+    logger.info({ clientId: req.params.clientId, stage, url: normalizedUrl }, "Brand importer step");
+
+    stage = "website_fetch_and_extraction";
     const extraction = await crawlWebsite(url);
+    logger.info({
+      clientId: req.params.clientId,
+      stage,
+      url: normalizedUrl,
+      pages: extraction.pages.length,
+      screenshotCaptured: extraction.rendered?.screenshotCaptured ?? false,
+      logoCandidates: extraction.logoCandidates.length,
+      imageCandidates: extraction.imageCandidates.length,
+      colors: extraction.colors.length,
+      cssFetched: extraction.cssFetched,
+      warnings: extraction.warnings.length,
+    }, "Brand importer step");
+
+    stage = "website_text_prepare";
     const websiteText = extraction.pages.map((page) => `PAGE: ${page.title || page.url}\nURL: ${page.url}\n${page.text}`).join("\n\n---\n\n").slice(0, 30000);
     if (websiteText.length < 120) {
-      res.status(422).json({ error: "The page did not contain enough readable text to analyze." });
+      logger.warn({ clientId: req.params.clientId, stage, url: normalizedUrl, textLength: websiteText.length }, "Brand importer readable text too short");
+      res.status(422).json({
+        error: "Website fetch succeeded, but the page did not contain enough readable text to analyze.",
+        warnings: extraction.warnings,
+      });
       return;
     }
 
+    stage = "ai_provider_resolve";
     const settings = await getUserSettings(req.userId);
     const { provider, model } = await resolveProviderAndModel(settings, req.userId);
+    logger.info({ clientId: req.params.clientId, stage, provider, model }, "Brand importer step");
+
+    stage = "ai_prompt_build";
     const prompt = `You are a senior brand strategist for an AI digital agency. Extract Brand Setup suggestions from the website text below.
 
 Return ONLY valid JSON with this shape:
@@ -980,12 +1205,39 @@ Image candidates: ${extraction.imageCandidates.slice(0, 4).map((image) => `${ima
 Website text:
 ${websiteText}`;
 
-    const responseText = await generateTextWithProvider(provider, model, prompt, 1200, req.userId);
-    const analysis = parseAnalysisResponse(responseText);
+    let analysis: BrandWebsiteAnalysis;
+    try {
+      stage = "ai_generation";
+      logger.info({ clientId: req.params.clientId, stage, provider, model }, "Brand importer step");
+      const responseText = await generateTextWithProvider(provider, model, prompt, 1200, req.userId);
+      logger.info({ clientId: req.params.clientId, stage: "ai_generation_success", provider, model, responseLength: responseText.length }, "Brand importer step");
+
+      stage = "ai_response_parse";
+      analysis = parseAnalysisResponse(responseText);
+      logger.info({ clientId: req.params.clientId, stage: "ai_response_parse_success" }, "Brand importer step");
+    } catch (err) {
+      const isParseFailure = stage === "ai_response_parse";
+      const aiError = isParseFailure
+        ? "AI response parse failed. Showing website extraction fallback."
+        : `${toAiErrorResponse(err, "AI provider failed.").message} Showing website extraction fallback.`;
+      extraction.warnings.push(aiError);
+      logger.warn({
+        clientId: req.params.clientId,
+        stage,
+        provider,
+        model,
+        error: safeErrorMessage(err),
+        fallbackUsed: true,
+      }, "Brand importer AI step failed; using extraction fallback");
+      analysis = buildExtractionFallbackAnalysis(extraction, url, aiError);
+    }
+
+    stage = "response_prepare";
     const palette = extraction.colors.slice(0, 3).map((color) => color.hex);
     if (!analysis.colorStyleHints && palette.length) analysis.colorStyleHints = palette.join(", ");
     if (!analysis.fontStyle && extraction.fontFamilies.length) analysis.fontStyle = extraction.fontFamilies.join(", ");
     if (!analysis.imageStyleNotes && analysis.imageStyle) analysis.imageStyleNotes = analysis.imageStyle;
+    logger.info({ clientId: req.params.clientId, stage: "final_response_success", url: normalizedUrl, warnings: extraction.warnings.length }, "Brand importer step");
     res.json({
       websiteUrl: url.toString(),
       finalUrl: extraction.pages[0]?.url ?? url.toString(),
@@ -1010,14 +1262,133 @@ ${websiteText}`;
       cssFetched: extraction.cssFetched,
     });
   } catch (err) {
-    if (err instanceof Error && /website url|private|local|http/i.test(err.message)) {
+    if (stage === "url_normalization" && err instanceof Error) {
+      logger.warn({ clientId: req.params.clientId, stage, url: normalizedUrl, error: safeErrorMessage(err) }, "Brand importer URL validation failed");
       res.status(400).json({ error: err.message });
       return;
     }
-    const { status, message } = toAiErrorResponse(err, "Failed to analyze website. Check the URL and AI provider settings.");
-    logger.error({ error: safeErrorMessage(err) }, "Website brand analysis error");
-    res.status(status).json({ error: message });
+    const fetchFailed = stage === "website_fetch_and_extraction";
+    const { status, message } = fetchFailed
+      ? { status: 422, message: "Website could not be fetched from the local backend. It may be blocking server requests. Try again or paste a specific page URL." }
+      : toAiErrorResponse(err, `Brand importer failed during ${stage}.`);
+    logger.error({ clientId: req.params.clientId, stage, url: normalizedUrl, error: safeErrorMessage(err) }, "Website brand analysis error");
+    res.status(status).json({ error: message, stage });
   }
 });
+
+router.post(
+  "/clients/:clientId/brand-dna/analyze-fallback",
+  requireClientRole(EDIT_CONTENT_ROLES),
+  upload.single("screenshot"),
+  async (req: AuthRequest, res): Promise<void> => {
+    const warnings: string[] = [];
+    const uploaded = (req as AuthRequest & { file?: UploadedFile }).file;
+    const pastedText = typeof req.body?.websiteText === "string" ? req.body.websiteText.trim() : "";
+    const sourceUrl = typeof req.body?.websiteUrl === "string" && req.body.websiteUrl.trim()
+      ? req.body.websiteUrl.trim()
+      : "manual fallback";
+
+    try {
+      if (!uploaded && pastedText.length < 30) {
+        res.status(400).json({ error: "Upload a homepage screenshot or paste at least a few sentences of website text." });
+        return;
+      }
+
+      let colors: WebsiteColorCandidate[] = [];
+      if (uploaded) {
+        if (!uploaded.mimetype.toLowerCase().startsWith("image/")) {
+          res.status(415).json({ error: "Screenshot must be an image file." });
+          return;
+        }
+        try {
+          colors = await extractScreenshotColors(uploaded.buffer);
+        } catch (err) {
+          warnings.push("Screenshot palette extraction failed. Text analysis can still be used.");
+          logger.warn({ clientId: req.params.clientId, error: safeErrorMessage(err) }, "Brand fallback screenshot palette extraction failed");
+        }
+      }
+
+      let analysis = buildManualFallbackAnalysis({
+        text: pastedText,
+        colors,
+        warning: "Website blocked server-side reading, so this analysis used the uploaded screenshot and/or pasted website text.",
+      });
+
+      if (pastedText.length >= 30) {
+        try {
+          const settings = await getUserSettings(req.userId);
+          const { provider, model } = await resolveProviderAndModel(settings, req.userId);
+          logger.info({ clientId: req.params.clientId, stage: "fallback_ai_generation", provider, model, hasScreenshot: !!uploaded, textLength: pastedText.length }, "Brand importer fallback step");
+          const prompt = `You are a senior brand strategist. Extract Brand Setup suggestions from user-provided website text and screenshot palette.
+
+Return ONLY valid JSON with this shape:
+{
+  "brandTone": "short tone description",
+  "targetAudience": "who the brand appears to serve",
+  "productsServices": "main products or services",
+  "usp": "differentiator or promise",
+  "contentPillars": "comma-separated content pillar suggestions",
+  "colorStyleHints": "visual/color/style hints",
+  "keywords": "comma-separated keyword ideas",
+  "visualStyle": "overall visual identity in plain language",
+  "imageStyle": "image/art direction notes",
+  "fontStyle": "font style notes if detectable",
+  "designNotes": "practical design guidance for future artwork",
+  "imageStyleNotes": "image/art direction notes for future AI artwork",
+  "confidenceNotes": "what is inferred vs clearly stated"
+}
+
+If something is not detectable, say "Not clear from the page" rather than inventing.
+
+Source URL: ${sourceUrl}
+Detected screenshot colors: ${colors.map((color) => `${color.hex} (${color.count})`).join(", ") || "No screenshot colors provided"}
+Website text:
+${pastedText.slice(0, 16000)}`;
+          const responseText = await generateTextWithProvider(provider, model, prompt, 1200, req.userId);
+          analysis = { ...analysis, ...parseAnalysisResponse(responseText) };
+        } catch (err) {
+          warnings.push(`${toAiErrorResponse(err, "AI provider failed.").message} Showing screenshot/text extraction fallback.`);
+          logger.warn({ clientId: req.params.clientId, error: safeErrorMessage(err) }, "Brand fallback AI analysis failed");
+        }
+      } else if (uploaded) {
+        warnings.push("No website text was pasted, so fallback suggestions are based on screenshot palette only.");
+      }
+
+      const palette = colors.slice(0, 3).map((color) => color.hex);
+      if (!analysis.colorStyleHints && palette.length) analysis.colorStyleHints = palette.join(", ");
+      if (!analysis.designNotes && palette.length) analysis.designNotes = `Use detected colors: ${palette.join(", ")}.`;
+      if (!analysis.imageStyleNotes && uploaded) analysis.imageStyleNotes = "Use uploaded homepage screenshot as the visual reference.";
+
+      res.json({
+        websiteUrl: sourceUrl,
+        finalUrl: sourceUrl,
+        analysis,
+        pagesAnalyzed: pastedText ? [{ url: sourceUrl, title: "Pasted website text" }] : [],
+        logoCandidates: [],
+        imageCandidates: [],
+        colors,
+        visibleColors: colors,
+        cssColors: [],
+        palette: {
+          primary: palette[0] ?? "",
+          secondary: palette[1] ?? "",
+          accent: palette[2] ?? "",
+        },
+        visualExtraction: {
+          screenshotCaptured: !!uploaded,
+          note: uploaded
+            ? "Palette detected from uploaded homepage screenshot."
+            : "No screenshot uploaded; visual palette was not detected.",
+        },
+        fontFamilies: [],
+        warnings,
+        cssFetched: 0,
+      });
+    } catch (err) {
+      logger.error({ clientId: req.params.clientId, error: safeErrorMessage(err) }, "Brand fallback analysis error");
+      res.status(500).json({ error: "Fallback analysis failed. Try a smaller screenshot or paste website text manually." });
+    }
+  }
+);
 
 export default router;

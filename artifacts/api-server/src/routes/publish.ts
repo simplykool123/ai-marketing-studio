@@ -20,6 +20,41 @@ function publishImageUrl(post: typeof postsTable.$inferSelect): string | null {
   return String(schema.finalArtworkUrl ?? post.selectedImageUrl ?? post.brandedImageUrl ?? schema.imageUrl ?? "") || null;
 }
 
+function publishMetadata(post: typeof postsTable.$inferSelect, result: {
+  platformPostId: string;
+  provider: string;
+  publishedUrl: string;
+  rawPublishResponse?: unknown;
+}) {
+  return {
+    ...asRecord(post.contentSchema),
+    publish: {
+      ...asRecord(asRecord(post.contentSchema).publish),
+      platformPostId: result.platformPostId,
+      provider: result.provider,
+      publishedUrl: result.publishedUrl,
+      rawPublishResponse: result.rawPublishResponse,
+    },
+  };
+}
+
+function canDirectPublishPost(post: typeof postsTable.$inferSelect, platform: string): string | null {
+  if (post.publishedAt) return "This post is already published.";
+  if (!["approved", "export_ready", "scheduled", "failed"].includes(post.status)) {
+    return `Cannot publish a post with status '${post.status}'. Approve it first.`;
+  }
+  if (!["instagram", "facebook", "linkedin", "twitter"].includes(platform)) {
+    return `${platform} direct publishing is not implemented yet.`;
+  }
+  if ((post.contentType ?? "").toLowerCase().includes("video")) {
+    return "Video direct publishing is not supported yet.";
+  }
+  if (platform === "instagram" && !publishImageUrl(post)) {
+    return "Instagram publishing requires final artwork or an image URL.";
+  }
+  return null;
+}
+
 // POST /clients/:clientId/posts/:postId/publish
 router.post("/clients/:clientId/posts/:postId/publish", requireClientRole(APPROVE_CONTENT_ROLES), async (req, res) => {
   if (!isEncryptionConfigured()) {
@@ -43,14 +78,14 @@ router.post("/clients/:clientId/posts/:postId/publish", requireClientRole(APPROV
       return;
     }
 
-    if (!["approved", "export_ready", "scheduled", "failed"].includes(post.status)) {
+    const platform = post.platform ?? "instagram";
+    const safetyError = canDirectPublishPost(post, platform);
+    if (safetyError) {
       res.status(400).json({
-        error: `Cannot publish a post with status '${post.status}'. Approve it first.`,
+        error: safetyError,
       });
       return;
     }
-
-    const platform = post.platform ?? "instagram";
 
     const [account] = await db
       .select()
@@ -95,6 +130,7 @@ router.post("/clients/:clientId/posts/:postId/publish", requireClientRole(APPROV
         status: "posted",
         publishedAt: result.publishedAt,
         publishedUrl: result.publishedUrl,
+        contentSchema: publishMetadata(post, result),
         publishError: null,
         updatedAt: new Date(),
       })

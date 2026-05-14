@@ -110,6 +110,7 @@ cp artifacts/api-server/.env.example artifacts/api-server/.env
 | `FACEBOOK_APP_ID` + `FACEBOOK_APP_SECRET` | Facebook / Instagram OAuth |
 | `LINKEDIN_CLIENT_ID` + `LINKEDIN_CLIENT_SECRET` | LinkedIn OAuth |
 | `TWITTER_CLIENT_ID` + `TWITTER_CLIENT_SECRET` | Twitter/X OAuth |
+| `ENABLE_AUTO_PUBLISH` | Set `false` to disable scheduled auto-publish; defaults to enabled when the API scheduler runs |
 
 ### Frontend (`artifacts/marketing-studio/.env`)
 
@@ -340,6 +341,7 @@ ngrok http 8080
 | `PORT` | ❌ | API server port (default: 8080) |
 | `NODE_ENV` | ❌ | `development` or `production` |
 | `LOG_LEVEL` | ❌ | Pino log level (default: `info`) |
+| `ENABLE_AUTO_PUBLISH` | ❌ | Set `false` to disable the scheduled auto-publish loop |
 | `FACEBOOK_APP_ID` | ❌ | Facebook OAuth |
 | `FACEBOOK_APP_SECRET` | ❌ | Facebook OAuth |
 | `INSTAGRAM_APP_ID` | ❌ | Instagram OAuth |

@@ -6,13 +6,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import {
   FileText,
   CheckCircle2,
   Send,
-  LayoutDashboard,
   ArrowRight,
   Instagram,
   Facebook,
@@ -20,16 +20,13 @@ import {
   Linkedin,
   Globe,
   Clock,
-  Sparkles,
   CalendarDays,
+  BarChart3,
   BookOpen,
   Image as ImageIcon,
   Circle,
   AlertCircle,
-  Database,
-  Flag,
-  ListOrdered,
-  Workflow,
+  RefreshCw,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -95,6 +92,22 @@ type OccasionSummary = {
   requiresYearlyUpdate: boolean;
 };
 
+type AnalyticsSummary = {
+  publishedPosts: number;
+  reach: number;
+  impressions: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  engagementRate: number | null;
+  posts: Array<{
+    postId: string;
+    platform: string;
+    warning?: string;
+    fetchedAt?: string;
+  }>;
+};
+
 async function fetchDashboard(clientId: string): Promise<EnhancedDashboard> {
   const token = localStorage.getItem("ams_token");
   const res = await fetch(`${BASE}/api/clients/${clientId}/dashboard`, {
@@ -102,6 +115,26 @@ async function fetchDashboard(clientId: string): Promise<EnhancedDashboard> {
   });
   if (!res.ok) throw new Error("Failed to fetch dashboard");
   return res.json();
+}
+
+async function fetchAnalyticsSummary(clientId: string): Promise<AnalyticsSummary> {
+  const token = localStorage.getItem("ams_token");
+  const res = await fetch(`${BASE}/api/clients/${clientId}/analytics/summary`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error("Failed to fetch analytics");
+  return res.json();
+}
+
+async function refreshAnalytics(clientId: string): Promise<AnalyticsSummary> {
+  const token = localStorage.getItem("ams_token");
+  const res = await fetch(`${BASE}/api/clients/${clientId}/analytics/refresh`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Failed to refresh analytics");
+  return data;
 }
 
 async function fetchOccasions(clientId: string): Promise<{ occasions: OccasionSummary[] }> {
@@ -202,6 +235,8 @@ function PipelineStep({ label, count, icon: Icon }: { label: string; count: numb
 
 export default function ClientDashboard() {
   const { clientId } = useParams<{ clientId: string }>();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const { data: client, isLoading: isClientLoading } = useGetClient(clientId || "");
 
@@ -215,6 +250,25 @@ export default function ClientDashboard() {
     queryKey: ["marketing-occasions", clientId],
     queryFn: () => fetchOccasions(clientId!),
     enabled: !!clientId,
+  });
+
+  const { data: analytics } = useQuery({
+    queryKey: ["analytics-summary", clientId],
+    queryFn: () => fetchAnalyticsSummary(clientId!),
+    enabled: !!clientId,
+  });
+
+  const refreshAnalyticsMutation = useMutation({
+    mutationFn: () => refreshAnalytics(clientId!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["analytics-summary", clientId] });
+      toast({ title: "Analytics refreshed", description: "Metrics were updated for connected published posts." });
+    },
+    onError: (err) => toast({
+      title: "Analytics refresh failed",
+      description: err instanceof Error ? err.message : "Metrics could not be refreshed.",
+      variant: "destructive",
+    }),
   });
 
   const recentlyPublished = dashboard?.recentlyPublished;
@@ -395,11 +449,7 @@ export default function ClientDashboard() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4 rounded-xl border bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 p-6 text-white shadow-sm">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/50">Agency Command Center</p>
-          <h1 className="text-3xl font-semibold tracking-tight mt-2">{client.name}</h1>
-          <p className="text-white/70 mt-1 max-w-2xl">
-            One operating view for strategy, draft production, review, publishing readiness, and AI learning.
-          </p>
+            <h1 className="text-3xl font-semibold tracking-tight">{client.name}</h1>
         </div>
         <div className="flex flex-wrap gap-2">
           <StatusPill ok={dashboard.aiProviderConfigured} label={dashboard.aiProviderConfigured ? "AI ready" : "AI setup needed"} />
@@ -432,63 +482,59 @@ export default function ClientDashboard() {
         <PipelineStep label="Published" count={dashboard.publishedCount} icon={Globe} />
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-3">
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI readiness</p>
-            <p className="mt-1 text-sm font-medium">
-              {dashboard.aiProviderConfigured ? "AI is ready" : "AI needs setup"}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between py-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <BarChart3 className="w-4 h-4 text-primary" />
+            Analytics
+          </CardTitle>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refreshAnalyticsMutation.mutate()}
+            disabled={refreshAnalyticsMutation.isPending || (analytics?.publishedPosts ?? 0) === 0}
+            className="h-8 gap-1.5"
+          >
+            <RefreshCw className={cn("w-3.5 h-3.5", refreshAnalyticsMutation.isPending && "animate-spin")} />
+            Refresh metrics
+          </Button>
+        </CardHeader>
+        <CardContent className="pt-0 pb-4">
+          {!analytics || analytics.publishedPosts === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Published posts will appear here once they have a real published time. Metrics refresh only works for connected platform accounts.
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {dashboard.aiProviderConfigured
-                ? `${dashboard.aiProvider ?? "Provider"} key is saved in Settings.`
-                : "Add and test your provider key in Settings."}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Brand Setup</p>
-            <p className="mt-1 text-sm font-medium">
-              {dashboard.hasBrandDna ? "Brand DNA is active" : "Brand inputs missing"}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Brand voice, pillars, and visuals improve every AI suggestion.
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Publishing readiness</p>
-            <p className="mt-1 text-sm font-medium">
-              {publishingReady ? "Destination connected" : "Manual export only"}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {hasSocialAccount ? "Social account connected." : hasWorkflow ? "Workflow URL configured." : "No social account or workflow URL connected yet."}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+              {[
+                ["Published posts", analytics.publishedPosts],
+                ["Reach", analytics.reach],
+                ["Impressions", analytics.impressions],
+                ["Likes / reactions", analytics.likes],
+                ["Comments", analytics.comments],
+                ["Shares", analytics.shares],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">{label}</p>
+                  <p className="mt-1 text-xl font-semibold">{Number(value).toLocaleString()}</p>
+                </div>
+              ))}
+              <div className="rounded-lg border bg-primary/5 p-3 sm:col-span-2 lg:col-span-6">
+                <p className="text-xs text-muted-foreground">Engagement rate</p>
+                <p className="mt-1 text-xl font-semibold">
+                  {analytics.engagementRate === null ? "Not available yet" : `${analytics.engagementRate}%`}
+                </p>
+                {analytics.posts.some((post) => post.warning) && (
+                  <p className="mt-1 text-xs text-amber-700">
+                    Some published posts could not fetch metrics because the platform post ID or connector permission is not available yet.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-        {[
-          { label: "Campaign Planner", href: `/clients/${clientId}/campaigns/generate`, icon: Flag },
-          { label: "Marketing Calendar", href: `/clients/${clientId}/marketing-calendar`, icon: CalendarDays },
-          { label: "Review", href: `/clients/${clientId}/drafts?tab=pending`, icon: CheckCircle2 },
-          { label: "Publish Queue", href: `/clients/${clientId}/queue`, icon: ListOrdered },
-          { label: "AI Memory", href: `/clients/${clientId}/memory`, icon: Database },
-        ].map((action) => {
-          const Icon = action.icon;
-          return (
-            <Link key={action.label} href={action.href}>
-              <Button variant="outline" className="h-11 w-full justify-start gap-2 bg-background">
-                <Icon className="w-4 h-4 text-primary" />
-                {action.label}
-              </Button>
-            </Link>
-          );
-        })}
-      </div>
 
       {/* Setup checklist */}
       {!allDone && (
@@ -512,149 +558,20 @@ export default function ClientDashboard() {
         </Card>
       )}
 
-      {/* Stats Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card className="bg-card">
-          <CardContent className="flex items-center justify-between p-3">
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">Total Posts</p>
-              <div className="text-2xl font-semibold">{dashboard.totalPosts}</div>
-            </div>
-            <LayoutDashboard className="w-4 h-4 text-muted-foreground" />
-          </CardContent>
-        </Card>
 
-        <Card className="bg-card">
-          <CardContent className="flex items-center justify-between p-3">
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">Pending Review</p>
-              <div className="flex items-end gap-2">
-                <div className="text-2xl font-semibold">{dashboard.pendingApprovals}</div>
-                {dashboard.pendingApprovals > 0 && (
-                  <Link href={`/clients/${clientId}/drafts?tab=pending`} className="text-xs text-primary hover:underline mb-1">
-                    Review
-                  </Link>
-                )}
-              </div>
-            </div>
-            <FileText className="w-4 h-4 text-muted-foreground" />
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card">
-          <CardContent className="flex items-center justify-between p-3">
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">Scheduled</p>
-              <div className="text-2xl font-semibold">{dashboard.scheduledCount}</div>
-            </div>
-            <Clock className="w-4 h-4 text-muted-foreground" />
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card">
-          <CardContent className="flex items-center justify-between p-3">
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">Published</p>
-              <div className="text-2xl font-semibold">{dashboard.publishedCount}</div>
-            </div>
-            <Send className="w-4 h-4 text-muted-foreground" />
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-3">
-        <Card className={cn("bg-card", !publishingReady && "border-amber-200 bg-amber-50/40")}>
-          <CardHeader className="flex flex-row items-center justify-between py-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              {publishingReady ? <Workflow className="w-4 h-4 text-primary" /> : <AlertCircle className="w-4 h-4 text-amber-600" />}
-              Publishing Destination
-            </CardTitle>
-            <Link href={`/clients/${clientId}/social-accounts`} className="text-xs text-primary hover:underline flex items-center">
-              Manage <ArrowRight className="w-3 h-3 ml-1" />
-            </Link>
-          </CardHeader>
-          <CardContent className="pt-0 pb-3">
-            {!publishingReady ? (
-              <p className="text-sm text-muted-foreground">
-                No social account or workflow URL connected. Export packages and manual mark-posted are still available.
-              </p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {hasWorkflow && <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">Workflow URL</Badge>}
-                {dashboard.connectedAccounts.slice(0, 4).map((account) => (
-                  <div key={account.id} className="flex items-center gap-2 rounded-md border bg-background px-2 py-1.5">
-                    <PlatformIcon platform={account.platform} className="w-3.5 h-3.5" />
-                    <span className="text-xs font-medium">{account.accountName}</span>
-                  </div>
-                ))}
-                {dashboard.connectedAccounts.length > 4 && (
-                  <Badge variant="secondary" className="text-[10px]">+{dashboard.connectedAccounts.length - 4}</Badge>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
+      {/* Today + Upcoming Schedule + Active Storyline */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        {/* Today */}
         <Card className="bg-card">
           <CardHeader className="py-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <CalendarDays className="w-4 h-4 text-primary" />
-              Upcoming Occasion
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0 pb-3">
-            {nextOccasion ? (
-              <>
-                <p className="text-sm font-medium">{nextOccasion.title}</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {format(new Date(nextOccasion.date), "MMM d")} · {nextOccasion.category}
-                  {nextOccasion.requiresYearlyUpdate ? " · verify yearly" : ""}
-                </p>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">No upcoming curated occasions.</p>
-            )}
-            <Link href={`/clients/${clientId}/marketing-calendar`}>
-              <Button size="sm" variant="outline" className="mt-3 gap-2">
-                Open Calendar
-                <ArrowRight className="w-3.5 h-3.5" />
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card">
-          <CardHeader className="py-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Sparkles className="w-4 h-4 text-primary" />
-              AI Ideas
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0 pb-3">
-            <p className="text-sm text-muted-foreground">
-              Open AI Ideas for fresh angles based on this client’s memory and recent content.
-            </p>
-            <Link href={`/clients/${clientId}/brain`}>
-              <Button size="sm" variant="outline" className="mt-3 gap-2">
-                Open AI Ideas
-                <ArrowRight className="w-3.5 h-3.5" />
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card">
-          <CardHeader className="py-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <CalendarDays className="w-4 h-4 text-primary" />
-              Today's Content
+              Today
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0 pb-3">
             {dashboard.todaysPosts.length === 0 ? (
-              <div className="text-sm text-muted-foreground">
-                Nothing scheduled for today.
-              </div>
+              <div className="text-sm text-muted-foreground">Nothing scheduled today.</div>
             ) : (
               <div className="space-y-1.5">
                 {dashboard.todaysPosts.slice(0, 3).map(post => (
@@ -672,19 +589,16 @@ export default function ClientDashboard() {
                 ))}
               </div>
             )}
+            {nextOccasion && (
+              <div className="mt-3 pt-3 border-t">
+                <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mb-1">Next Occasion</p>
+                <p className="text-sm font-medium">{nextOccasion.title}</p>
+                <p className="text-xs text-muted-foreground">{format(new Date(nextOccasion.date), "MMM d")} · {nextOccasion.category}</p>
+              </div>
+            )}
           </CardContent>
         </Card>
-      </div>
 
-      <div className="rounded-md border bg-card px-4 py-3">
-        <p className="text-sm font-medium">Main workflow</p>
-        <p className="text-xs text-muted-foreground mt-1">
-          Brand Setup → AI Ideas / Storyline → Campaign Planner / Marketing Calendar → Review → Edit Artwork → Publish Queue → AI Memory.
-        </p>
-      </div>
-
-      {/* Upcoming Schedule + Active Storyline */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         {/* Upcoming Schedule */}
         <Card className="bg-card">
           <CardHeader className="flex flex-row items-center justify-between py-3">
@@ -840,7 +754,7 @@ export default function ClientDashboard() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
                         <Badge variant="secondary" className="text-[9px] px-1.5 py-0 uppercase">
-                          {post.status}
+                          {readableStatus(post.status)}
                         </Badge>
                         {post.platform && <span className="text-[10px] text-muted-foreground capitalize">{post.platform}</span>}
                       </div>
