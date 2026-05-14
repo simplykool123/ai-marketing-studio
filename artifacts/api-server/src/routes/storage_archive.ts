@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { postsTable } from "@workspace/db/schema";
 import { APPROVE_CONTENT_ROLES, requireClientRole } from "../middleware/auth.js";
+import { createClientNotification } from "../lib/notifications.js";
 
 const router = Router();
 
@@ -125,6 +126,14 @@ router.post(
       }
 
       if (!googleDriveConfigured()) {
+        await createClientNotification({
+          clientId,
+          type: "archive_failed",
+          title: "Archive to Google Drive failed",
+          message: "Google Drive archiving is not configured.",
+          severity: "warning",
+          metadata: { postId, provider: ARCHIVE_PROVIDER },
+        });
         res.status(503).json({
           error: "Google Drive archiving is not configured.",
           archive: activeArchiveMetadata(originalSupabaseUrl),
@@ -132,11 +141,27 @@ router.post(
         return;
       }
 
+      await createClientNotification({
+        clientId,
+        type: "archive_failed",
+        title: "Archive to Google Drive unavailable",
+        message: "Google Drive archive upload is scaffolded but not implemented in V1.",
+        severity: "warning",
+        metadata: { postId, provider: ARCHIVE_PROVIDER },
+      });
       res.status(501).json({
         error: "Google Drive archive upload is scaffolded but not implemented in V1. No Supabase files were deleted.",
         archive: activeArchiveMetadata(originalSupabaseUrl),
       });
     } catch (err) {
+      await createClientNotification({
+        clientId: req.params.clientId,
+        type: "archive_failed",
+        title: "Archive action failed",
+        message: "Failed to prepare archive action.",
+        severity: "error",
+        metadata: { postId: req.params.postId, provider: ARCHIVE_PROVIDER },
+      });
       res.status(500).json({ error: "Failed to prepare archive action" });
     }
   }

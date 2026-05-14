@@ -10,6 +10,7 @@ import {
   toAiErrorResponse,
 } from "../lib/ai-provider.js";
 import { logger } from "../lib/logger.js";
+import { createClientNotification } from "../lib/notifications.js";
 import type { AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
@@ -266,6 +267,15 @@ router.get("/clients/:clientId/reports/summary", async (req: AuthRequest, res): 
     });
   } catch (err) {
     logger.error({ clientId: req.params.clientId, error: safeErrorMessage(err) }, "Client report failed");
+    await createClientNotification({
+      clientId: req.params.clientId,
+      userId: req.userId,
+      type: "report_generation_failed",
+      title: "Report generation failed",
+      message: "The client report could not be built.",
+      severity: "error",
+      metadata: { error: safeErrorMessage(err) },
+    });
     res.status(500).json({ error: "Failed to build client report" });
   }
 });

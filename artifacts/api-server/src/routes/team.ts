@@ -14,6 +14,7 @@ import {
   requireClientRole,
   type AuthRequest,
 } from "../middleware/auth.js";
+import { createClientNotification } from "../lib/notifications.js";
 
 const router = Router();
 
@@ -166,6 +167,15 @@ router.post("/clients/:clientId/invites", requireClientRole(MANAGE_CLIENT_ROLES)
       emailSent: false,
       message: "Invite created. Copy the invite link and send it manually.",
     });
+    await createClientNotification({
+      clientId,
+      userId: req.userId,
+      type: "invite_created",
+      title: "Invite created",
+      message: `${email} was invited as ${role}.`,
+      severity: "info",
+      metadata: { inviteId: invite!.id, email, role },
+    });
   } catch {
     res.status(500).json({ error: "Failed to create invite" });
   }
@@ -214,6 +224,15 @@ router.post("/invites/:token/accept", requireAuth, async (req: AuthRequest, res)
       .returning();
 
     res.json({ invite: updated, clientId: invite.clientId });
+    await createClientNotification({
+      clientId: invite.clientId,
+      userId: invite.invitedBy,
+      type: "invite_accepted",
+      title: "Invite accepted",
+      message: `${invite.email} accepted the ${invite.role} invite.`,
+      severity: "success",
+      metadata: { inviteId: invite.id, acceptedBy: req.userId, role: invite.role },
+    });
   } catch {
     res.status(500).json({ error: "Failed to accept invite" });
   }

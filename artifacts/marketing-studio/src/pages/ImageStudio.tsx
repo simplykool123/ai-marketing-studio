@@ -1,92 +1,95 @@
-import { useState, useRef } from "react";
-import { useParams } from "wouter";
+import { useEffect, useRef, useState } from "react";
+import { Link, useParams } from "wouter";
 import {
-  Image as ImageIcon, Sparkles, RefreshCw, CheckCircle2,
-  Download, Wand2, Upload, X,
+  Image as ImageIcon,
+  Sparkles,
+  RefreshCw,
+  Wand2,
+  Upload,
+  X,
+  Copy,
+  CheckCircle2,
+  Send,
+  Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface ReferenceImage {
+type ReferenceImage = {
   file: File;
   previewUrl: string;
-}
+};
 
-interface ImagePromptVariation {
-  variation: number;
-  style: string;
+type BrandAsset = {
+  id: string;
+  assetType: string;
+  fileUrl: string;
+  notes?: string | null;
+};
+
+type PreparedImagePrompt = {
+  finalPrompt: string;
+  negativePrompt: string;
+  suggestedAspectRatio: "1:1" | "4:5" | "16:9" | "9:16";
+  styleTags: string[];
+  brandColorNotes: string;
+  compositionNotes: string;
+  textRecommendation: string;
+};
+
+type StudioResult = {
+  id: string;
+  imageUrl: string;
   prompt: string;
-  rationale: string;
-}
-
-interface GeneratedPrompts {
-  topic: string;
-  brandContext: string;
-  variations: ImagePromptVariation[];
-}
-
-type ImagePreparedPrompt = {
-  improvedPrompt?: string;
-  negativePrompt?: string;
-  headlineSuggestion?: string;
-  sublineSuggestion?: string;
-  styleDirection?: string;
-  paletteSuggestion?: string;
-  layoutSuggestion?: string;
-  platformNotes?: string;
+  style?: string;
+  postId?: string;
 };
 
-// ---------------------------------------------------------------------------
-// Style colours
-// ---------------------------------------------------------------------------
-
-const STYLE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  photorealistic:   { bg: "bg-blue-50",    border: "border-blue-300",  text: "text-blue-700" },
-  illustration:     { bg: "bg-purple-50",  border: "border-purple-300", text: "text-purple-700" },
-  "bold typography": { bg: "bg-orange-50", border: "border-orange-300", text: "text-orange-700" },
-  minimalist:       { bg: "bg-gray-50",    border: "border-gray-300",   text: "text-gray-700" },
-};
-
-function styleColor(style: string) {
-  return STYLE_COLORS[style] ?? { bg: "bg-muted", border: "border-border", text: "text-foreground" };
+async function fetchBrandAssets(clientId: string): Promise<BrandAsset[]> {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/brand-assets`);
+  if (!res.ok) throw new Error("Failed to load brand assets");
+  return res.json();
 }
-
-// ---------------------------------------------------------------------------
-// Main page
-// ---------------------------------------------------------------------------
 
 export default function ImageStudio() {
   const { clientId } = useParams<{ clientId: string }>();
   const { toast } = useToast();
-
-  const [topic, setTopic] = useState("");
-  const [qualityMode, setQualityMode] = useState("balanced");
-  const [loading, setLoading] = useState(false);
-  const [improvingPrompt, setImprovingPrompt] = useState(false);
-  const [preparedPrompt, setPreparedPrompt] = useState<ImagePreparedPrompt | null>(null);
-  const [gen, setGen] = useState<GeneratedPrompts | null>(null);
-  const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Per-variation state
-  const [generating, setGenerating] = useState<number | null>(null);
-  const [generatedImages, setGeneratedImages] = useState<Record<number, string>>({});
-  const [savedImages, setSavedImages] = useState<Set<number>>(new Set());
-  const [selectedVariation, setSelectedVariation] = useState<number | null>(null);
+  const [roughIdea, setRoughIdea] = useState("");
+  const [editInstruction, setEditInstruction] = useState("");
+  const [caption, setCaption] = useState("");
+  const [topic, setTopic] = useState("");
+  const [platform, setPlatform] = useState("instagram");
+  const [aspectRatio, setAspectRatio] = useState<"1:1" | "4:5" | "16:9" | "9:16">("1:1");
+  const [prepared, setPrepared] = useState<PreparedImagePrompt | null>(null);
+  const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(null);
+  const [brandAssets, setBrandAssets] = useState<BrandAsset[]>([]);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
+  const [results, setResults] = useState<StudioResult[]>([]);
+  const [selectedResultId, setSelectedResultId] = useState<string | null>(null);
+  const [loadingAction, setLoadingAction] = useState<"prompt" | "generate" | "edit" | "variations" | "review" | null>(null);
+
+  useEffect(() => {
+    if (!clientId) return;
+    fetchBrandAssets(clientId)
+      .then(setBrandAssets)
+      .catch(() => {});
+  }, [clientId]);
+
+  const selectedResult = results.find((result) => result.id === selectedResultId) ?? results[0] ?? null;
+  const selectedAssetArray = Array.from(selectedAssetIds);
+  const workingPrompt = prepared?.finalPrompt || roughIdea;
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -95,8 +98,12 @@ export default function ImageStudio() {
       toast({ title: "Please select an image file", variant: "destructive" });
       return;
     }
-    const previewUrl = URL.createObjectURL(file);
-    setReferenceImage({ file, previewUrl });
+    if (file.size > 10 * 1024 * 1024) {
+      toast({ title: "Image is too large", description: "Maximum upload size is 10 MB.", variant: "destructive" });
+      return;
+    }
+    if (referenceImage) URL.revokeObjectURL(referenceImage.previewUrl);
+    setReferenceImage({ file, previewUrl: URL.createObjectURL(file) });
   }
 
   function removeReferenceImage() {
@@ -105,67 +112,23 @@ export default function ImageStudio() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  async function generatePrompts() {
-    if (!topic.trim()) {
-      toast({ title: "Enter a topic or concept", variant: "destructive" });
-      return;
-    }
-    setLoading(true);
-    setGen(null);
-    setGeneratedImages({});
-    setSavedImages(new Set());
-    setSelectedVariation(null);
-    try {
-      const res = await fetch(`${BASE}/api/clients/${clientId}/image-studio/generate-prompts`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("ams_token")}`,
-        },
-        body: JSON.stringify({ topic, qualityMode }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Generation failed");
-
-      setGen(data.generated);
-      toast({ title: "4 prompt variations ready" });
-    } catch (err) {
-      toast({
-        title: "Generation failed",
-        description: err instanceof Error ? err.message : "Unknown error",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function improveImagePrompt() {
-    if (!topic.trim()) {
+  async function improvePrompt() {
+    if (!roughIdea.trim()) {
       toast({ title: "Enter a rough image idea first", variant: "destructive" });
       return;
     }
-    setImprovingPrompt(true);
+    setLoadingAction("prompt");
     try {
-      const res = await fetch(`${BASE}/api/clients/${clientId}/creative/prepare-prompt`, {
+      const res = await fetch(`${BASE}/api/clients/${clientId}/image-studio/prepare-prompt`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("ams_token")}`,
-        },
-        body: JSON.stringify({
-          mode: "image",
-          userIdea: topic,
-          platform: "image",
-          contentType: "image_asset",
-          aspectRatio: "1:1",
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idea: roughIdea, platform, aspectRatio, assetIds: selectedAssetArray }),
       });
-      const data = await res.json().catch(() => ({})) as { prepared?: ImagePreparedPrompt; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Could not improve prompt.");
-      setPreparedPrompt(data.prepared ?? null);
-      if (data.prepared?.improvedPrompt) setTopic(data.prepared.improvedPrompt);
-      toast({ title: "Prompt improved", description: "Review and edit it before generating." });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Could not improve prompt");
+      setPrepared(data.prepared);
+      setAspectRatio(data.prepared?.suggestedAspectRatio ?? aspectRatio);
+      toast({ title: "Prompt improved", description: "Review the direction, then generate or edit." });
     } catch (err) {
       toast({
         title: "Prompt improvement failed",
@@ -173,251 +136,426 @@ export default function ImageStudio() {
         variant: "destructive",
       });
     } finally {
-      setImprovingPrompt(false);
+      setLoadingAction(null);
     }
   }
 
-  async function generateImage(variation: ImagePromptVariation, index: number) {
-    setGenerating(index);
+  async function generateImage() {
+    if (!workingPrompt.trim()) {
+      toast({ title: "Enter or improve an image prompt first", variant: "destructive" });
+      return;
+    }
+    setLoadingAction("generate");
     try {
       const res = await fetch(`${BASE}/api/clients/${clientId}/image-studio/generate-image`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("ams_token")}`,
-        },
-        body: JSON.stringify({ prompt: variation.prompt, style: variation.style, topic }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: workingPrompt,
+          style: prepared?.styleTags?.join(", ") || "premium branded image",
+          topic: topic || roughIdea.slice(0, 80) || "Generated image",
+          aspectRatio,
+          assetIds: selectedAssetArray,
+        }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Image generation failed");
-
-      setGeneratedImages(prev => ({ ...prev, [index]: data.imageUrl }));
-      setSavedImages(prev => new Set(prev).add(index));
-      toast({ title: "Image generated", description: "Saved to your image library automatically." });
+      const result: StudioResult = {
+        id: data.post?.id ?? crypto.randomUUID(),
+        imageUrl: data.imageUrl,
+        prompt: data.prompt ?? workingPrompt,
+        style: data.style,
+        postId: data.post?.id,
+      };
+      setResults((current) => [result, ...current]);
+      setSelectedResultId(result.id);
+      toast({ title: "Image generated", description: "Saved durably to Assets." });
     } catch (err) {
       toast({
         title: "Image generation failed",
-        description: err instanceof Error ? err.message : "Check your OpenAI API key in Settings",
+        description: err instanceof Error ? err.message : "Check your OpenAI key in Settings.",
         variant: "destructive",
       });
     } finally {
-      setGenerating(null);
+      setLoadingAction(null);
     }
   }
 
-  async function saveStyle(variation: ImagePromptVariation) {
-    setSelectedVariation(variation.variation);
-    try {
-      await fetch(`${BASE}/api/clients/${clientId}/image-studio/save-style`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("ams_token")}`,
-        },
-        body: JSON.stringify({ style: variation.style, rationale: variation.rationale, topic }),
-      });
-      toast({ title: `"${variation.style}" style saved to brand memory` });
-    } catch {
-      toast({ title: "Could not save style preference", variant: "destructive" });
+  async function editImage() {
+    if (!referenceImage) {
+      toast({ title: "Upload a reference image first", variant: "destructive" });
+      return;
     }
+    if (!editInstruction.trim()) {
+      toast({ title: "Describe the edit you want", variant: "destructive" });
+      return;
+    }
+    setLoadingAction("edit");
+    try {
+      const formData = new FormData();
+      formData.append("image", referenceImage.file);
+      formData.append("instruction", `${editInstruction}\n\nPrompt direction: ${workingPrompt || roughIdea}`);
+      formData.append("aspectRatio", aspectRatio);
+      formData.append("topic", topic || "Edited image");
+      const res = await fetch(`${BASE}/api/clients/${clientId}/image-studio/edit-image`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Image edit failed");
+      const result: StudioResult = {
+        id: data.post?.id ?? crypto.randomUUID(),
+        imageUrl: data.imageUrl,
+        prompt: data.prompt,
+        style: "edited reference",
+        postId: data.post?.id,
+      };
+      setResults((current) => [result, ...current]);
+      setSelectedResultId(result.id);
+      toast({ title: "Image edited", description: "Saved durably to Assets." });
+    } catch (err) {
+      toast({
+        title: "Image edit failed",
+        description: err instanceof Error ? err.message : "Image editing is not available with the current provider.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function createVariations() {
+    if (!selectedResult && !workingPrompt.trim()) {
+      toast({ title: "Generate or select an image first", variant: "destructive" });
+      return;
+    }
+    setLoadingAction("variations");
+    try {
+      const res = await fetch(`${BASE}/api/clients/${clientId}/image-studio/variations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: selectedResult?.prompt || workingPrompt,
+          sourceImageUrl: selectedResult?.imageUrl,
+          aspectRatio,
+          count: 3,
+          topic: topic || "Image variations",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Could not create variations");
+      const newResults: StudioResult[] = (data.variations ?? []).map((item: any) => ({
+        id: item.post?.id ?? crypto.randomUUID(),
+        imageUrl: item.imageUrl,
+        prompt: item.prompt,
+        style: `variation ${item.variation}`,
+        postId: item.post?.id,
+      }));
+      setResults((current) => [...newResults, ...current]);
+      if (newResults[0]) setSelectedResultId(newResults[0].id);
+      toast({ title: "Variations created", description: "Saved durably to Assets." });
+    } catch (err) {
+      toast({
+        title: "Variation generation failed",
+        description: err instanceof Error ? err.message : "Could not create variations.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function sendToReview() {
+    if (!selectedResult) {
+      toast({ title: "Select an image first", variant: "destructive" });
+      return;
+    }
+    setLoadingAction("review");
+    try {
+      const res = await fetch(`${BASE}/api/clients/${clientId}/image-studio/save-to-review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageUrl: selectedResult.imageUrl,
+          prompt: selectedResult.prompt,
+          platform,
+          caption,
+          topic: topic || roughIdea.slice(0, 80) || "Image draft",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Could not send to Review");
+      toast({ title: "Sent to Review", description: "A draft post was created with the selected image." });
+    } catch (err) {
+      toast({
+        title: "Send to Review failed",
+        description: err instanceof Error ? err.message : "Could not create draft.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function copyPrompt() {
+    await navigator.clipboard.writeText(workingPrompt);
+    toast({ title: "Prompt copied" });
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <ImageIcon className="w-6 h-6 text-primary" /> Image Studio
-        </h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Enter a topic and get 4 prompt variations across different visual styles. Generate images via DALL-E 3 or save the prompt to use elsewhere.
-        </p>
+    <div className="mx-auto max-w-6xl space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
+            <ImageIcon className="w-6 h-6 text-primary" />
+            Image Studio
+          </h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            Start rough, let AI shape the prompt, generate or edit images, create variations, then save the best one to Review.
+          </p>
+        </div>
+        <Link href={`/clients/${clientId}/assets`}>
+          <Button variant="outline">Open Assets</Button>
+        </Link>
       </div>
 
-      {/* Input */}
-      <Card>
-        <CardContent className="pt-5 space-y-4">
-          {/* Reference image upload */}
-          <div className="space-y-1.5">
-            <Label>Reference Image <span className="text-muted-foreground font-normal">(optional)</span></Label>
-            {referenceImage ? (
-              <div className="flex items-center gap-3 rounded-md border bg-muted/30 p-2">
-                <img src={referenceImage.previewUrl} alt="reference" className="w-14 h-14 rounded object-cover shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{referenceImage.file.name}</p>
-                  <p className="text-xs text-muted-foreground">Used as visual context for prompt generation</p>
+      <div className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
+        <div className="space-y-5">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">1. Rough idea</CardTitle>
+              <CardDescription>You do not need a perfect prompt.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Platform</Label>
+                  <Select value={platform} onValueChange={setPlatform}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="instagram">Instagram</SelectItem>
+                      <SelectItem value="facebook">Facebook</SelectItem>
+                      <SelectItem value="linkedin">LinkedIn</SelectItem>
+                      <SelectItem value="twitter">X/Twitter</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <Button size="sm" variant="ghost" className="h-7 w-7 p-0 shrink-0" onClick={removeReferenceImage}>
-                  <X className="w-3.5 h-3.5" />
+                <div className="space-y-1.5">
+                  <Label>Aspect ratio</Label>
+                  <Select value={aspectRatio} onValueChange={(value) => setAspectRatio(value as typeof aspectRatio)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1:1">1:1 square</SelectItem>
+                      <SelectItem value="4:5">4:5 portrait</SelectItem>
+                      <SelectItem value="16:9">16:9 wide</SelectItem>
+                      <SelectItem value="9:16">9:16 story</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Image idea</Label>
+                <textarea
+                  className="min-h-[112px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  placeholder="e.g. make this sofa background more premium, festive Instagram-ready product visual, remove clutter and use warm beige tones"
+                  value={roughIdea}
+                  onChange={(event) => {
+                    setRoughIdea(event.target.value);
+                    setPrepared(null);
+                  }}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Draft topic/title</Label>
+                <Input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="Optional title for Review" />
+              </div>
+
+              <Button onClick={improvePrompt} disabled={loadingAction !== null || !roughIdea.trim()} className="w-full gap-2">
+                {loadingAction === "prompt" ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                Improve prompt with AI
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">2. Optional reference</CardTitle>
+              <CardDescription>Upload a photo for edit mode, or select imported brand assets for style context.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {referenceImage ? (
+                <div className="flex items-center gap-3 rounded-md border bg-muted/30 p-2">
+                  <img src={referenceImage.previewUrl} alt="reference" className="h-16 w-16 shrink-0 rounded object-cover" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{referenceImage.file.name}</p>
+                    <p className="text-xs text-muted-foreground">Used for image edit mode</p>
+                  </div>
+                  <Button size="icon" variant="ghost" className="h-8 w-8" onClick={removeReferenceImage}>
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex w-full items-center gap-2 rounded-md border border-dashed border-input bg-background px-3 py-3 text-sm text-muted-foreground transition-colors hover:bg-muted/30"
+                >
+                  <Upload className="w-4 h-4 shrink-0" />
+                  Upload reference image
+                </button>
+              )}
+              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
+
+              {brandAssets.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Brand assets</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {brandAssets.slice(0, 6).map((asset) => {
+                      const selected = selectedAssetIds.has(asset.id);
+                      return (
+                        <button
+                          key={asset.id}
+                          type="button"
+                          className={cn("relative aspect-square overflow-hidden rounded-md border", selected && "ring-2 ring-primary")}
+                          onClick={() => {
+                            setSelectedAssetIds((current) => {
+                              const next = new Set(current);
+                              if (next.has(asset.id)) next.delete(asset.id);
+                              else next.add(asset.id);
+                              return next;
+                            });
+                          }}
+                          title={asset.notes ?? asset.assetType}
+                        >
+                          <img src={asset.fileUrl} alt="" className="h-full w-full object-cover" />
+                          <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[9px] text-white">{asset.assetType}</span>
+                          {selected && <CheckCircle2 className="absolute right-1 top-1 h-4 w-4 rounded-full bg-white text-primary" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="space-y-5">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">3. Generate, edit, or vary</CardTitle>
+              <CardDescription>Outputs are saved to durable storage before they appear here.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {prepared && (
+                <div className="space-y-3 rounded-md border bg-muted/20 p-3 text-sm">
+                  <div className="flex flex-wrap gap-1.5">
+                    {prepared.styleTags.map((tag) => <Badge key={tag} variant="secondary">{tag}</Badge>)}
+                  </div>
+                  <p className="text-sm leading-relaxed">{prepared.finalPrompt}</p>
+                  <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                    <p><span className="font-medium text-foreground">Avoid:</span> {prepared.negativePrompt}</p>
+                    <p><span className="font-medium text-foreground">Colors:</span> {prepared.brandColorNotes}</p>
+                    <p><span className="font-medium text-foreground">Composition:</span> {prepared.compositionNotes}</p>
+                    <p><span className="font-medium text-foreground">Text:</span> {prepared.textRecommendation}</p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={copyPrompt} className="gap-1.5">
+                    <Copy className="w-3.5 h-3.5" />
+                    Copy prompt
+                  </Button>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <Label>Edit instruction</Label>
+                <Input
+                  value={editInstruction}
+                  onChange={(event) => setEditInstruction(event.target.value)}
+                  placeholder="e.g. change sofa color to beige and remove background clutter"
+                />
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-3">
+                <Button onClick={generateImage} disabled={loadingAction !== null || !workingPrompt.trim()} className="gap-1.5">
+                  {loadingAction === "generate" ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  Generate
+                </Button>
+                <Button onClick={editImage} disabled={loadingAction !== null || !referenceImage || !editInstruction.trim()} variant="outline" className="gap-1.5">
+                  {loadingAction === "edit" ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                  Edit image
+                </Button>
+                <Button onClick={createVariations} disabled={loadingAction !== null || (!selectedResult && !workingPrompt.trim())} variant="outline" className="gap-1.5">
+                  {loadingAction === "variations" ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Layers className="w-4 h-4" />}
+                  Variations
                 </Button>
               </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 w-full rounded-md border border-dashed border-input bg-background px-3 py-3 text-sm text-muted-foreground hover:bg-muted/30 transition-colors"
-              >
-                <Upload className="w-4 h-4 shrink-0" />
-                Upload a photo or image to use as a style reference
-              </button>
-            )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleFileSelect}
-            />
-          </div>
+            </CardContent>
+          </Card>
 
-          <div className="space-y-1.5">
-            <Label>Topic / Concept</Label>
-            <textarea
-              className="min-h-[92px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="e.g. Product launch announcement for a sustainable coffee brand"
-              value={topic}
-              onChange={e => setTopic(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && generatePrompts()}
-            />
-          </div>
-          {preparedPrompt && (
-            <div className="rounded-md border bg-muted/25 p-3 text-xs text-muted-foreground space-y-1.5">
-              {preparedPrompt.styleDirection && <p><span className="font-medium text-foreground">Style:</span> {preparedPrompt.styleDirection}</p>}
-              {preparedPrompt.paletteSuggestion && <p><span className="font-medium text-foreground">Palette:</span> {preparedPrompt.paletteSuggestion}</p>}
-              {preparedPrompt.layoutSuggestion && <p><span className="font-medium text-foreground">Layout:</span> {preparedPrompt.layoutSuggestion}</p>}
-              {preparedPrompt.headlineSuggestion && <p><span className="font-medium text-foreground">Headline:</span> {preparedPrompt.headlineSuggestion}</p>}
-              {preparedPrompt.negativePrompt && <p><span className="font-medium text-foreground">Avoid:</span> {preparedPrompt.negativePrompt}</p>}
-            </div>
-          )}
-          <div className="flex items-end gap-4">
-            <div className="space-y-1.5 flex-1">
-              <Label>AI Quality</Label>
-              <Select value={qualityMode} onValueChange={setQualityMode}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="cheap">Cheap / Fast</SelectItem>
-                  <SelectItem value="balanced">Balanced</SelectItem>
-                  <SelectItem value="best_quality">Best Quality</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button onClick={improveImagePrompt} disabled={improvingPrompt || loading} variant="outline" className="flex-1">
-              {improvingPrompt
-                ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Improving…</>
-                : <><Wand2 className="w-4 h-4 mr-2" /> Improve prompt with AI</>}
-            </Button>
-            <Button onClick={generatePrompts} disabled={loading} className="flex-1">
-              {loading
-                ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Generating prompts…</>
-                : <><Sparkles className="w-4 h-4 mr-2" /> Generate 4 Variations</>}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">4. Choose result</CardTitle>
+              <CardDescription>Select the strongest image, then send it to Review.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {loadingAction && loadingAction !== "prompt" && (
+                <div className="grid grid-cols-2 gap-3">
+                  <Skeleton className="aspect-square rounded-lg" />
+                  <Skeleton className="aspect-square rounded-lg" />
+                </div>
+              )}
 
-      {/* Loading */}
-      {loading && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {[0, 1, 2, 3].map(i => (
-            <Card key={i}><CardContent className="pt-4 space-y-2">
-              <Skeleton className="h-4 w-1/3" />
-              <Skeleton className="h-3 w-full" />
-              <Skeleton className="h-3 w-5/6" />
-              <Skeleton className="h-3 w-2/3" />
-            </CardContent></Card>
-          ))}
+              {results.length === 0 ? (
+                <div className="rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">
+                  Generated and edited images will appear here.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  {results.map((result) => {
+                    const selected = selectedResult?.id === result.id;
+                    return (
+                      <button
+                        key={result.id}
+                        type="button"
+                        className={cn("group relative overflow-hidden rounded-lg border text-left", selected && "ring-2 ring-primary")}
+                        onClick={() => setSelectedResultId(result.id)}
+                      >
+                        <img src={result.imageUrl} alt="" className="aspect-square w-full object-cover" />
+                        <span className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-[10px] text-white">{result.style ?? "generated"}</span>
+                        {selected && <CheckCircle2 className="absolute right-2 top-2 h-5 w-5 rounded-full bg-white text-primary" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <Label>Caption for Review</Label>
+                <textarea
+                  className="min-h-[76px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={caption}
+                  onChange={(event) => setCaption(event.target.value)}
+                  placeholder="Optional caption. Review can rewrite it later."
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Checkbox checked={!!selectedResult} disabled />
+                <span className="text-xs text-muted-foreground">
+                  Selected outputs are already saved to Assets. Send to Review creates a draft post.
+                </span>
+              </div>
+
+              <Button onClick={sendToReview} disabled={loadingAction !== null || !selectedResult} className="w-full gap-2">
+                {loadingAction === "review" ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                Send selected image to Review
+              </Button>
+            </CardContent>
+          </Card>
         </div>
-      )}
-
-      {/* Prompt variations */}
-      {gen && !loading && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold">4 Prompt Variations</h2>
-            <span className="text-xs text-muted-foreground">for "{gen.topic}"</span>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {gen.variations.map((v, i) => {
-              const colors = styleColor(v.style);
-              const imgUrl = generatedImages[i];
-              const isGenerating = generating === i;
-              const isSelected = selectedVariation === v.variation;
-              const isSaved = savedImages.has(i);
-
-              return (
-                <Card
-                  key={i}
-                  className={cn(
-                    "border-2 transition-colors",
-                    isSelected ? "border-primary" : "border-border",
-                  )}
-                >
-                  {imgUrl && (
-                    <div className="aspect-square overflow-hidden rounded-t-lg relative group">
-                      <img src={imgUrl} alt={v.style} className="w-full h-full object-cover" />
-                      <a
-                        href={imgUrl}
-                        download={`${v.style.replace(/\s+/g, "-")}.png`}
-                        className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white rounded p-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Download image"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                      </a>
-                      {isSaved && (
-                        <div className="absolute bottom-2 left-2 bg-black/60 text-white text-[10px] px-2 py-1 rounded flex items-center gap-1">
-                          <CheckCircle2 className="w-2.5 h-2.5 text-green-400" /> Saved to library
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <CardContent className={cn("pt-3 pb-3", imgUrl ? "" : "pt-4")}>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className={cn(
-                        "text-[11px] font-semibold px-2 py-0.5 rounded-full border",
-                        colors.bg, colors.border, colors.text
-                      )}>
-                        {v.style}
-                      </span>
-                      {isSelected && (
-                        <Badge variant="outline" className="text-green-700 border-green-300 bg-green-50 text-[10px]">
-                          <CheckCircle2 className="w-2.5 h-2.5 mr-1" /> Style saved
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground leading-relaxed mb-2">{v.prompt}</p>
-                    <p className="text-[10px] text-muted-foreground italic border-t pt-2">{v.rationale}</p>
-
-                    <div className="flex gap-2 mt-3">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="flex-1 h-7 text-xs"
-                        disabled={isGenerating}
-                        onClick={() => generateImage(v, i)}
-                      >
-                        {isGenerating
-                          ? <><RefreshCw className="w-3 h-3 mr-1 animate-spin" /> Generating…</>
-                          : imgUrl
-                            ? <><RefreshCw className="w-3 h-3 mr-1" /> Regenerate</>
-                            : <><Wand2 className="w-3 h-3 mr-1" /> Generate Image</>}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant={isSelected ? "default" : "ghost"}
-                        className="h-7 text-xs"
-                        onClick={() => saveStyle(v)}
-                      >
-                        {isSelected ? <CheckCircle2 className="w-3 h-3" /> : "Save Style"}
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
+      </div>
     </div>
   );
 }

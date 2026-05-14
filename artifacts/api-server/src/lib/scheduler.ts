@@ -6,6 +6,7 @@ import { publishToPlatform } from "./publishers/index.js";
 import { logger } from "./logger.js";
 import { isNetworkError } from "./supabase.js";
 import { writeClientMemory } from "./client-memory-packet.js";
+import { createClientNotification } from "./notifications.js";
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const DIRECT_PUBLISH_PLATFORMS = new Set(["instagram", "facebook", "linkedin", "twitter"]);
@@ -297,6 +298,14 @@ export async function runScheduledPublish(options: ScheduledPublishRunOptions = 
           .update(postsTable)
           .set({ status: "failed", publishError: safetyError, updatedAt: new Date() })
           .where(and(eq(postsTable.id, post.id), eq(postsTable.status, "scheduled"), isNull(postsTable.publishedAt)));
+        await createClientNotification({
+          clientId: post.clientId,
+          type: "auto_publish_blocked",
+          title: "Auto-publish blocked",
+          message: safetyError,
+          severity: "warning",
+          metadata: { postId: post.id, platform, topic: post.topic },
+        });
         logger.warn({ postId: post.id, platform, reason: safetyError }, "Scheduler: post blocked by safety guard");
         result.failedCount++;
         continue;
@@ -332,6 +341,14 @@ export async function runScheduledPublish(options: ScheduledPublishRunOptions = 
             updatedAt: new Date(),
           })
           .where(and(eq(postsTable.id, post.id), eq(postsTable.status, "scheduled"), isNull(postsTable.publishedAt)));
+        await createClientNotification({
+          clientId: post.clientId,
+          type: "auto_publish_blocked",
+          title: "Publishing connector missing",
+          message: `No direct ${platform} publishing account is connected for this brand.`,
+          severity: "warning",
+          metadata: { postId: post.id, platform, topic: post.topic },
+        });
         logger.warn({ postId: post.id, platform }, "Scheduler: no connected direct publishing account");
         result.failedCount++;
         continue;
@@ -383,6 +400,14 @@ export async function runScheduledPublish(options: ScheduledPublishRunOptions = 
             "Scheduler: could not persist publish failure to DB"
           );
         });
+      await createClientNotification({
+        clientId: post.clientId,
+        type: "scheduled_publish_failed",
+        title: "Scheduled publish failed",
+        message,
+        severity: "error",
+        metadata: { postId: post.id, platform: post.platform ?? "instagram", topic: post.topic },
+      });
       result.failedCount++;
       logger.warn({ postId: post.id, error: message, reason }, "Scheduler: publish failed");
     } finally {

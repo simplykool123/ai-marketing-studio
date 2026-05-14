@@ -13,6 +13,7 @@ export * from "./campaigns";
 export * from "./social_accounts";
 export * from "./posting_logs";
 export * from "./posting_rules";
+export * from "./notifications";
 export * from "./user_api_keys";
 export * from "./ai_ideas";
 export * from "./campaign_outputs";

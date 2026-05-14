@@ -31,6 +31,7 @@ import socialIntelligenceRouter from "./social_intelligence.js";
 import reportsRouter from "./reports.js";
 import storageArchiveRouter from "./storage_archive.js";
 import teamRouter from "./team.js";
+import notificationsRouter from "./notifications.js";
 import { requireAuth, requireClientAccess } from "../middleware/auth.js";
 
 const router: IRouter = Router();
@@ -71,5 +72,6 @@ router.use(analyticsRouter);
 router.use(socialIntelligenceRouter);
 router.use(reportsRouter);
 router.use(storageArchiveRouter);
+router.use(notificationsRouter);
 
 export default router;

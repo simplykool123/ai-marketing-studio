@@ -13,6 +13,7 @@ import {
   toAiErrorResponse,
 } from "../lib/ai-provider.js";
 import { logger } from "../lib/logger.js";
+import { createClientNotification } from "../lib/notifications.js";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -1229,6 +1230,15 @@ ${websiteText}`;
         error: safeErrorMessage(err),
         fallbackUsed: true,
       }, "Brand importer AI step failed; using extraction fallback");
+      await createClientNotification({
+        clientId: req.params.clientId,
+        userId: req.userId,
+        type: "brand_importer_fallback",
+        title: "Brand Importer used fallback",
+        message: aiError,
+        severity: "warning",
+        metadata: { websiteUrl: url.toString(), stage },
+      });
       analysis = buildExtractionFallbackAnalysis(extraction, url, aiError);
     }
 
@@ -1347,7 +1357,17 @@ ${pastedText.slice(0, 16000)}`;
           const responseText = await generateTextWithProvider(provider, model, prompt, 1200, req.userId);
           analysis = { ...analysis, ...parseAnalysisResponse(responseText) };
         } catch (err) {
-          warnings.push(`${toAiErrorResponse(err, "AI provider failed.").message} Showing screenshot/text extraction fallback.`);
+          const message = `${toAiErrorResponse(err, "AI provider failed.").message} Showing screenshot/text extraction fallback.`;
+          warnings.push(message);
+          await createClientNotification({
+            clientId: req.params.clientId,
+            userId: req.userId,
+            type: "brand_importer_fallback",
+            title: "Brand Importer fallback used",
+            message,
+            severity: "warning",
+            metadata: { sourceUrl, mode: "manual_fallback" },
+          });
           logger.warn({ clientId: req.params.clientId, error: safeErrorMessage(err) }, "Brand fallback AI analysis failed");
         }
       } else if (uploaded) {

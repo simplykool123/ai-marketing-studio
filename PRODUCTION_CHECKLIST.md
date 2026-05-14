@@ -74,6 +74,7 @@ profiles
 clients
 client_users
 client_invites
+notifications
 brand_dna
 brand_assets
 storylines
@@ -97,7 +98,7 @@ Schema status from the checked Supabase project:
 
 ```text
 20 expected tables present before Team Access V1
-client_invites added in code; run schema push to create it
+client_invites and notifications added in code; run schema push to create them
 ```
 
 Before production:
