@@ -28,6 +28,8 @@ import {
   Palette,
   BarChart3,
   Users,
+  TrendingUp,
+  HelpCircle,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useState, useEffect, useRef } from "react";
@@ -35,6 +37,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -83,14 +86,14 @@ export function Sidebar({ clientId }: { clientId?: string }) {
 
   const primaryItems: NavItem[] = clientId ? [
     { href: `/clients/${clientId}`, label: "Dashboard", icon: LayoutDashboard },
-    { href: `/clients/${clientId}/brand-dna`, label: "Brand Setup", icon: Dna, help: "Set brand voice, audience, colors, and goals." },
-    { href: `/clients/${clientId}/campaigns/generate`, label: "Campaign Planner", icon: Flag, help: "Plan campaigns and generate approval-ready drafts." },
-    { href: `/clients/${clientId}/marketing-calendar`, label: "Marketing Calendar", icon: CalendarIcon, help: "Create occasion-based drafts." },
-    { href: `/clients/${clientId}/drafts?tab=pending`, label: "Review", icon: CheckSquare, badge: pendingCount > 0 ? pendingCount : undefined, help: "Approve ready drafts or reject drafts to teach AI." },
-    { href: `/clients/${clientId}/assets`, label: "Assets", icon: ImageIcon, help: "Images generated or uploaded for this client." },
-    { href: `/clients/${clientId}/queue`, label: "Publish Queue", icon: ListOrdered, help: "Approved posts wait here before publishing or exporting." },
-    { href: `/clients/${clientId}/memory`, label: "AI Memory", icon: Database, help: "Long-term learning for this client." },
-    { href: `/clients/${clientId}/reports`, label: "Reports", icon: BarChart3, help: "Client-facing summary and next steps." },
+    { href: `/clients/${clientId}/brand-dna`, label: "Brand Setup", icon: Dna, help: "Define voice, audience, colors, assets, and growth rules. Next: research trends or generate a campaign." },
+    { href: `/clients/${clientId}/campaigns/generate`, label: "Campaign Planner", icon: Flag, help: "Turn strategy into draft posts, images, blogs, and videos. Next: Review." },
+    { href: `/clients/${clientId}/marketing-calendar`, label: "Marketing Calendar", icon: CalendarIcon, help: "Create occasion-based drafts. Next: Review and schedule." },
+    { href: `/clients/${clientId}/drafts?tab=pending`, label: "Review", icon: CheckSquare, badge: pendingCount > 0 ? pendingCount : undefined, help: "Rewrite, quality-check, edit artwork, then approve drafts into the queue." },
+    { href: `/clients/${clientId}/assets`, label: "Assets", icon: ImageIcon, help: "Store generated, uploaded, and imported visuals. Use these in Image Studio and Review." },
+    { href: `/clients/${clientId}/queue`, label: "Publish Queue", icon: ListOrdered, help: "Approved posts wait here for export, scheduling, posting, or failure fixes." },
+    { href: `/clients/${clientId}/memory`, label: "AI Memory", icon: Database, help: "Long-term client learning: what works, what to avoid, trends, and content rules." },
+    { href: `/clients/${clientId}/reports`, label: "Reports", icon: BarChart3, help: "Client-ready summary of posted work, performance, gaps, and next steps." },
     { href: `/clients/${clientId}/team`, label: "Team Access", icon: Users, help: "Invite people and manage workspace roles." },
   ] : [];
 
@@ -98,8 +101,9 @@ export function Sidebar({ clientId }: { clientId?: string }) {
     {
       label: "Plan",
       items: [
-        { href: `/clients/${clientId}/brain`, label: "AI Ideas", icon: BrainCircuit, help: "AI suggests what to post next." },
-        { href: `/clients/${clientId}/storylines`, label: "Storylines", icon: BookOpen, help: "Connect posts with a theme over weeks." },
+        { href: `/clients/${clientId}/brain`, label: "AI Ideas", icon: BrainCircuit, help: "Get next-post ideas from Brand DNA, Memory, Storylines, and trend insights. Next: create drafts." },
+        { href: `/clients/${clientId}/research`, label: "Trend Intelligence", icon: TrendingUp, help: "Research current signals and brand-safe trend ideas." },
+        { href: `/clients/${clientId}/storylines`, label: "Storylines", icon: BookOpen, help: "Create a campaign arc that keeps posts connected over weeks. Next: Campaign Planner." },
         { href: `/clients/${clientId}/calendar`, label: "Draft Calendar", icon: CalendarIcon, help: "Calendar view of saved drafts." },
       ],
     },
@@ -139,6 +143,18 @@ export function Sidebar({ clientId }: { clientId?: string }) {
       >
         <Icon className="w-4 h-4 shrink-0" />
         <span className="flex-1">{item.label}</span>
+        {item.help && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full opacity-70 hover:opacity-100" onClick={(event) => event.preventDefault()}>
+                <HelpCircle className="h-3.5 w-3.5" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="max-w-64 bg-slate-950 text-white">
+              {item.help}
+            </TooltipContent>
+          </Tooltip>
+        )}
         {item.badge !== undefined && item.badge > 0 && (
           <Badge variant="destructive" className="h-5 min-w-5 px-1.5 text-[10px] rounded-full">
             {item.badge}

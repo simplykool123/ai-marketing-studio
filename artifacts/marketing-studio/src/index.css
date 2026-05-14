@@ -221,6 +221,9 @@
   }
   body {
     @apply font-sans antialiased bg-background text-foreground;
+    background:
+      linear-gradient(180deg, hsl(var(--accent) / .28) 0%, hsl(var(--background)) 18rem),
+      hsl(var(--background));
   }
 }
 
@@ -232,6 +235,15 @@
     pointer-events: none;
   }
   .no-default-hover-elevate {}
+  .agency-surface {
+    @apply rounded-xl border border-card-border/80 bg-card/95 shadow-sm ring-1 ring-black/[0.015];
+  }
+  .agency-section-title {
+    @apply text-xs font-semibold uppercase tracking-wide text-muted-foreground;
+  }
+  .agency-status-pill {
+    @apply inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium;
+  }
   .no-default-active-elevate {}
   .toggle-elevate::before,
   .toggle-elevate-2::before {

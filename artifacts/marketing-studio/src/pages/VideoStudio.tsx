@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useLocation, useParams } from "wouter";
 import {
   Video, Sparkles, RefreshCw, Lock, ChevronDown,
   ChevronRight, Mic, Eye, Type, Zap, ExternalLink,
@@ -95,9 +95,11 @@ const PLATFORM_LABELS: Record<string, string> = {
 
 export default function VideoStudio() {
   const { clientId } = useParams<{ clientId: string }>();
+  const [location] = useLocation();
   const { toast } = useToast();
+  const initialIdea = new URLSearchParams(location.split("?")[1] ?? "").get("idea") ?? "";
 
-  const [topic, setTopic] = useState("");
+  const [topic, setTopic] = useState(initialIdea);
   const [platform, setPlatform] = useState("instagram_reels");
   const [duration, setDuration] = useState("30s");
   const [qualityMode, setQualityMode] = useState("balanced");
@@ -106,7 +108,7 @@ export default function VideoStudio() {
   const [videoProviders, setVideoProviders] = useState<VideoProvider[]>([]);
   const [expandedScene, setExpandedScene] = useState<number | null>(null);
   const [showFullVO, setShowFullVO] = useState(false);
-  const [videoPrompt, setVideoPrompt] = useState("");
+  const [videoPrompt, setVideoPrompt] = useState(initialIdea);
   const [videoImageUrl, setVideoImageUrl] = useState("");
   const [videoAspectRatio, setVideoAspectRatio] = useState<VideoAspectRatio>("9:16");
   const [videoDurationSeconds, setVideoDurationSeconds] = useState<5 | 10>(5);

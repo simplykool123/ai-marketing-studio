@@ -30,6 +30,28 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertCircle, Globe2, RefreshCw, Save, Sparkles, Upload, Trash2, ImageIcon, Palette, FileText, Image, BookOpen, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+type GrowthRulesForm = {
+  websiteLink: string;
+  whatsappNumber: string;
+  defaultCta: string;
+  preferredHashtags: string;
+  seoKeywords: string;
+  locationServiceKeywords: string;
+  avoidPhrases: string;
+  platformCtaRules: string;
+};
+
+const emptyGrowthRules: GrowthRulesForm = {
+  websiteLink: "",
+  whatsappNumber: "",
+  defaultCta: "",
+  preferredHashtags: "",
+  seoKeywords: "",
+  locationServiceKeywords: "",
+  avoidPhrases: "",
+  platformCtaRules: "",
+};
+
 const brandDnaSchema = z.object({
   brandName: z.string().min(1, "Brand name is required"),
   voiceTone: z.string().optional(),
@@ -303,6 +325,8 @@ export default function BrandDna() {
   const [fallbackScreenshot, setFallbackScreenshot] = useState<File | null>(null);
   const [fallbackText, setFallbackText] = useState("");
   const [isAnalyzingFallback, setIsAnalyzingFallback] = useState(false);
+  const [growthRules, setGrowthRules] = useState<GrowthRulesForm>(emptyGrowthRules);
+  const [isSavingGrowthRules, setIsSavingGrowthRules] = useState(false);
 
   const { data: brandDna, isLoading } = useGetBrandDna(clientId || "");
   const { data: client } = useGetClient(clientId || "");
@@ -322,6 +346,58 @@ export default function BrandDna() {
       form.reset(toBrandDnaFormValues(brandDna, client?.name || ""));
     }
   }, [brandDna, client?.name, form, isFormDirty]);
+
+  useEffect(() => {
+    if (!clientId) return;
+    fetch(`/api/clients/${clientId}/memory`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((res) => res.ok ? res.json() : [])
+      .then((entries: Array<{ key: string; value: string }>) => {
+        const latest = [...entries].reverse().find((entry) => entry.key === "Content Growth Rules / client defaults");
+        if (!latest?.value) return;
+        try {
+          setGrowthRules({ ...emptyGrowthRules, ...JSON.parse(latest.value) });
+        } catch {
+          // Older memory entries may be plain text; leave fields editable and empty.
+        }
+      })
+      .catch(() => {});
+  }, [clientId, token]);
+
+  const saveGrowthRules = async () => {
+    if (!clientId) return;
+    const hasAnyValue = Object.values(growthRules).some((value) => value.trim());
+    if (!hasAnyValue) {
+      toast({ title: "Add at least one growth rule", variant: "destructive" });
+      return;
+    }
+    setIsSavingGrowthRules(true);
+    try {
+      const res = await fetch(`/api/clients/${clientId}/memory`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          key: "Content Growth Rules / client defaults",
+          value: JSON.stringify(growthRules),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Could not save growth rules");
+      toast({ title: "Content growth rules saved", description: "AI Ideas, campaigns, calendar drafts, rewrites, image prompts, and video prompts can now use these rules." });
+    } catch (err) {
+      toast({
+        title: "Failed to save growth rules",
+        description: err instanceof Error ? err.message : "Could not save content growth rules.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingGrowthRules(false);
+    }
+  };
 
   const onSubmit = (data: BrandDnaFormValues) => {
     if (!clientId) return;
@@ -1271,6 +1347,99 @@ export default function BrandDna() {
             </CardContent>
           </Card>
 
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Content Growth Rules</CardTitle>
+              <CardDescription>
+                Optional conversion and SEO defaults. The AI uses these only when they fit naturally, so posts do not become link-stuffed.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Website link</label>
+                  <Input
+                    value={growthRules.websiteLink}
+                    onChange={(event) => setGrowthRules((current) => ({ ...current, websiteLink: event.target.value }))}
+                    placeholder="https://brand.com"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">WhatsApp number</label>
+                  <Input
+                    value={growthRules.whatsappNumber}
+                    onChange={(event) => setGrowthRules((current) => ({ ...current, whatsappNumber: event.target.value }))}
+                    placeholder="+1 555 000 0000"
+                  />
+                </div>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Default CTA</label>
+                  <Input
+                    value={growthRules.defaultCta}
+                    onChange={(event) => setGrowthRules((current) => ({ ...current, defaultCta: event.target.value }))}
+                    placeholder="Book a consultation, shop the collection, message us..."
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Preferred hashtags</label>
+                  <Input
+                    value={growthRules.preferredHashtags}
+                    onChange={(event) => setGrowthRules((current) => ({ ...current, preferredHashtags: event.target.value }))}
+                    placeholder="#brand #interiordesign #customfurniture"
+                  />
+                </div>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">SEO keywords</label>
+                  <Textarea
+                    value={growthRules.seoKeywords}
+                    onChange={(event) => setGrowthRules((current) => ({ ...current, seoKeywords: event.target.value }))}
+                    placeholder="premium sofa, modular furniture, interior design..."
+                    rows={2}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Location / service keywords</label>
+                  <Textarea
+                    value={growthRules.locationServiceKeywords}
+                    onChange={(event) => setGrowthRules((current) => ({ ...current, locationServiceKeywords: event.target.value }))}
+                    placeholder="Los Angeles showroom, custom upholstery, delivery areas..."
+                    rows={2}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Avoid words / phrases</label>
+                  <Textarea
+                    value={growthRules.avoidPhrases}
+                    onChange={(event) => setGrowthRules((current) => ({ ...current, avoidPhrases: event.target.value }))}
+                    placeholder="cheap, luxury without proof, limited time if not true..."
+                    rows={2}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Platform-specific CTA rules</label>
+                  <Textarea
+                    value={growthRules.platformCtaRules}
+                    onChange={(event) => setGrowthRules((current) => ({ ...current, platformCtaRules: event.target.value }))}
+                    placeholder="Instagram: save/share. LinkedIn: book a consult. Facebook: message on WhatsApp."
+                    rows={2}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                <span>Saved rules feed AI Ideas, Campaign Planner, Marketing Calendar, Review rewrites, Image Studio, Video Studio, and Quality Review through AI Memory.</span>
+                <Button type="button" variant="outline" size="sm" onClick={saveGrowthRules} disabled={isSavingGrowthRules}>
+                  {isSavingGrowthRules ? "Saving..." : "Save growth rules"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
           <div className="flex justify-end">
             <Button type="submit" disabled={upsertBrandDna.isPending}>
               <Save className="w-4 h-4 mr-2" />
@@ -1370,7 +1539,16 @@ export default function BrandDna() {
               })}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground text-center py-6">No assets uploaded yet.</p>
+            <div className="rounded-lg border border-dashed bg-muted/20 px-4 py-8 text-center">
+              <ImageIcon className="mx-auto h-8 w-8 text-muted-foreground" />
+              <p className="mt-3 text-sm font-medium">No Brand Assets yet</p>
+              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                Import website images above or upload a logo, product photo, brochure, or sample post. Image Studio and campaign prompts can use these as brand references.
+              </p>
+              <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => assetInputRef.current?.click()}>
+                Upload first asset
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>

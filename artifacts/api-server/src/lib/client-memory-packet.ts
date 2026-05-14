@@ -74,6 +74,18 @@ export async function buildClientMemoryPacket(clientId: string) {
   const weakPosts = memoryEntries.filter((m) => memoryIncludes(m.key, m.value, ["weak", "did not work", "didn't work", "rejected", "too generic"]));
   const imageStyleLearnings = memoryEntries.filter((m) => memoryIncludes(m.key, m.value, ["image", "visual", "photo", "prompt", "style"]));
   const seoLearnings = memoryEntries.filter((m) => memoryIncludes(m.key, m.value, ["seo", "keyword", "blog", "competitor", "internal link"]));
+  const growthRuleEntries = memoryEntries.filter((m) => memoryIncludes(m.key, m.value, [
+    "content growth rule",
+    "default cta",
+    "whatsapp",
+    "website link",
+    "preferred hashtag",
+    "seo keyword",
+    "location keyword",
+    "service keyword",
+    "avoid phrase",
+    "platform cta",
+  ]));
 
   return {
     client: client
@@ -140,6 +152,17 @@ export async function buildClientMemoryPacket(clientId: string) {
       competitorAngles: seoLearnings.filter((m) => memoryIncludes(m.key, m.value, ["competitor"])),
       internalLinkIdeas: seoLearnings.filter((m) => memoryIncludes(m.key, m.value, ["internal link"])),
     },
+    growthRules: {
+      entries: growthRuleEntries,
+      websiteLinks: growthRuleEntries.filter((m) => memoryIncludes(m.key, m.value, ["website", "link"])),
+      whatsappNumbers: growthRuleEntries.filter((m) => memoryIncludes(m.key, m.value, ["whatsapp"])),
+      defaultCtas: growthRuleEntries.filter((m) => memoryIncludes(m.key, m.value, ["cta", "call to action"])),
+      preferredHashtags: growthRuleEntries.filter((m) => memoryIncludes(m.key, m.value, ["hashtag"])),
+      seoKeywords: growthRuleEntries.filter((m) => memoryIncludes(m.key, m.value, ["seo", "keyword"])),
+      locationServiceKeywords: growthRuleEntries.filter((m) => memoryIncludes(m.key, m.value, ["location", "service"])),
+      avoidWords: growthRuleEntries.filter((m) => memoryIncludes(m.key, m.value, ["avoid", "phrase", "word"])),
+      platformCtaRules: growthRuleEntries.filter((m) => memoryIncludes(m.key, m.value, ["platform", "instagram", "linkedin", "facebook", "twitter", "x", "blog"])),
+    },
     latestCampaigns,
     recentApprovedOrPublishedPosts: recentPosts,
     aiIdeas: {
@@ -181,6 +204,12 @@ Current chapter: ${packet.storyMemory.currentChapter ?? "Not specified"}`);
   }
   if (packet.memoryEntries.length) {
     lines.push(`## Saved Memory\n${packet.memoryEntries.map((m) => `- ${m.key}: ${m.value}`).join("\n")}`);
+  }
+  if (packet.growthRules.entries.length) {
+    lines.push(`## Content Growth Rules
+Use these when they fit naturally. Do not force links, WhatsApp, CTAs, hashtags, or keywords into every post.
+Platform guidance: Instagram can use CTA plus hashtags; LinkedIn should use a professional CTA and fewer hashtags; Facebook can use friendly CTA plus link/WhatsApp; X needs a short CTA; Blog should use SEO keywords and meta focus.
+${packet.growthRules.entries.map((m) => `- ${m.key}: ${m.value}`).join("\n")}`);
   }
   return lines.join("\n\n");
 }

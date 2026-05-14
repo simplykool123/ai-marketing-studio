@@ -26,6 +26,8 @@ import {
   Image as ImageIcon,
   AlertCircle,
   RefreshCw,
+  Radar,
+  Sparkles,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -385,6 +387,22 @@ export default function ClientDashboard() {
         button: "Open Publish Queue",
       };
     }
+    if (!dashboard.hasBrandDna) {
+      return {
+        title: "Complete Brand Setup",
+        detail: "Import the website or fill the basics so every idea, campaign, image, and report uses the right voice and audience.",
+        href: `/clients/${clientId}/brand-dna`,
+        button: "Open Brand Setup",
+      };
+    }
+    if (dashboard.brandAssetCount === 0 && dashboard.imageAssetCount === 0) {
+      return {
+        title: "Import brand assets",
+        detail: "Add a logo, product images, and website references so generated visuals feel like this client.",
+        href: `/clients/${clientId}/brand-dna`,
+        button: "Import assets",
+      };
+    }
     if (!dashboard.aiProviderConfigured) {
       return {
         title: "Configure AI provider",
@@ -399,6 +417,14 @@ export default function ClientDashboard() {
         detail: "AI-generated content is ready for your review. Approve to move to the publish queue.",
         href: `/clients/${clientId}/drafts?tab=pending`,
         button: "Open Review",
+      };
+    }
+    if (dashboard.totalPosts === 0) {
+      return {
+        title: "Research trends for this client",
+        detail: "Find current topics and brand-safe angles before generating the first campaign.",
+        href: `/clients/${clientId}/research`,
+        button: "Research trends",
       };
     }
     if (dashboard.draftCount > 0) {
@@ -526,7 +552,7 @@ export default function ClientDashboard() {
       <Card className="border-primary/30 bg-gradient-to-br from-primary/10 via-background to-background shadow-sm">
         <CardContent className="flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-primary">Next step</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">Suggested next step</p>
             <h2 className="text-2xl font-semibold mt-1">{nextStep.title}</h2>
             <p className="text-sm text-muted-foreground mt-1 max-w-2xl">{nextStep.detail}</p>
           </div>
@@ -538,6 +564,30 @@ export default function ClientDashboard() {
           </Link>
         </CardContent>
       </Card>
+
+      <div className="grid gap-3 md:grid-cols-4">
+        {[
+          { label: "Brand readiness", value: dashboard.hasBrandDna ? "Ready" : "Needs setup", href: `/clients/${clientId}/brand-dna`, icon: CheckCircle2 },
+          { label: "Trend opportunities", value: "Research now", href: `/clients/${clientId}/research`, icon: Radar },
+          { label: "Drafts needing review", value: String(dashboard.pendingApprovals), href: `/clients/${clientId}/drafts?tab=pending`, icon: FileText },
+          { label: "Quick campaign", value: "Generate", href: `/clients/${clientId}/campaigns/generate`, icon: Sparkles },
+        ].map((action) => {
+          const Icon = action.icon;
+          return (
+            <Link key={action.label} href={action.href}>
+              <Card className="group cursor-pointer hover:border-primary/35">
+                <CardContent className="flex items-center justify-between gap-3 p-4">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">{action.label}</p>
+                    <p className="mt-1 text-sm font-semibold">{action.value}</p>
+                  </div>
+                  <Icon className="h-5 w-5 text-primary transition-transform group-hover:scale-110" />
+                </CardContent>
+              </Card>
+            </Link>
+          );
+        })}
+      </div>
 
       <div className="grid gap-3 md:grid-cols-5">
         <PipelineStep label="Drafts" count={dashboard.draftCount} icon={FileText} />

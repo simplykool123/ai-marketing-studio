@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useLocation, useParams } from "wouter";
 import {
   Flag, Sparkles, Calendar, ChevronDown, ChevronRight,
   Newspaper, Mail, Image as ImageIcon, Video, List,
@@ -420,12 +420,14 @@ function CampaignDraftGrid({ drafts, clientId }: { drafts: CampaignDraft[]; clie
 
 export default function CampaignGenerator() {
   const { clientId } = useParams<{ clientId: string }>();
+  const [location] = useLocation();
   const { toast } = useToast();
+  const query = new URLSearchParams(location.split("?")[1] ?? "");
 
   const [form, setForm] = useState({
-    campaignName: "",
+    campaignName: query.get("campaignName") ?? "",
     goal: "awareness",
-    monthTheme: "",
+    monthTheme: query.get("theme") ?? "",
     storylineId: "none",
     platforms: ["instagram", "linkedin"] as string[],
     intensity: "standard",

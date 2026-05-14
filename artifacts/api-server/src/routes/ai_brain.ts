@@ -80,6 +80,7 @@ Today's date: ${today}
 - avoid_repeat_warning: set only when a recent post directly overlaps in topic
 - rationale must clearly say why the idea was suggested: based on storyline, based on brand DNA, based on past post gap, based on performance memory, or based on rejection memory
 - Vary formats: case study, behind-the-scenes, educational post, social proof, product spotlight, seasonal hook, thought leadership
+- Use Content Growth Rules from memory when useful: CTAs, website links, WhatsApp, hashtags, SEO/location/service keywords, and avoid phrases should guide ideas without making posts feel spammy.
 - confidence_score (0–100): your honest assessment of how well this idea fits the brand right now
 - Do NOT hallucinate trends or statistics
 - Do NOT suggest meme or joke content unless brand voice explicitly allows it
@@ -112,6 +113,7 @@ Generate 6 ideas only. Each idea must:
 - LinkedIn ideas must read as thought leadership, not promotional posts
 - Instagram ideas must lead with a visual story, not text-heavy content
 - Avoid ideas that are timely only (e.g. "Happy International X Day") unless they tie to brand values
+- Apply Content Growth Rules where relevant, especially CTA and keyword opportunities, but do not force links into every idea.
 
 Respond with ONLY valid JSON:
 ${RESPONSE_SHAPE}`;

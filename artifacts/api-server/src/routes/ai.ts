@@ -152,6 +152,8 @@ ${body.topic}
 ## Instructions
 - ${platformInstructions}
 - When Brand DNA is enabled, use brand tone, target audience, USP or differentiator, content pillars, brand values, current storyline if available, and recent post history if available.
+- Use any Content Growth Rules in memory only when they fit naturally: default CTA, website link, WhatsApp number, preferred hashtags, SEO/location/service keywords, and avoid phrases.
+- Platform-safe CTA rules: Instagram can use CTA plus hashtags; LinkedIn should use a professional CTA and fewer hashtags; Facebook can use friendly CTA plus link/WhatsApp; X/Twitter needs a short CTA; Blog should use SEO keywords and meta focus.
 - Include relevant hashtags only where they fit the platform
 - Keep each caption engaging and platform-appropriate
 - Include an image prompt per platform when the response shape asks for it

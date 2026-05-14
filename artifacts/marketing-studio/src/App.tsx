@@ -35,6 +35,7 @@ import MarketingCalendar from "@/pages/MarketingCalendar";
 import Reports from "@/pages/Reports";
 import TeamAccess from "@/pages/TeamAccess";
 import InviteAccept from "@/pages/InviteAccept";
+import TrendIntelligence from "@/pages/TrendIntelligence";
 
 const queryClient = new QueryClient();
 
@@ -187,7 +188,7 @@ function Router() {
         {() => <ProtectedClientRoute><AiBrainPage /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/research">
-        {() => <ProtectedClientRoute><PlaceholderPage title="Research Engine" /></ProtectedClientRoute>}
+        {() => <ProtectedClientRoute><TrendIntelligence /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/campaigns/generate">
         {() => <ProtectedClientRoute><CampaignGenerator /></ProtectedClientRoute>}

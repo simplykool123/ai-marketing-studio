@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useLocation, useParams } from "wouter";
 import {
   Image as ImageIcon,
   Sparkles,
@@ -63,10 +63,12 @@ async function fetchBrandAssets(clientId: string): Promise<BrandAsset[]> {
 
 export default function ImageStudio() {
   const { clientId } = useParams<{ clientId: string }>();
+  const [location] = useLocation();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const initialIdea = new URLSearchParams(location.split("?")[1] ?? "").get("idea") ?? "";
 
-  const [roughIdea, setRoughIdea] = useState("");
+  const [roughIdea, setRoughIdea] = useState(initialIdea);
   const [editInstruction, setEditInstruction] = useState("");
   const [caption, setCaption] = useState("");
   const [topic, setTopic] = useState("");

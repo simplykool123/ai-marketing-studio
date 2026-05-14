@@ -211,6 +211,8 @@ Generate exactly:
 - imagePrompts: 4 variations with distinct styles (photorealistic, illustration, bold typography, minimalist/clean)
 - videoConcepts: include hook (first 3 s), 5 scenes with visual + voiceover, subtitle style, CTA, recommended provider
 - schedule: distribute posts evenly across the campaign window; use real calendar dates (YYYY-MM-DD)
+- Apply Content Growth Rules from memory only when they fit naturally: CTA, website link, WhatsApp, SEO/location/service keywords, and hashtags should support the post, not make it spammy.
+- Platform-safe CTA rules: Instagram can use CTA plus hashtags; LinkedIn should use a professional CTA and fewer hashtags; Facebook can use friendly CTA plus link/WhatsApp; X needs a short CTA; Blog should use SEO keywords and meta focus.
 - Do NOT hallucinate facts about the brand
 
 Respond with ONLY valid JSON — no markdown fences:
