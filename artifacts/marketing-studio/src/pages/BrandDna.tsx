@@ -119,6 +119,9 @@ type WebsiteImageCandidate = {
   contentType?: string;
 };
 
+type ImportedAssetType = "logo" | "reference_image" | "product_image" | "hero_image";
+type ImageImportStatus = Record<string, { status: "saved" | "failed"; message: string }>;
+
 type WebsiteColorCandidate = {
   hex: string;
   count: number;
@@ -292,6 +295,10 @@ export default function BrandDna() {
   const [replaceFilledFields, setReplaceFilledFields] = useState(false);
   const [applySummary, setApplySummary] = useState<string | null>(null);
   const [isUsingExtractedLogo, setIsUsingExtractedLogo] = useState(false);
+  const [isImportingLogo, setIsImportingLogo] = useState(false);
+  const [selectedImageUrls, setSelectedImageUrls] = useState<string[]>([]);
+  const [imageImportStatus, setImageImportStatus] = useState<ImageImportStatus>({});
+  const [isImportingImages, setIsImportingImages] = useState(false);
   const [showBlockedFallback, setShowBlockedFallback] = useState(false);
   const [fallbackScreenshot, setFallbackScreenshot] = useState<File | null>(null);
   const [fallbackText, setFallbackText] = useState("");
@@ -449,6 +456,8 @@ export default function BrandDna() {
       setWebsiteAnalysis(data.analysis);
       setWebsiteAnalysisResult(data);
       setAnalysisSourceUrl(data.websiteUrl);
+      setSelectedImageUrls([]);
+      setImageImportStatus({});
       toast({
         title: "Website analysis ready",
         description: data.warnings?.length
@@ -496,6 +505,8 @@ export default function BrandDna() {
       setWebsiteAnalysis(data.analysis);
       setWebsiteAnalysisResult(data);
       setAnalysisSourceUrl(data.websiteUrl);
+      setSelectedImageUrls([]);
+      setImageImportStatus({});
       toast({
         title: "Fallback analysis ready",
         description: data.warnings?.length
@@ -615,6 +626,102 @@ export default function BrandDna() {
         },
       }
     );
+  };
+
+  const importBrandAssetUrl = async (image: WebsiteImageCandidate, assetType: ImportedAssetType) => {
+    if (!clientId) throw new Error("Missing client.");
+    const res = await fetch(`/api/clients/${clientId}/brand-assets/import-url`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        url: image.url,
+        assetType,
+        source: "brand_importer",
+        notes: [image.reason, image.alt, image.sourcePage ? `Source page: ${image.sourcePage}` : ""].filter(Boolean).join("\n"),
+      }),
+    });
+    const data = await res.json().catch(() => ({})) as { id?: string; fileUrl?: string; error?: string };
+    if (!res.ok) throw new Error(data.error ?? "Failed to import image.");
+    return data;
+  };
+
+  const handleImportLogoAsset = async (image: WebsiteImageCandidate) => {
+    if (!clientId) return;
+    setIsImportingLogo(true);
+    try {
+      const asset = await importBrandAssetUrl(image, "logo");
+      if (asset.fileUrl) {
+        await new Promise<void>((resolve, reject) => {
+          updateClient.mutate(
+            { clientId, data: { logoUrl: asset.fileUrl } as any },
+            {
+              onSuccess: () => resolve(),
+              onError: (err) => reject(err instanceof Error ? err : new Error("Could not update client logo.")),
+            }
+          );
+        });
+      }
+      setImageImportStatus((prev) => ({ ...prev, [image.url]: { status: "saved", message: "Saved to Brand Assets" } }));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: getListBrandAssetsQueryKey(clientId) }),
+        queryClient.refetchQueries({ queryKey: getListBrandAssetsQueryKey(clientId) }),
+        queryClient.invalidateQueries({ queryKey: getGetClientQueryKey(clientId) }),
+        queryClient.refetchQueries({ queryKey: getGetClientQueryKey(clientId) }),
+      ]);
+      toast({ title: "Logo imported", description: "Saved to Brand Assets and set as the client logo." });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not import logo.";
+      setImageImportStatus((prev) => ({ ...prev, [image.url]: { status: "failed", message } }));
+      toast({ title: "Logo import failed", description: message, variant: "destructive" });
+    } finally {
+      setIsImportingLogo(false);
+    }
+  };
+
+  const assetTypeForCandidate = (image: WebsiteImageCandidate): ImportedAssetType => {
+    const signal = `${image.reason} ${image.alt}`.toLowerCase();
+    if (signal.includes("hero") || signal.includes("background") || signal.includes("banner")) return "hero_image";
+    if (signal.includes("product")) return "product_image";
+    return "reference_image";
+  };
+
+  const toggleSelectedImage = (url: string, checked: boolean) => {
+    setSelectedImageUrls((current) => {
+      if (!checked) return current.filter((item) => item !== url);
+      if (current.includes(url) || current.length >= 5) return current;
+      return [...current, url];
+    });
+  };
+
+  const handleImportSelectedImages = async () => {
+    if (!clientId || !websiteAnalysisResult?.imageCandidates?.length) return;
+    const candidates = websiteAnalysisResult.imageCandidates.filter((image) => selectedImageUrls.includes(image.url)).slice(0, 5);
+    if (!candidates.length) return;
+    setIsImportingImages(true);
+    let saved = 0;
+    for (const image of candidates) {
+      try {
+        await importBrandAssetUrl(image, assetTypeForCandidate(image));
+        saved += 1;
+        setImageImportStatus((prev) => ({ ...prev, [image.url]: { status: "saved", message: "Saved to Brand Assets" } }));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Import failed.";
+        setImageImportStatus((prev) => ({ ...prev, [image.url]: { status: "failed", message } }));
+      }
+    }
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: getListBrandAssetsQueryKey(clientId) }),
+      queryClient.refetchQueries({ queryKey: getListBrandAssetsQueryKey(clientId) }),
+    ]);
+    setIsImportingImages(false);
+    toast({
+      title: saved ? `${saved} image${saved === 1 ? "" : "s"} imported` : "No images imported",
+      description: saved ? "Brand Assets has been refreshed." : "Check the per-image errors and try another candidate.",
+      variant: saved ? "default" : "destructive",
+    });
   };
 
   if (isLoading) {
@@ -788,15 +895,26 @@ export default function BrandDna() {
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Extracted logo candidate</p>
                       <p className="text-xs text-muted-foreground mt-1">{extractedLogo.reason}</p>
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={isUsingExtractedLogo}
-                      onClick={() => handleUseExtractedLogo(extractedLogo.url)}
-                    >
-                      {isUsingExtractedLogo ? "Applying..." : "Use logo URL"}
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={isUsingExtractedLogo || isImportingLogo}
+                        onClick={() => handleUseExtractedLogo(extractedLogo.url)}
+                      >
+                        {isUsingExtractedLogo ? "Applying..." : "Use logo URL"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={isImportingLogo || isUsingExtractedLogo || imageImportStatus[extractedLogo.url]?.status === "saved"}
+                        onClick={() => handleImportLogoAsset(extractedLogo)}
+                      >
+                        {isImportingLogo ? "Importing..." : imageImportStatus[extractedLogo.url]?.status === "saved" ? "Saved to Brand Assets" : "Import logo to Brand Assets"}
+                      </Button>
+                    </div>
                   </div>
                   <div className="mt-3 flex items-center gap-3">
                     <div className="h-16 w-24 overflow-hidden rounded-md border bg-white p-2">
@@ -810,6 +928,14 @@ export default function BrandDna() {
                     <div className="min-w-0">
                       <p className="truncate text-xs text-muted-foreground">{extractedLogo.url}</p>
                       <p className="text-[10px] text-muted-foreground">Saves a URL reference only. It does not upload a Brand Assets file.</p>
+                      {imageImportStatus[extractedLogo.url] && (
+                        <p className={cn(
+                          "mt-1 text-[10px]",
+                          imageImportStatus[extractedLogo.url].status === "saved" ? "text-emerald-700" : "text-destructive"
+                        )}>
+                          {imageImportStatus[extractedLogo.url].message}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -879,20 +1005,23 @@ export default function BrandDna() {
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Hero / brand images</p>
-                      <p className="text-xs text-muted-foreground">Reference only — not saved to Brand Assets yet.</p>
+                      <p className="text-xs text-muted-foreground">Select up to 5 images to save durable copies in Brand Assets. Unselected images remain reference only.</p>
                     </div>
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      disabled
-                      title="Image import to Brand Assets coming next."
+                      disabled={isImportingImages || selectedImageUrls.length === 0}
+                      onClick={handleImportSelectedImages}
                     >
-                      Import selected images to Brand Assets
+                      {isImportingImages ? "Importing..." : `Import selected images to Brand Assets${selectedImageUrls.length ? ` (${selectedImageUrls.length})` : ""}`}
                     </Button>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-                    {websiteAnalysisResult?.imageCandidates?.slice(0, 4).map((image) => (
+                    {websiteAnalysisResult?.imageCandidates?.slice(0, 8).map((image) => {
+                      const importStatus = imageImportStatus[image.url];
+                      const selected = selectedImageUrls.includes(image.url);
+                      return (
                       <div key={image.url} className="overflow-hidden rounded-md border bg-background">
                         <div className="aspect-square bg-muted">
                           <RemotePreviewImage
@@ -903,11 +1032,26 @@ export default function BrandDna() {
                           />
                         </div>
                         <div className="p-2">
+                          <label className="mb-2 flex items-center gap-2 text-[10px] font-medium">
+                            <Checkbox
+                              checked={selected || importStatus?.status === "saved"}
+                              disabled={importStatus?.status === "saved" || (!selected && selectedImageUrls.length >= 5)}
+                              onCheckedChange={(checked) => toggleSelectedImage(image.url, checked === true)}
+                            />
+                            {importStatus?.status === "saved" ? "Saved to Brand Assets" : "Select to import"}
+                          </label>
                           <p className="truncate text-[10px] font-medium">{image.reason}</p>
                           <p className="truncate text-[10px] text-muted-foreground">{image.alt || "No alt text"}</p>
+                          {!importStatus && <p className="mt-1 text-[10px] text-muted-foreground">Reference only — not saved yet.</p>}
+                          {importStatus && (
+                            <p className={cn("mt-1 text-[10px]", importStatus.status === "saved" ? "text-emerald-700" : "text-destructive")}>
+                              {importStatus.message}
+                            </p>
+                          )}
                         </div>
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 </div>
               )}
