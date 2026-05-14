@@ -62,11 +62,19 @@ async function ensureStorageBucketOnce(): Promise<void> {
     return;
   }
 
-  if (!bucket.public) {
+  const currentLimit = Number(bucket.file_size_limit ?? 0);
+  const currentMimeTypes = bucket.allowed_mime_types ?? [];
+  const nextMimeTypes = Array.from(new Set([...currentMimeTypes, ...STORAGE_MIME_TYPES]));
+  const needsUpdate =
+    !bucket.public ||
+    currentLimit < MAX_FILE_SIZE_BYTES ||
+    STORAGE_MIME_TYPES.some((mimeType) => !currentMimeTypes.includes(mimeType));
+
+  if (needsUpdate) {
     const { error: updateError } = await supabase.storage.updateBucket(BUCKET, {
       public: true,
-      fileSizeLimit: Math.max(Number(bucket.file_size_limit ?? 0), MAX_FILE_SIZE_BYTES),
-      allowedMimeTypes: Array.from(new Set([...(bucket.allowed_mime_types ?? []), ...STORAGE_MIME_TYPES])),
+      fileSizeLimit: Math.max(currentLimit, MAX_FILE_SIZE_BYTES),
+      allowedMimeTypes: nextMimeTypes,
     });
 
     if (updateError) {

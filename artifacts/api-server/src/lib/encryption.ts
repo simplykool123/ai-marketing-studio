@@ -4,11 +4,17 @@ const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12; // 96-bit IV for GCM
 
 function getKey(): Buffer {
-  const hex = process.env.TOKEN_ENCRYPTION_KEY;
-  if (!hex) throw new Error("TOKEN_ENCRYPTION_KEY is not configured.");
-  const buf = Buffer.from(hex, "hex");
-  if (buf.length !== 32) throw new Error("TOKEN_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes).");
-  return buf;
+  const raw = process.env.TOKEN_ENCRYPTION_KEY;
+  if (!raw) throw new Error("TOKEN_ENCRYPTION_KEY is not configured.");
+
+  const trimmed = raw.trim();
+  const hex = /^[a-f0-9]{64}$/i.test(trimmed) ? Buffer.from(trimmed, "hex") : null;
+  if (hex?.length === 32) return hex;
+
+  const base64 = Buffer.from(trimmed, "base64");
+  if (base64.length >= 32) return base64.subarray(0, 32);
+
+  throw new Error("TOKEN_ENCRYPTION_KEY must be a base64-encoded 32+ byte secret.");
 }
 
 /** Encrypts plaintext → "iv:authTag:ciphertext" (all hex) */
