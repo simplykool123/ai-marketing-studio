@@ -27,6 +27,7 @@ import {
   Video,
   Palette,
   BarChart3,
+  Users,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useState, useEffect, useRef } from "react";
@@ -90,6 +91,7 @@ export function Sidebar({ clientId }: { clientId?: string }) {
     { href: `/clients/${clientId}/queue`, label: "Publish Queue", icon: ListOrdered, help: "Approved posts wait here before publishing or exporting." },
     { href: `/clients/${clientId}/memory`, label: "AI Memory", icon: Database, help: "Long-term learning for this client." },
     { href: `/clients/${clientId}/reports`, label: "Reports", icon: BarChart3, help: "Client-facing summary and next steps." },
+    { href: `/clients/${clientId}/team`, label: "Team Access", icon: Users, help: "Invite people and manage workspace roles." },
   ] : [];
 
   const advancedSections: NavSection[] = clientId ? [

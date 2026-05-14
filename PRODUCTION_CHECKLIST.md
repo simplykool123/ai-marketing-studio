@@ -5,7 +5,7 @@ This checklist prepares the current MVP to run outside local development. It doe
 ## Current Readiness Summary
 
 - TypeScript app shape: Express API plus Vite React frontend.
-- Database status checked against the configured Supabase project: all 20 expected public tables are present.
+- Database status checked before Team Access V1: 20 expected public tables were present. Team Access adds `client_invites`; run schema push before using invites.
 - Storage status checked against the configured Supabase project: `post-images` and `brand-assets` both exist and are public.
 - Current uploads and imported brand assets use the `post-images` bucket. Create `brand-assets` as public anyway if keeping the existing setup docs and future bucket separation.
 - The frontend calls relative `/api/*` URLs. Production hosting must provide same-origin `/api` routing to the API server, or a future API-base configuration pass is required.
@@ -73,6 +73,7 @@ Expected tables:
 profiles
 clients
 client_users
+client_invites
 brand_dna
 brand_assets
 storylines
@@ -95,8 +96,8 @@ quality_checks
 Schema status from the checked Supabase project:
 
 ```text
-20 expected tables present
-0 expected tables missing
+20 expected tables present before Team Access V1
+client_invites added in code; run schema push to create it
 ```
 
 Before production:

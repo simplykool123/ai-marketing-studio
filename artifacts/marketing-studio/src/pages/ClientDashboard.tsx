@@ -24,7 +24,6 @@ import {
   BarChart3,
   BookOpen,
   Image as ImageIcon,
-  Circle,
   AlertCircle,
   RefreshCw,
 } from "lucide-react";
@@ -46,6 +45,9 @@ type EnhancedDashboard = {
   publishedCount: number;
   scheduledCount: number;
   campaignDraftCount: number;
+  brandAssetCount: number;
+  imageAssetCount: number;
+  artworkReadyCount: number;
   hasStoryline: boolean;
   activeStoryline: { id: string; title: string; narrative: string } | null;
   hasBrandDna: boolean;
@@ -305,40 +307,62 @@ export default function ClientDashboard() {
     href?: string;
     hint?: string;
     doneHint?: string;
+    detail?: string;
   }> = [
     {
-      label: "Brand Setup complete",
+      label: "Create or select client",
+      done: true,
+      href: "/",
+      doneHint: "Current workspace",
+      detail: "Choose the client workspace you want to set up.",
+    },
+    {
+      label: "Complete Brand Setup",
       done: dashboard.hasBrandDna,
       href: `/clients/${clientId}/brand-dna`,
+      hint: "Add voice, audience, colors, and goals",
+      doneHint: "Brand DNA saved",
+      detail: "Import the website or fill the brand basics so every draft has the right context.",
     },
     {
-      label: "AI provider configured",
-      done: dashboard.aiProviderConfigured,
-      href: "/settings",
-      hint: "Add API key in Settings",
-      doneHint: dashboard.aiProvider ? `${dashboard.aiProvider} ready` : "AI ready",
+      label: "Import logo and images",
+      done: Boolean((client as { logoUrl?: string | null }).logoUrl) || dashboard.brandAssetCount > 0 || dashboard.imageAssetCount > 0,
+      href: `/clients/${clientId}/brand-dna`,
+      hint: "Use Brand Importer or upload assets",
+      doneHint: "Assets available",
+      detail: "Save logo, palette, and useful website images before generating polished posts.",
     },
     {
-      label: "Storage configured",
-      done: dashboard.storageReady,
-      hint: dashboard.storageStatusMessage ?? "Supabase Storage needs developer/admin setup",
-      doneHint: dashboard.storageStatusMessage ?? "Uploads working",
+      label: "Generate first campaign or occasion draft",
+      done: dashboard.totalPosts > 0 || dashboard.campaignDraftCount > 0,
+      href: dashboard.hasBrandDna ? `/clients/${clientId}/campaigns/generate` : `/clients/${clientId}/brand-dna`,
+      hint: dashboard.hasBrandDna ? "Open Campaign Planner" : "Finish Brand Setup first",
+      doneHint: "Draft created",
+      detail: "Create the first useful content batch from Campaign Planner or Marketing Calendar.",
     },
     {
-      label: "First draft created",
-      done: dashboard.totalPosts > 0,
-      href: `/clients/${clientId}/create`,
+      label: "Review and edit artwork",
+      done: dashboard.artworkReadyCount > 0 || dashboard.pendingApprovals > 0 || dashboard.approvedCount > 0 || dashboard.publishedCount > 0,
+      href: `/clients/${clientId}/drafts`,
+      hint: "Open Review",
+      doneHint: dashboard.artworkReadyCount > 0 ? "Artwork attached" : "Reviewed",
+      detail: "Check captions, rewrite if needed, and save final artwork before approval.",
     },
     {
-      label: "First post approved",
-      done: dashboard.approvedCount > 0 || dashboard.publishedCount > 0,
+      label: "Approve to Publish Queue",
+      done: dashboard.approvedCount > 0 || dashboard.scheduledCount > 0 || dashboard.publishedCount > 0,
       href: `/clients/${clientId}/drafts?tab=ready`,
+      hint: "Approve one ready draft",
+      doneHint: "Queue has content",
+      detail: "Approve the finished draft so it moves into the Publish Queue.",
     },
   ];
   const setupComplete = setupSteps.filter((s) => s.done).length;
   const allDone = setupComplete === setupSteps.length;
-  const collapsedSetup = setupComplete >= 3;
+  const collapsedSetup = setupComplete >= 4;
   const visibleSetupSteps = collapsedSetup ? setupSteps.filter((step) => !step.done) : setupSteps;
+  const nextSetupStep = setupSteps.find((step) => !step.done) ?? setupSteps[setupSteps.length - 1]!;
+  const setupCtaLabel = setupComplete <= 1 ? "Start setup" : "Continue setup";
   const hasSocialAccount = !!dashboard.connectedAccounts?.length;
   const hasWorkflow = !!(client as { webhookUrl?: string | null }).webhookUrl;
   const readyPostCount = dashboard.approvedCount + dashboard.scheduledCount;
@@ -418,41 +442,6 @@ export default function ClientDashboard() {
       button: dashboard.campaignDraftCount === 0 ? "Open Campaign Planner" : "Create next post",
     };
   })();
-  const renderSetupStep = (step: (typeof setupSteps)[number]) => {
-    const row = (
-      <div className={cn(
-        "flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
-        step.done ? "opacity-60" : step.href ? "hover:bg-primary/10 cursor-pointer" : ""
-      )}>
-        {step.done ? (
-          <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
-        ) : (
-          <Circle className="w-4 h-4 text-muted-foreground shrink-0" />
-        )}
-        <span className={cn("text-sm flex-1", step.done && "line-through text-muted-foreground")}>
-          {step.label}
-        </span>
-        {step.done && step.doneHint && (
-          <span className="text-xs text-muted-foreground">{step.doneHint}</span>
-        )}
-        {!step.done && step.hint && (
-          <span className="text-xs text-muted-foreground">{step.hint}</span>
-        )}
-        {!step.done && step.href && (
-          <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-        )}
-      </div>
-    );
-
-    return step.href ? (
-      <Link key={step.label} href={step.href}>
-        {row}
-      </Link>
-    ) : (
-      <div key={step.label}>{row}</div>
-    );
-  };
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -466,6 +455,73 @@ export default function ClientDashboard() {
           <StatusPill ok={publishingReady} label={publishingReady ? "Destination ready" : "Export/manual only"} />
         </div>
       </div>
+
+      {!allDone && (
+        <Card className="border-primary/25 bg-primary/5 shadow-sm">
+          <CardContent className="p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-primary">First-time setup</p>
+                <h2 className="mt-1 text-xl font-semibold">Get this client ready to use</h2>
+                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                  Follow the core flow once: brand, assets, first draft, review, then queue.
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="bg-background">
+                    {setupComplete} / {setupSteps.length} complete
+                  </Badge>
+                  {collapsedSetup && (
+                    <span className="text-xs text-muted-foreground">Mostly complete. Showing remaining steps only.</span>
+                  )}
+                </div>
+              </div>
+              <Link href={nextSetupStep.href ?? `/clients/${clientId}`}>
+                <Button className="gap-2 lg:min-w-44">
+                  {setupCtaLabel}
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+              </Link>
+            </div>
+            <div className="mt-4 grid gap-2 lg:grid-cols-2">
+              {visibleSetupSteps.map((step, index) => {
+                const stepNumber = setupSteps.indexOf(step) + 1;
+                const row = (
+                  <div className={cn(
+                    "flex min-h-20 gap-3 rounded-lg border bg-background p-3 transition-colors",
+                    step.done ? "opacity-70" : step.href ? "hover:border-primary/40 hover:bg-primary/5 cursor-pointer" : ""
+                  )}>
+                    <div className={cn(
+                      "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold",
+                      step.done ? "border-primary bg-primary text-primary-foreground" : "border-border bg-muted text-muted-foreground"
+                    )}>
+                      {step.done ? <CheckCircle2 className="w-4 h-4" /> : stepNumber}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className={cn("text-sm font-semibold", step.done && "text-muted-foreground")}>{step.label}</p>
+                        {index === 0 && !step.done && (
+                          <Badge variant="secondary" className="text-[10px]">Next</Badge>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{step.detail}</p>
+                      <p className={cn("mt-1 text-xs", step.done ? "text-primary" : "text-amber-700")}>
+                        {step.done ? step.doneHint ?? "Done" : step.hint ?? "Not complete yet"}
+                      </p>
+                    </div>
+                    {!step.done && step.href && <ArrowRight className="mt-1 w-4 h-4 shrink-0 text-muted-foreground" />}
+                  </div>
+                );
+
+                return step.href ? (
+                  <Link key={step.label} href={step.href}>{row}</Link>
+                ) : (
+                  <div key={step.label}>{row}</div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="border-primary/30 bg-gradient-to-br from-primary/10 via-background to-background shadow-sm">
         <CardContent className="flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between">
@@ -566,30 +622,6 @@ export default function ClientDashboard() {
           )}
         </CardContent>
       </Card>
-
-
-      {/* Setup checklist */}
-      {!allDone && (
-        <Card>
-          <CardHeader className="py-3">
-            <CardTitle className="text-base flex items-center justify-between">
-              <span className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-primary" />
-                Getting Started
-              </span>
-              <span className="text-sm font-normal text-muted-foreground">
-                {setupComplete} / {setupSteps.length} complete{collapsedSetup ? " · showing remaining" : ""}
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0 pb-3">
-            <div className="grid gap-1 md:grid-cols-2">
-              {visibleSetupSteps.map(renderSetupStep)}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
 
       {/* Today + Upcoming Schedule + Active Storyline */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">

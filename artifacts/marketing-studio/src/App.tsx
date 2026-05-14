@@ -33,6 +33,8 @@ import ImageStudio from "@/pages/ImageStudio";
 import VideoStudio from "@/pages/VideoStudio";
 import MarketingCalendar from "@/pages/MarketingCalendar";
 import Reports from "@/pages/Reports";
+import TeamAccess from "@/pages/TeamAccess";
+import InviteAccept from "@/pages/InviteAccept";
 
 const queryClient = new QueryClient();
 
@@ -123,6 +125,14 @@ function Router() {
         )}
       </Route>
 
+      <Route path="/invites/:token">
+        {() => (
+          <ProtectedRoute>
+            <Layout><InviteAccept /></Layout>
+          </ProtectedRoute>
+        )}
+      </Route>
+
       <Route path="/clients/:clientId">
         {() => <ProtectedClientRoute><ClientDashboard /></ProtectedClientRoute>}
       </Route>
@@ -152,6 +162,9 @@ function Router() {
       </Route>
       <Route path="/clients/:clientId/reports">
         {() => <ProtectedClientRoute><Reports /></ProtectedClientRoute>}
+      </Route>
+      <Route path="/clients/:clientId/team">
+        {() => <ProtectedClientRoute><TeamAccess /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/campaigns">
         {() => <ProtectedClientRoute><CampaignPlanner /></ProtectedClientRoute>}

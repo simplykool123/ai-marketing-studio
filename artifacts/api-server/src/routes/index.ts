@@ -30,6 +30,7 @@ import analyticsRouter from "./analytics.js";
 import socialIntelligenceRouter from "./social_intelligence.js";
 import reportsRouter from "./reports.js";
 import storageArchiveRouter from "./storage_archive.js";
+import teamRouter from "./team.js";
 import { requireAuth, requireClientAccess } from "../middleware/auth.js";
 
 const router: IRouter = Router();
@@ -39,6 +40,7 @@ router.use(oauthRouter);
 router.use(healthRouter);
 
 router.use(requireAuth);
+router.use(teamRouter);
 router.use("/clients/:clientId", requireClientAccess());
 
 router.use(settingsRouter);

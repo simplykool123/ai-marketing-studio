@@ -151,7 +151,7 @@ pnpm --filter @workspace/db run push
 This creates all tables:
 `clients`, `brand_dna`, `brand_assets`, `storylines`, `posts`, `images`,
 `content_memory`, `user_settings`, `campaigns`, `social_accounts`,
-`posting_logs`, `posting_rules`
+`posting_logs`, `posting_rules`, `client_users`, `client_invites`
 
 ---
 
