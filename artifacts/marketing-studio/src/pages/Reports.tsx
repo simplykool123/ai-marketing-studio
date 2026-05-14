@@ -62,12 +62,15 @@ type ClientReport = {
 };
 
 async function fetchReport(clientId: string, period: ReportPeriod, startDate: string, endDate: string): Promise<ClientReport> {
+  const token = localStorage.getItem("ams_token");
   const params = new URLSearchParams({ period });
   if (period === "custom") {
     if (startDate) params.set("startDate", startDate);
     if (endDate) params.set("endDate", endDate);
   }
-  const res = await fetch(`${BASE}/api/clients/${clientId}/reports/summary?${params.toString()}`);
+  const res = await fetch(`${BASE}/api/clients/${clientId}/reports/summary?${params.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
   if (!res.ok) throw new Error("Failed to build report");
   return res.json();
 }
