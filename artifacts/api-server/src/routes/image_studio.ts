@@ -70,6 +70,12 @@ function aspectRatioToSize(aspectRatio?: string): "1024x1024" | "1792x1024" | "1
   return "1024x1024";
 }
 
+function aspectRatioToEditSize(aspectRatio?: string): "1024x1024" | "1536x1024" | "1024x1536" {
+  if (aspectRatio === "16:9") return "1536x1024";
+  if (aspectRatio === "9:16" || aspectRatio === "4:5") return "1024x1536";
+  return "1024x1024";
+}
+
 function safeJson<T>(raw: string): T | null {
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (!jsonMatch) return null;
@@ -193,7 +199,7 @@ async function editOpenAiImage(params: {
 }): Promise<{ durableUrl: string; model: string; size: string }> {
   const { key } = await resolveApiKey("openai", params.userId);
   const openai = new OpenAI({ apiKey: key });
-  const size = aspectRatioToSize(params.aspectRatio);
+  const size = aspectRatioToEditSize(params.aspectRatio);
   const image = await toFile(params.file.buffer, params.file.originalname || "reference.png", {
     type: params.file.mimetype || "image/png",
   });

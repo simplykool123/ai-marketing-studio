@@ -89,7 +89,9 @@ export default function ImageStudio() {
 
   const selectedResult = results.find((result) => result.id === selectedResultId) ?? results[0] ?? null;
   const selectedAssetArray = Array.from(selectedAssetIds);
-  const workingPrompt = prepared?.finalPrompt || roughIdea;
+  const workingPrompt = prepared
+    ? `${prepared.finalPrompt}\n\nAvoid: ${prepared.negativePrompt}\nComposition: ${prepared.compositionNotes}\nText guidance: ${prepared.textRecommendation}`
+    : roughIdea;
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
