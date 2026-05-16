@@ -26,8 +26,8 @@ import {
   Image as ImageIcon,
   AlertCircle,
   RefreshCw,
-  Radar,
-  Sparkles,
+  Brain,
+  Wand2,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -565,34 +565,61 @@ export default function ClientDashboard() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-3 md:grid-cols-4">
-        {[
-          { label: "Brand readiness", value: dashboard.hasBrandDna ? "Ready" : "Needs setup", href: `/clients/${clientId}/brand-dna`, icon: CheckCircle2 },
-          { label: "Trend opportunities", value: "Research now", href: `/clients/${clientId}/research`, icon: Radar },
-          { label: "Drafts needing review", value: String(dashboard.pendingApprovals), href: `/clients/${clientId}/drafts?tab=pending`, icon: FileText },
-          { label: "Quick campaign", value: "Generate", href: `/clients/${clientId}/campaigns/generate`, icon: Sparkles },
-        ].map((action) => {
-          const Icon = action.icon;
-          return (
-            <Link key={action.label} href={action.href}>
-              <Card className="group cursor-pointer hover:border-primary/35">
-                <CardContent className="flex items-center justify-between gap-3 p-4">
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground">{action.label}</p>
-                    <p className="mt-1 text-sm font-semibold">{action.value}</p>
-                  </div>
-                  <Icon className="h-5 w-5 text-primary transition-transform group-hover:scale-110" />
-                </CardContent>
-              </Card>
-            </Link>
-          );
-        })}
+      {/* Quick-start cards */}
+      <div className="grid gap-3 md:grid-cols-3">
+        <Link href={`/clients/${clientId}/creative-studio`}>
+          <Card className="group cursor-pointer hover:border-primary/40 hover:shadow-sm transition-all h-full">
+            <CardContent className="p-5 flex items-start gap-4">
+              <div className="w-10 h-10 rounded-xl bg-violet-100 flex items-center justify-center shrink-0">
+                <Brain className="w-5 h-5 text-violet-600" />
+              </div>
+              <div>
+                <p className="font-semibold text-sm">Generate Growth Brief</p>
+                <p className="text-xs text-muted-foreground mt-0.5">AI analysis of what to create this week for better reach</p>
+              </div>
+              <ArrowRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-primary shrink-0 mt-0.5 ml-auto transition-colors" />
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href={`/clients/${clientId}/creative-studio`}>
+          <Card className="group cursor-pointer hover:border-primary/40 hover:shadow-sm transition-all h-full">
+            <CardContent className="p-5 flex items-start gap-4">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                <Wand2 className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <p className="font-semibold text-sm">Create Content</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Campaign, post, carousel, reel, or blog — all in one place</p>
+              </div>
+              <ArrowRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-primary shrink-0 mt-0.5 ml-auto transition-colors" />
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href={`/clients/${clientId}/drafts?tab=pending`}>
+          <Card className={cn("group cursor-pointer hover:border-primary/40 hover:shadow-sm transition-all h-full", dashboard.pendingApprovals > 0 && "border-amber-200 bg-amber-50/30")}>
+            <CardContent className="p-5 flex items-start gap-4">
+              <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0", dashboard.pendingApprovals > 0 ? "bg-amber-100" : "bg-muted")}>
+                <CheckCircle2 className={cn("w-5 h-5", dashboard.pendingApprovals > 0 ? "text-amber-600" : "text-muted-foreground")} />
+              </div>
+              <div>
+                <p className="font-semibold text-sm">Review Pending Drafts</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {dashboard.pendingApprovals > 0
+                    ? <span className="text-amber-700 font-medium">{dashboard.pendingApprovals} draft{dashboard.pendingApprovals === 1 ? "" : "s"} waiting for approval</span>
+                    : "No drafts pending — you're all caught up"}
+                </p>
+              </div>
+              <ArrowRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-primary shrink-0 mt-0.5 ml-auto transition-colors" />
+            </CardContent>
+          </Card>
+        </Link>
       </div>
 
+      {/* Content pipeline strip */}
       <div className="grid gap-3 md:grid-cols-5">
         <PipelineStep label="Drafts" count={dashboard.draftCount} icon={FileText} />
-        <PipelineStep label="Review" count={dashboard.pendingApprovals} icon={CheckCircle2} />
-        <PipelineStep label="Ready" count={dashboard.approvedCount} icon={Send} />
+        <PipelineStep label="Pending Review" count={dashboard.pendingApprovals} icon={CheckCircle2} />
+        <PipelineStep label="Approved" count={dashboard.approvedCount} icon={Send} />
         <PipelineStep label="Scheduled" count={dashboard.scheduledCount} icon={Clock} />
         <PipelineStep label="Published" count={dashboard.publishedCount} icon={Globe} />
       </div>

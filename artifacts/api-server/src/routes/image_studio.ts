@@ -33,6 +33,7 @@ import { logger } from "../lib/logger.js";
 import { persistRemoteImageUrl } from "../lib/durable-image-storage.js";
 import { uploadToSupabase } from "./upload.js";
 import OpenAI, { toFile } from "openai";
+import { generateImageWithProvider, type ImageProvider } from "../lib/image-provider.js";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -123,6 +124,7 @@ async function createImageAssetPost(input: {
   platform?: string;
   metadata?: Record<string, unknown>;
 }) {
+  const provider = typeof input.metadata?.provider === "string" ? input.metadata.provider : "openai";
   const [post] = await db
     .insert(postsTable)
     .values({
@@ -130,7 +132,7 @@ async function createImageAssetPost(input: {
       contentType: input.contentType ?? "image_asset",
       contentSchema: {
         prompt: input.prompt,
-        provider: "openai",
+        provider,
         model: input.metadata?.model ?? "dall-e-3",
         imageUrl: input.imageUrl,
         providerImageUrl: input.providerImageUrl ?? null,
@@ -158,7 +160,7 @@ async function createImageAssetPost(input: {
     postId: post.id,
     url: input.imageUrl,
     originalImageUrl: input.imageUrl,
-    provider: "openai",
+    provider,
     status: "selected",
     type: "generated",
     prompt: input.prompt,
@@ -188,6 +190,33 @@ async function generateOpenAiImage(params: {
   if (!providerUrl) throw new Error("OpenAI returned no image URL");
   const persisted = await persistRemoteImageUrl(providerUrl, params.clientId, params.filenamePrefix);
   return { durableUrl: persisted.durableUrl, providerUrl, model: "dall-e-3", size };
+}
+
+async function generateRoutedImage(params: {
+  userId?: string;
+  clientId: string;
+  prompt: string;
+  aspectRatio?: string;
+  filenamePrefix: string;
+  provider?: ImageProvider | "auto";
+  size?: "1024x1024" | "1792x1024" | "1024x1792";
+}): Promise<{ durableUrl: string; providerUrl: string; model: string; size: string; provider: ImageProvider; fallbackUsed: boolean }> {
+  const generated = await generateImageWithProvider({
+    prompt: params.prompt,
+    userId: params.userId,
+    provider: params.provider,
+    aspectRatio: params.aspectRatio,
+    size: params.size,
+  });
+  const persisted = await persistRemoteImageUrl(generated.providerUrl, params.clientId, params.filenamePrefix);
+  return {
+    durableUrl: persisted.durableUrl,
+    providerUrl: generated.providerUrl,
+    model: generated.model,
+    provider: generated.provider,
+    fallbackUsed: generated.fallbackUsed,
+    size: params.size ?? aspectRatioToSize(params.aspectRatio),
+  };
 }
 
 async function editOpenAiImage(params: {
@@ -350,6 +379,7 @@ router.post(
       assetIds = [],
       campaignId,
       storylineId,
+      imageProvider = "auto",
     } = req.body as {
       topic?: string;
       qualityMode?: QualityMode;
@@ -358,6 +388,7 @@ router.post(
       assetIds?: string[];
       campaignId?: string;
       storylineId?: string;
+      imageProvider?: ImageProvider | "auto";
     };
 
     if (!topic?.trim()) {
@@ -395,12 +426,13 @@ router.post(
       let previewProviderUrl: string | null = null;
       if (generateFirst && gen.variations?.[0]) {
         try {
-          const generated = await generateOpenAiImage({
+          const generated = await generateRoutedImage({
             userId: req.userId,
             clientId,
             prompt: gen.variations[0].prompt,
             aspectRatio,
             filenamePrefix: "image-studio-preview",
+            provider: imageProvider,
           });
           previewProviderUrl = generated.providerUrl;
           previewImageUrl = generated.durableUrl;
@@ -501,6 +533,7 @@ router.post(
       topic,
       campaignId,
       storylineId,
+      imageProvider = "auto",
     } = req.body as {
       prompt?: string;
       style?: string;
@@ -510,6 +543,7 @@ router.post(
       topic?: string;
       campaignId?: string;
       storylineId?: string;
+      imageProvider?: ImageProvider | "auto";
     };
 
     if (!prompt?.trim()) {
@@ -530,12 +564,14 @@ router.post(
 ${brandVisualContext(formatClientMemoryPacket(packet), assetUrls)}
 
 Aspect ratio: ${aspectRatio}.`;
-      const generated = await generateOpenAiImage({
+      const generated = await generateRoutedImage({
         userId: req.userId,
         clientId,
         prompt: fullPrompt,
         aspectRatio,
         filenamePrefix: "image-studio",
+        provider: imageProvider,
+        size: validSize,
       });
 
       const post = await createImageAssetPost({
@@ -549,11 +585,12 @@ Aspect ratio: ${aspectRatio}.`;
         size: validSize,
         metadata: {
           route: "image_studio.generate_image",
-          provider: "openai",
+          provider: generated.provider,
           model: generated.model,
           size: generated.size,
           imageStorage: "supabase",
           providerImageUrl: generated.providerUrl,
+          fallbackUsed: generated.fallbackUsed,
           styleMemoryUsed: packet.imageStyleMemory,
           selectedBrandAssetUrls: assetUrls,
           aspectRatio,
@@ -562,10 +599,10 @@ Aspect ratio: ${aspectRatio}.`;
       });
 
       logger.info({ clientId }, "Image Studio: image generated");
-      res.json({ post, imageUrl: generated.durableUrl, providerImageUrl: generated.providerUrl, prompt: fullPrompt, style });
+      res.json({ post, imageUrl: generated.durableUrl, providerImageUrl: generated.providerUrl, prompt: fullPrompt, style, provider: generated.provider, model: generated.model, fallbackUsed: generated.fallbackUsed });
     } catch (err) {
       const { status, message } = toAiErrorResponse(
-        err, "Failed to generate image. Check your OpenAI API key in Settings."
+        err, "Failed to generate image. Add key in Settings → AI Keys."
       );
       logger.error({ error: safeErrorMessage(err) }, "Image Studio generate-image error");
       res.status(status).json({ error: message });
@@ -648,12 +685,14 @@ router.post(
       count = 3,
       aspectRatio = "1:1",
       topic = "Image variations",
+      imageProvider = "auto",
     } = req.body as {
       prompt?: string;
       sourceImageUrl?: string;
       count?: number;
       aspectRatio?: string;
       topic?: string;
+      imageProvider?: ImageProvider | "auto";
     };
     if (!prompt?.trim() && !sourceImageUrl) {
       res.status(400).json({ error: "prompt or sourceImageUrl is required" });
@@ -672,12 +711,13 @@ Variation ${i + 1}: change composition, lighting, crop, background styling, and 
 ${sourceImageUrl ? `Reference image URL: ${sourceImageUrl}` : ""}
 
 ${context}`;
-        const generated = await generateOpenAiImage({
+        const generated = await generateRoutedImage({
           userId: req.userId,
           clientId,
           prompt: variationPrompt,
           aspectRatio,
           filenamePrefix: `image-variation-${i + 1}`,
+          provider: imageProvider,
         });
         const post = await createImageAssetPost({
           clientId,
@@ -690,21 +730,22 @@ ${context}`;
           size: generated.size,
           metadata: {
             route: "image_studio.variations",
-            provider: "openai",
+            provider: generated.provider,
             model: generated.model,
             size: generated.size,
+            fallbackUsed: generated.fallbackUsed,
             sourceImageUrl: sourceImageUrl ?? null,
             aspectRatio,
             variation: i + 1,
             notes: "Variation generated in Image Studio",
           },
         });
-        outputs.push({ post, imageUrl: generated.durableUrl, prompt: variationPrompt, variation: i + 1 });
+        outputs.push({ post, imageUrl: generated.durableUrl, prompt: variationPrompt, variation: i + 1, provider: generated.provider, model: generated.model });
       }
 
       res.json({ variations: outputs });
     } catch (err) {
-      const { status, message } = toAiErrorResponse(err, "Failed to create image variations. Check your OpenAI key in Settings.");
+      const { status, message } = toAiErrorResponse(err, "Failed to create image variations. Add key in Settings → AI Keys.");
       logger.error({ clientId, error: safeErrorMessage(err) }, "Image Studio variations error");
       res.status(status).json({ error: message });
     }

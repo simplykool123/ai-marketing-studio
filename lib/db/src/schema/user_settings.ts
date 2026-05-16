@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -9,6 +9,7 @@ export const userSettingsTable = pgTable("user_settings", {
   aiModel: text("ai_model").notNull().default("claude-opus-4-5"),
   imageProvider: text("image_provider").notNull().default("openai"),
   imageModel: text("image_model").notNull().default("dall-e-3"),
+  providerControls: jsonb("provider_controls"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

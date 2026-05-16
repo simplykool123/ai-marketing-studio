@@ -27,7 +27,7 @@ import { eq, and } from "drizzle-orm";
 import { buildClientMemoryPacket, formatClientMemoryPacket } from "../lib/client-memory-packet.js";
 import {
   aiErrorCategory,
-  generateTextWithProvider,
+  generateTextWithFallback,
   resolveProviderAndModel,
   toAiErrorResponse,
   safeErrorMessage,
@@ -151,6 +151,56 @@ interface GeneratedCampaign {
   schedule: ScheduleEntry[];
 }
 
+function skillIdForCampaignDraft(contentType: string, platform?: string): string | null {
+  if (contentType === "social_post") return "social_post_creator";
+  if (contentType === "carousel") return "instagram_carousel_builder";
+  if (contentType === "blog") return "seo_blog_writer";
+  if (contentType === "video_script" || platform === "instagram_reels") return "short_video_reel_script";
+  return null;
+}
+
+function buildCampaignGenerationMetadata(input: {
+  route: string;
+  provider: string;
+  requestedProvider: string;
+  model: string;
+  fallbackUsed: boolean;
+  qualityMode: string;
+  campaignOutputId: string;
+  campaignId: string | null;
+  campaignName: string;
+  goal: string;
+  monthTheme: string | null;
+  intensity: string;
+  startDate: string | null;
+  endDate: string | null;
+  originalInputPayload: Record<string, unknown>;
+}) {
+  return {
+    route: input.route,
+    provider: input.provider,
+    requestedProvider: input.requestedProvider,
+    model: input.model,
+    fallbackUsed: input.fallbackUsed,
+    aiMode: input.qualityMode,
+    qualityMode: input.qualityMode,
+    campaignOutputId: input.campaignOutputId,
+    campaignId: input.campaignId,
+    campaignName: input.campaignName,
+    goal: input.goal,
+    monthTheme: input.monthTheme,
+    intensity: input.intensity,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    originalInputPayload: input.originalInputPayload,
+    retry: {
+      enabled: true,
+      sourceRoute: input.route,
+      strategy: "skill_from_campaign_draft",
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Prompt builder
 // ---------------------------------------------------------------------------
@@ -213,6 +263,7 @@ Generate exactly:
 - schedule: distribute posts evenly across the campaign window; use real calendar dates (YYYY-MM-DD)
 - Apply Content Growth Rules from memory only when they fit naturally: CTA, website link, WhatsApp, SEO/location/service keywords, and hashtags should support the post, not make it spammy.
 - Platform-safe CTA rules: Instagram can use CTA plus hashtags; LinkedIn should use a professional CTA and fewer hashtags; Facebook can use friendly CTA plus link/WhatsApp; X needs a short CTA; Blog should use SEO keywords and meta focus.
+- Caption structure by platform: Instagram hook, short value body, CTA, hashtags; LinkedIn professional hook, useful insight, soft CTA, fewer hashtags; Facebook friendly caption with CTA/link/WhatsApp if useful; X short hook and concise CTA; Blog intro SEO keyword focus and readable meta-style angle.
 - Do NOT hallucinate facts about the brand
 
 Respond with ONLY valid JSON — no markdown fences:
@@ -363,10 +414,10 @@ router.post(
         today,
       });
 
-      const raw = await generateTextWithProvider(provider, model, prompt, 7000, req.userId);
+      const { text: raw, usedProvider, usedModel, fallbackUsed } = await generateTextWithFallback(provider, model, prompt, 7000, req.userId);
 
       logger.info(
-        { provider, model, clientId },
+        { provider: usedProvider, requestedProvider: provider, model: usedModel, fallbackUsed, clientId },
         "Campaign generate: AI complete"
       );
 
@@ -374,12 +425,24 @@ router.post(
       if (!jsonMatch) throw new Error("AI returned no JSON");
       const gen = JSON.parse(jsonMatch[0]) as GeneratedCampaign;
 
-      const generationMetadata = {
+      const originalInputPayload = {
+        campaignName,
+        goal,
+        monthTheme: monthTheme || "",
+        platforms,
+        intensity,
+        qualityMode,
+        startDate: startDate ?? null,
+        endDate: endDate ?? null,
+        storylineId: storylineId ?? null,
+      };
+
+      const generationMetadata = buildCampaignGenerationMetadata({
         route: "campaign_generate.generate",
-        provider,
+        provider: usedProvider,
         requestedProvider: provider,
-        model,
-        fallbackUsed: false,
+        model: usedModel,
+        fallbackUsed,
         qualityMode,
         campaignOutputId: outputRecord.id,
         campaignId: effectiveCampaignId,
@@ -389,7 +452,8 @@ router.post(
         intensity,
         startDate: startDate ?? null,
         endDate: endDate ?? null,
-      };
+        originalInputPayload,
+      });
 
       const scheduleFor = (contentType: string, topic: string, platform?: string) =>
         (gen.schedule ?? []).find((entry) =>
@@ -401,7 +465,8 @@ router.post(
       // ── Persist social post drafts ───────────────────────────────────────
       // TODO(skill-migration): for LinkedIn posts use generateLinkedInPostWithSkill();
       // for Instagram posts use generateInstagramPostWithSkill() — see helper stubs above.
-      const postInserts = (gen.socialPosts ?? []).map((p) => ({
+      const selectedSocialPosts = (gen.socialPosts ?? []).slice(0, 3);
+      const postInserts = selectedSocialPosts.map((p) => ({
         clientId,
         campaignId:       effectiveCampaignId,
         storylineId:      storylineId ?? null,
@@ -419,16 +484,69 @@ router.post(
         status:           "draft"  as const,
         generationStatus: "ready"  as const,
         imagePrompt:      p.imagePrompt ?? null,
-        generationMetadata,
+        skillId:          skillIdForCampaignDraft("social_post", p.platform),
+        generationMetadata: {
+          ...generationMetadata,
+          campaignItemType: "social_post",
+          topic: p.topic ?? "Untitled post",
+          platform: p.platform ?? "instagram",
+          format: "social_post",
+        },
       }));
       const createdPosts = postInserts.length
         ? await db.insert(postsTable).values(postInserts).returning()
         : [];
 
+      const carouselSource = selectedSocialPosts[0];
+      const carouselInserts = carouselSource ? [{
+        clientId,
+        campaignId:       effectiveCampaignId,
+        storylineId:      storylineId ?? null,
+        contentType:      "carousel",
+        contentSchema: {
+          campaignName,
+          campaignGoal: goal,
+          coverHeadline: carouselSource.topic,
+          slides: [
+            { title: carouselSource.topic, body: carouselSource.captionAngle },
+            { title: "Why it matters now", body: monthTheme || goal },
+            { title: "What to do next", body: "Turn the campaign insight into a practical audience action." },
+            { title: "Proof point", body: "Use client examples, testimonials, or recent market signals." },
+            { title: "CTA", body: "Save this and contact the team when ready." },
+          ],
+          visualDirection: carouselSource.imagePrompt,
+          schedule: scheduleFor("carousel", carouselSource.topic, carouselSource.platform),
+        },
+        contentSchemaVersion: 1,
+        topic:            `${campaignName}: carousel`,
+        caption:          carouselSource.captionAngle ?? "",
+        hashtags:         "",
+        platform:         carouselSource.platform ?? "instagram",
+        postType:         "social" as const,
+        status:           "draft" as const,
+        generationStatus: "ready" as const,
+        imagePrompt:      carouselSource.imagePrompt ?? null,
+        skillId:          skillIdForCampaignDraft("carousel", carouselSource.platform),
+        generationMetadata: {
+          ...generationMetadata,
+          campaignItemType: "carousel",
+        },
+      }] : [];
+      const createdCarousels = carouselInserts.length
+        ? await db.insert(postsTable).values(carouselInserts).returning()
+        : [];
+
       // ── Persist blog drafts ──────────────────────────────────────────────
       // TODO(skill-migration): replace with generateBlogDraftWithSkill() per outline
       // to get qualityScore + qualityReport + quality_checks row per blog draft.
-      const blogInserts = (gen.blogOutlines ?? []).map((b) => ({
+      const fallbackBlog: BlogOutline = {
+        seoTitle: `${campaignName}: ${monthTheme || goal}`,
+        metaDescription: `A practical article for ${campaignName} based on ${monthTheme || goal}.`,
+        slug: campaignName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "campaign-article",
+        sections: ["Why this matters now", "What the audience should know", "How the brand helps", "Next steps"],
+        faq: [],
+      };
+      const blogInserts = ((gen.blogOutlines?.length ? gen.blogOutlines : [fallbackBlog])).slice(0, 1).map((b) => ({
         clientId,
         campaignId:       effectiveCampaignId,
         storylineId:      storylineId ?? null,
@@ -447,14 +565,21 @@ router.post(
         postType:         "blog" as const,
         status:           "draft" as const,
         generationStatus: "ready" as const,
-        generationMetadata,
+        skillId:          skillIdForCampaignDraft("blog", "blog"),
+        generationMetadata: {
+          ...generationMetadata,
+          campaignItemType: "blog",
+          topic: b.seoTitle ?? "Blog Post",
+          platform: "blog",
+          format: "blog",
+        },
       }));
       const createdBlogs = blogInserts.length
         ? await db.insert(postsTable).values(blogInserts).returning()
         : [];
 
       // ── Persist newsletter drafts ────────────────────────────────────────
-      const newsletterInserts = (gen.newsletterOutlines ?? []).map((n) => ({
+      const newsletterInserts = (gen.newsletterOutlines ?? []).slice(0, 1).map((n) => ({
         clientId,
         campaignId:       effectiveCampaignId,
         storylineId:      storylineId ?? null,
@@ -473,7 +598,13 @@ router.post(
         postType:         "newsletter" as const,
         status:           "draft" as const,
         generationStatus: "ready" as const,
-        generationMetadata,
+        generationMetadata: {
+          ...generationMetadata,
+          campaignItemType: "newsletter",
+          topic: n.subject ?? "Newsletter",
+          platform: "newsletter",
+          format: "newsletter",
+        },
       }));
       const createdNewsletters = newsletterInserts.length
         ? await db.insert(postsTable).values(newsletterInserts).returning()
@@ -499,14 +630,34 @@ router.post(
         status:           "draft" as const,
         generationStatus: "ready" as const,
         imagePrompt:      i.prompt ?? null,
-        generationMetadata,
+        generationMetadata: {
+          ...generationMetadata,
+          campaignItemType: "image_prompt",
+          topic: `${campaignName}: ${i.style ?? "image"} prompt`,
+          platform: "image",
+          format: "image_prompt",
+        },
       }));
       const createdImagePrompts = imagePromptInserts.length
         ? await db.insert(postsTable).values(imagePromptInserts).returning()
         : [];
 
       // ── Persist video script drafts ──────────────────────────────────────
-      const videoInserts = (gen.videoConcepts ?? []).map((v) => ({
+      const fallbackVideo: VideoConceptDraft = {
+        platform: platforms.includes("instagram") ? "instagram_reels" : platforms[0] ?? "instagram_reels",
+        hook: `${campaignName}: ${monthTheme || goal}`,
+        estimatedDuration: "20s",
+        scenes: [
+          { order: 1, duration: "3s", visual: "Open with a clear client-relevant problem", text: "Why this matters", voiceover: `Here is why ${monthTheme || campaignName} matters right now.` },
+          { order: 2, duration: "5s", visual: "Show the product, service, or team in context", text: "What to know", voiceover: "Give the audience one practical insight they can use." },
+          { order: 3, duration: "5s", visual: "Show proof, process, or outcome", text: "Proof", voiceover: "Back it up with a concrete example or result." },
+          { order: 4, duration: "4s", visual: "Close on brand/product/action", text: "Next step", voiceover: "Invite the viewer to save, share, or contact the brand." },
+        ],
+        subtitleStyle: "bold_captions",
+        cta: "Save this and contact us when ready.",
+        recommendedProvider: "kling",
+      };
+      const videoInserts = ((gen.videoConcepts?.length ? gen.videoConcepts : [fallbackVideo])).slice(0, 1).map((v) => ({
         clientId,
         campaignId:       effectiveCampaignId,
         storylineId:      storylineId ?? null,
@@ -525,7 +676,14 @@ router.post(
         status:           "draft" as const,
         generationStatus: "ready" as const,
         longFormBody:     (v.scenes ?? []).map(s => s.voiceover).join(" "),
-        generationMetadata,
+        skillId:          skillIdForCampaignDraft("video_script", v.platform),
+        generationMetadata: {
+          ...generationMetadata,
+          campaignItemType: "video_script",
+          topic: v.hook ?? "Video Concept",
+          platform: v.platform ?? "instagram_reels",
+          format: "video_script",
+        },
       }));
       const createdVideos = videoInserts.length
         ? await db.insert(postsTable).values(videoInserts).returning()
@@ -552,12 +710,14 @@ router.post(
         output:      updated,
         campaignId:  effectiveCampaignId,
         createdPostsCount: createdPosts.length,
+        carouselDraftsCount: createdCarousels.length,
         blogDraftsCount:   blogInserts.length,
         newsletterDraftsCount: createdNewsletters.length,
         imagePromptDraftsCount: createdImagePrompts.length,
         videoScriptsCount: createdVideos.length,
         createdPostIds: [
           ...createdPosts,
+          ...createdCarousels,
           ...createdBlogs,
           ...createdNewsletters,
           ...createdImagePrompts,
@@ -565,12 +725,13 @@ router.post(
         ].map((post) => post.id),
         createdDrafts: [
           ...createdPosts,
+          ...createdCarousels,
           ...createdBlogs,
           ...createdNewsletters,
           ...createdImagePrompts,
           ...createdVideos,
         ],
-        meta: { provider, fallbackUsed: false },
+        meta: { provider: usedProvider, requestedProvider: provider, model: usedModel, fallbackUsed },
       });
     } catch (err) {
       // Mark as failed, still return a clean response

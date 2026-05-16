@@ -1,5 +1,4 @@
 import { Router } from "express";
-import OpenAI from "openai";
 import { buildClientContext, buildImagePrompt } from "../lib/context-engine.js";
 import { GenerateCaptionsBody, GenerateImagesBody } from "@workspace/api-zod";
 import { db } from "@workspace/db";
@@ -14,12 +13,12 @@ import {
 import {
   generateTextWithProvider,
   resolveProviderAndModel,
-  resolveApiKey,
   toAiErrorResponse,
   safeErrorMessage,
 } from "../lib/ai-provider.js";
 import { logger } from "../lib/logger.js";
 import { persistRemoteImageUrl } from "../lib/durable-image-storage.js";
+import { generateImageWithProvider, type ImageProvider } from "../lib/image-provider.js";
 
 const router = Router();
 
@@ -154,6 +153,7 @@ ${body.topic}
 - When Brand DNA is enabled, use brand tone, target audience, USP or differentiator, content pillars, brand values, current storyline if available, and recent post history if available.
 - Use any Content Growth Rules in memory only when they fit naturally: default CTA, website link, WhatsApp number, preferred hashtags, SEO/location/service keywords, and avoid phrases.
 - Platform-safe CTA rules: Instagram can use CTA plus hashtags; LinkedIn should use a professional CTA and fewer hashtags; Facebook can use friendly CTA plus link/WhatsApp; X/Twitter needs a short CTA; Blog should use SEO keywords and meta focus.
+- Caption structure by platform: Instagram hook, short value body, CTA, hashtags; LinkedIn professional hook, useful insight, soft CTA, fewer hashtags; Facebook friendly caption with CTA/link/WhatsApp if useful; X/Twitter short hook and concise CTA; Blog intro SEO keyword focus and readable meta-style angle.
 - Include relevant hashtags only where they fit the platform
 - Keep each caption engaging and platform-appropriate
 - Include an image prompt per platform when the response shape asks for it
@@ -175,10 +175,10 @@ ${responseShape}`;
 });
 
 type ImagePanel = "left" | "right";
-type ImageProvider = "openai" | "google";
+type GeneratedImageProvider = ImageProvider;
 
 interface GeneratedImage {
-  provider: ImageProvider;
+  provider: GeneratedImageProvider;
   panel: ImagePanel;
   url: string;
   prompt: string;
@@ -193,6 +193,7 @@ router.post("/ai/generate-images", async (req: AuthRequest, res) => {
       platform?: string;
       desiredRatio?: string;
       brandControls?: BrandControls;
+      imageProvider?: ImageProvider | "auto";
     };
     const body = GenerateImagesBody.parse(req.body);
     parsedPostId = body.postId;
@@ -222,26 +223,23 @@ router.post("/ai/generate-images", async (req: AuthRequest, res) => {
     });
     const altPrompt = `${basePrompt} Alternative artistic interpretation with a different visual angle.`;
 
-    const { key } = await resolveApiKey("openai", req.userId);
-    const openai = new OpenAI({ apiKey: key });
-
     const [leftResult, rightResult] = await Promise.allSettled([
-      openai.images.generate({ model: "dall-e-3", prompt: basePrompt, n: 1, size: "1024x1024", quality: "standard", response_format: "url" }),
-      openai.images.generate({ model: "dall-e-3", prompt: altPrompt,  n: 1, size: "1024x1024", quality: "standard", response_format: "url" }),
+      generateImageWithProvider({ prompt: basePrompt, userId: req.userId, provider: rawBody.imageProvider ?? "auto", aspectRatio: platform === "twitter" || platform === "youtube" ? "16:9" : "1:1", size: "1024x1024" }),
+      generateImageWithProvider({ prompt: altPrompt, userId: req.userId, provider: rawBody.imageProvider ?? "auto", aspectRatio: platform === "twitter" || platform === "youtube" ? "16:9" : "1:1", size: "1024x1024" }),
     ]);
 
     const rawImages = [
       {
-        provider: "openai" as const,
+        provider: leftResult.status === "fulfilled" ? leftResult.value.provider : "openai" as const,
         panel: "left" as const,
-        providerUrl: leftResult.status === "fulfilled" ? (leftResult.value.data?.[0]?.url ?? "") : "",
+        providerUrl: leftResult.status === "fulfilled" ? leftResult.value.providerUrl : "",
         prompt: basePrompt,
         ...(leftResult.status === "rejected" ? { error: safeErrorMessage(leftResult.reason) } : {}),
       },
       {
-        provider: "openai" as const,
+        provider: rightResult.status === "fulfilled" ? rightResult.value.provider : "openai" as const,
         panel: "right" as const,
-        providerUrl: rightResult.status === "fulfilled" ? (rightResult.value.data?.[0]?.url ?? "") : "",
+        providerUrl: rightResult.status === "fulfilled" ? rightResult.value.providerUrl : "",
         prompt: altPrompt,
         ...(rightResult.status === "rejected" ? { error: safeErrorMessage(rightResult.reason) } : {}),
       },
@@ -305,7 +303,7 @@ router.post("/ai/generate-images", async (req: AuthRequest, res) => {
         .where(and(eq(postsTable.id, parsedPostId), eq(postsTable.clientId, parsedClientId)))
         .catch(() => {});
     }
-    const { status, message } = toAiErrorResponse(err, "Failed to generate images. Check that your OpenAI key is configured in Settings.");
+    const { status, message } = toAiErrorResponse(err, "Failed to generate images. Add key in Settings → AI Keys.");
     logger.error({ error: safeErrorMessage(err) }, "Image generation error");
     res.status(status).json({ error: message });
   }

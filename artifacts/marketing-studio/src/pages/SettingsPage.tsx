@@ -25,6 +25,13 @@ type ProviderStatus = {
   anthropic: ProviderKeyStatus;
   openai: ProviderKeyStatus;
   gemini: ProviderKeyStatus;
+  replicate?: ProviderKeyStatus;
+  ideogram?: ProviderKeyStatus;
+  serper?: ProviderKeyStatus;
+  tavily?: ProviderKeyStatus;
+  twitter?: ProviderKeyStatus;
+  kling?: ProviderKeyStatus;
+  elevenlabs?: ProviderKeyStatus;
 };
 
 type TestResult = {
@@ -32,6 +39,16 @@ type TestResult = {
   provider: string;
   model: string;
   keyFound: boolean;
+  keySource?: "database" | "env";
+  keyHint?: string;
+  routeUsed?: string;
+  warning?: string;
+  envComparison?: {
+    keySource: "env";
+    keyHint: string;
+    success: boolean;
+    failureReason?: string;
+  };
   error?: string;
 };
 
@@ -58,6 +75,16 @@ type SettingsHealth = {
   generatedAt: string;
   items: HealthItem[];
 };
+
+type ProviderCategory = "text" | "image" | "trend" | "video";
+type ProviderControl = {
+  provider: string;
+  enabled: boolean;
+  priority: number;
+  category: ProviderCategory;
+  bestFor?: string;
+};
+type ProviderControls = Record<ProviderCategory, ProviderControl[]>;
 
 // Current valid model IDs per provider
 const AI_PROVIDERS = [
@@ -91,9 +118,12 @@ const AI_PROVIDERS = [
 ];
 
 const IMAGE_PROVIDERS = [
-  { value: "openai", label: "OpenAI (DALL-E 3)", models: [{ id: "dall-e-3", label: "DALL-E 3" }] },
-  { value: "google", label: "Google (Imagen)", models: [{ id: "imagen-3.0", label: "Imagen 3.0" }] },
+  { value: "flux", label: "Flux via Replicate", bestFor: "Photorealistic lifestyle, people, product, and natural social visuals.", models: [{ id: "black-forest-labs/flux-1.1-pro", label: "Flux 1.1 Pro" }] },
+  { value: "ideogram", label: "Ideogram", bestFor: "Text-on-image, offer posts, banners, posters, and CTA graphics.", models: [{ id: "ideogram-v3", label: "Ideogram v3" }] },
+  { value: "openai", label: "OpenAI (DALL-E 3)", bestFor: "Reliable fallback and general-purpose social images.", models: [{ id: "dall-e-3", label: "DALL-E 3" }] },
 ];
+
+const TESTABLE_TEXT_PROVIDERS = new Set(["anthropic", "openai", "gemini"]);
 
 // Old model IDs that no longer work → what to migrate them to
 const STALE_MODEL_MAP: Record<string, string> = {
@@ -114,9 +144,11 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [providerControls, setProviderControls] = useState<ProviderControls | null>(null);
+  const [providerControlsSaving, setProviderControlsSaving] = useState(false);
 
   // AI Keys tab state
-  const [apiKeys, setApiKeys] = useState<ApiKeysState>({ anthropic: null, openai: null, gemini: null });
+  const [apiKeys, setApiKeys] = useState<ApiKeysState>({ anthropic: null, openai: null, gemini: null, replicate: null, ideogram: null, serper: null, tavily: null, twitter: null, kling: null, elevenlabs: null });
   const [keysLoading, setKeysLoading] = useState(false);
   // editing[provider] = true means the input row is shown
   const [editing, setEditing] = useState<Record<string, boolean>>({});
@@ -131,10 +163,12 @@ export default function SettingsPage() {
       fetch("/api/settings", { headers }).then(r => r.json() as Promise<Settings>),
       fetch("/api/settings/provider-status", { headers }).then(r => r.json() as Promise<ProviderStatus>),
       fetch("/api/settings/health", { headers }).then(r => r.json() as Promise<SettingsHealth>),
+      fetch("/api/settings/provider-controls", { headers }).then(r => r.json() as Promise<{ controls: ProviderControls; status: ProviderStatus }>),
     ])
-      .then(([s, ps, h]) => {
+      .then(([s, ps, h, pc]) => {
         setProviderStatus(ps);
         setHealth(h);
+        setProviderControls(pc.controls);
         // Migrate stale model IDs transparently
         const migratedModel = STALE_MODEL_MAP[s.aiModel];
         if (migratedModel) {
@@ -250,6 +284,10 @@ export default function SettingsPage() {
   };
 
   const testApiKey = async (provider: string) => {
+    if (!TESTABLE_TEXT_PROVIDERS.has(provider)) {
+      toast({ title: "Key saved for feature use", description: "This provider is tested when its feature runs." });
+      return;
+    }
     const model = AI_PROVIDERS.find(p => p.value === provider)?.models[0].id ?? "";
     setKeyEditors(ed => ({ ...ed, [provider]: { ...ed[provider], testing: true, testResult: null } }));
     try {
@@ -280,8 +318,75 @@ export default function SettingsPage() {
     }
   };
 
+  const loadProviderControls = async () => {
+    try {
+      const res = await fetch("/api/settings/provider-controls", { headers });
+      const data = await res.json() as { controls: ProviderControls; status: ProviderStatus };
+      setProviderControls(data.controls);
+      setProviderStatus(data.status);
+    } catch {
+      toast({ title: "Failed to load provider controls", variant: "destructive" });
+    }
+  };
+
+  const setProviderEnabled = (category: ProviderCategory, provider: string, enabled: boolean) => {
+    setProviderControls((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        [category]: current[category].map((item) =>
+          item.provider === provider ? { ...item, enabled } : item
+        ),
+      };
+    });
+  };
+
+  const moveProvider = (category: ProviderCategory, provider: string, direction: -1 | 1) => {
+    setProviderControls((current) => {
+      if (!current) return current;
+      const items = [...current[category]].sort((a, b) => a.priority - b.priority);
+      const index = items.findIndex((item) => item.provider === provider);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= items.length) return current;
+      [items[index], items[nextIndex]] = [items[nextIndex], items[index]];
+      return {
+        ...current,
+        [category]: items.map((item, idx) => ({ ...item, priority: idx + 1 })),
+      };
+    });
+  };
+
+  const saveProviderControls = async () => {
+    if (!providerControls) return;
+    setProviderControlsSaving(true);
+    try {
+      const res = await fetch("/api/settings/provider-controls", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ controls: providerControls }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      const data = await res.json() as { controls: ProviderControls };
+      setProviderControls(data.controls);
+      await loadProviderControls();
+      toast({ title: "Provider controls saved", description: "Disabled providers will not be used for fallback." });
+    } catch {
+      toast({ title: "Failed to save provider controls", variant: "destructive" });
+    } finally {
+      setProviderControlsSaving(false);
+    }
+  };
+
   const selectedAiProvider = AI_PROVIDERS.find(p => p.value === settings?.aiProvider);
   const selectedImageProvider = IMAGE_PROVIDERS.find(p => p.value === settings?.imageProvider);
+  const imageProviderConfigured =
+    !providerStatus ||
+    !settings?.imageProvider ||
+    (settings.imageProvider === "openai"
+      ? providerStatus.openai?.keyExists === true
+      : settings.imageProvider === "flux"
+        ? providerStatus.replicate?.keyExists === true
+        : providerStatus.ideogram?.keyExists === true);
   const healthTone = (status: HealthStatus) => {
     if (status === "green") return "border-green-200 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950/30 dark:text-green-400";
     if (status === "yellow") return "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400";
@@ -311,6 +416,7 @@ export default function SettingsPage() {
           <TabsTrigger value="profile" className="gap-1.5"><User className="w-3.5 h-3.5" />Profile</TabsTrigger>
           <TabsTrigger value="ai" className="gap-1.5"><Bot className="w-3.5 h-3.5" />AI Provider</TabsTrigger>
           <TabsTrigger value="images" className="gap-1.5"><ImageIcon className="w-3.5 h-3.5" />Image AI</TabsTrigger>
+          <TabsTrigger value="providers" className="gap-1.5" onClick={loadProviderControls}><Bot className="w-3.5 h-3.5" />Provider Control</TabsTrigger>
           <TabsTrigger value="keys" className="gap-1.5" onClick={loadApiKeys}><Key className="w-3.5 h-3.5" />AI Keys</TabsTrigger>
           <TabsTrigger value="health" className="gap-1.5" onClick={loadHealth}><CheckCircle2 className="w-3.5 h-3.5" />Health</TabsTrigger>
         </TabsList>
@@ -483,11 +589,28 @@ export default function SettingsPage() {
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {IMAGE_PROVIDERS.map(p => (
-                          <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                          <SelectItem key={p.value} value={p.value}>
+                            <span className="flex items-center gap-2">
+                              {p.label}
+                              {providerStatus && ((p.value === "openai" && !providerStatus.openai?.keyExists) || (p.value === "flux" && !providerStatus.replicate?.keyExists) || (p.value === "ideogram" && !providerStatus.ideogram?.keyExists)) && (
+                                <span className="text-[10px] text-amber-600 font-medium">no key</span>
+                              )}
+                            </span>
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    {selectedImageProvider?.bestFor && (
+                      <p className="text-xs text-muted-foreground">Best for: {selectedImageProvider.bestFor}</p>
+                    )}
                   </div>
+
+                  {!imageProviderConfigured && (
+                    <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
+                      <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                      <span>Add key in Settings → AI Keys. The app will fall back to another configured image provider when possible.</span>
+                    </div>
+                  )}
 
                   <div className="space-y-1.5">
                     <Label>Model</Label>
@@ -515,6 +638,74 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="providers" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Provider Control Center</CardTitle>
+              <CardDescription>Only connected and enabled providers are eligible. Missing-key providers are skipped automatically.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {!providerControls ? (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading provider controls…
+                </div>
+              ) : (
+                <>
+                  {(["text", "image", "trend", "video"] as ProviderCategory[]).map((category) => (
+                    <div key={category} className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold capitalize">{category === "trend" ? "Trend/Search" : `${category} AI`}</h3>
+                        {category === "trend" && <Badge variant="outline">Free fallback always available</Badge>}
+                      </div>
+                      <div className="space-y-2">
+                        {providerControls[category].sort((a, b) => a.priority - b.priority).map((item) => {
+                          const keyProvider = item.provider === "flux" ? "replicate" : item.provider;
+                          const keyStatus = keyProvider === "free" ? { keyExists: true, source: "env" as const } : providerStatus?.[keyProvider as keyof ProviderStatus];
+                          const connected = keyProvider === "free" || keyStatus?.keyExists === true;
+                          const eligible = connected && item.enabled;
+                          return (
+                            <div key={`${category}-${item.provider}`} className="rounded-md border p-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <p className="text-sm font-medium capitalize">{item.provider}</p>
+                                    <Badge variant={eligible ? "default" : "outline"} className="text-[10px]">
+                                      {eligible ? "Eligible" : connected ? "Disabled" : "Missing key"}
+                                    </Badge>
+                                    {keyStatus?.source && keyProvider !== "free" && (
+                                      <Badge variant="outline" className="text-[10px]">{keyStatus.source}</Badge>
+                                    )}
+                                  </div>
+                                  {item.bestFor && <p className="mt-1 text-xs text-muted-foreground">{item.bestFor}</p>}
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <Button variant="outline" size="sm" onClick={() => moveProvider(category, item.provider, -1)} disabled={item.priority === 1}>Up</Button>
+                                  <Button variant="outline" size="sm" onClick={() => moveProvider(category, item.provider, 1)}>Down</Button>
+                                  <Button
+                                    variant={item.enabled ? "default" : "outline"}
+                                    size="sm"
+                                    onClick={() => setProviderEnabled(category, item.provider, !item.enabled)}
+                                    disabled={keyProvider === "free"}
+                                  >
+                                    {item.enabled ? "Enabled" : "Disabled"}
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                  <Button onClick={saveProviderControls} disabled={providerControlsSaving} size="sm">
+                    {providerControlsSaving ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Saving…</> : <><Save className="w-3.5 h-3.5 mr-1.5" />Save Provider Controls</>}
+                  </Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="keys" className="mt-4">
           <Card>
             <CardHeader>
@@ -534,6 +725,13 @@ export default function SettingsPage() {
                     { provider: "anthropic", label: "Anthropic (Claude)", placeholder: "sk-ant-api03-…" },
                     { provider: "openai",    label: "OpenAI (GPT / DALL-E)", placeholder: "sk-proj-…" },
                     { provider: "gemini",    label: "Google Gemini", placeholder: "AIzaSy…" },
+                    { provider: "replicate", label: "Replicate (Flux)", placeholder: "r8_…" },
+                    { provider: "ideogram",  label: "Ideogram", placeholder: "ideogram_…" },
+                    { provider: "serper",    label: "Serper (Live Trends)", placeholder: "serper key" },
+                    { provider: "tavily",    label: "Tavily (optional research)", placeholder: "tvly-…" },
+                    { provider: "twitter",   label: "Twitter/X Bearer (optional)", placeholder: "bearer token" },
+                    { provider: "kling",     label: "Kling Video (placeholder)", placeholder: "kling key" },
+                    { provider: "elevenlabs", label: "ElevenLabs Voice (placeholder)", placeholder: "elevenlabs key" },
                   ].map(({ provider, label, placeholder }) => {
                     const saved = apiKeys[provider];
                     const isEditing = editing[provider];
@@ -575,7 +773,7 @@ export default function SettingsPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                disabled={editor.testing}
+                                disabled={editor.testing || !TESTABLE_TEXT_PROVIDERS.has(provider)}
                                 onClick={() => testApiKey(provider)}
                               >
                                 {editor.testing
@@ -652,7 +850,24 @@ export default function SettingsPage() {
                             {tr.success
                               ? <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
                               : <XCircle className="w-4 h-4 mt-0.5 shrink-0" />}
-                            <span>{tr.success ? `Connected — ${tr.provider} is working.` : (tr.error ?? "Connection failed.")}</span>
+                            <span className="space-y-1">
+                              <span className="block">
+                                {tr.success
+                                  ? `Connected — ${tr.provider}/${tr.model} is working via ${tr.keySource ?? "unknown"} key${tr.keyHint ? ` ending ${tr.keyHint}` : ""}.`
+                                  : (tr.error ?? "Connection failed.")}
+                              </span>
+                              {tr.routeUsed && (
+                                <span className="block text-xs opacity-80">Route: {tr.routeUsed}</span>
+                              )}
+                              {tr.envComparison && (
+                                <span className="block text-xs opacity-80">
+                                  Env OpenAI key ending {tr.envComparison.keyHint}: {tr.envComparison.success ? "also works" : `failed (${tr.envComparison.failureReason ?? "unknown"})`}
+                                </span>
+                              )}
+                              {tr.warning && (
+                                <span className="block text-xs font-medium">{tr.warning}</span>
+                              )}
+                            </span>
                           </div>
                         )}
 

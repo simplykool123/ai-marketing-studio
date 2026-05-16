@@ -53,7 +53,15 @@ type StudioResult = {
   prompt: string;
   style?: string;
   postId?: string;
+  provider?: string;
 };
+
+const IMAGE_PROVIDER_OPTIONS = [
+  { value: "auto", label: "Auto best", bestFor: "Flux → Ideogram → DALL-E fallback." },
+  { value: "flux", label: "Flux", bestFor: "Photorealistic lifestyle, people, product, and natural social visuals." },
+  { value: "ideogram", label: "Ideogram", bestFor: "Text-on-image, offer posts, banners, posters, and CTA graphics." },
+  { value: "openai", label: "DALL-E", bestFor: "Reliable fallback and general-purpose social images." },
+];
 
 async function fetchBrandAssets(clientId: string): Promise<BrandAsset[]> {
   const res = await fetch(`${BASE}/api/clients/${clientId}/brand-assets`);
@@ -66,14 +74,18 @@ export default function ImageStudio() {
   const [location] = useLocation();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const initialIdea = new URLSearchParams(location.split("?")[1] ?? "").get("idea") ?? "";
+  const _qs = new URLSearchParams(location.split("?")[1] ?? "");
+  const initialIdea     = _qs.get("idea") ?? _qs.get("topic") ?? _qs.get("prompt") ?? "";
+  const initialPlatform = _qs.get("platform") ?? "instagram";
+  const incomingImageUrl = _qs.get("imageUrl") ?? "";
 
   const [roughIdea, setRoughIdea] = useState(initialIdea);
   const [editInstruction, setEditInstruction] = useState("");
   const [caption, setCaption] = useState("");
   const [topic, setTopic] = useState("");
-  const [platform, setPlatform] = useState("instagram");
+  const [platform, setPlatform] = useState(initialPlatform);
   const [aspectRatio, setAspectRatio] = useState<"1:1" | "4:5" | "16:9" | "9:16">("1:1");
+  const [imageProvider, setImageProvider] = useState("auto");
   const [prepared, setPrepared] = useState<PreparedImagePrompt | null>(null);
   const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(null);
   const [brandAssets, setBrandAssets] = useState<BrandAsset[]>([]);
@@ -91,6 +103,7 @@ export default function ImageStudio() {
 
   const selectedResult = results.find((result) => result.id === selectedResultId) ?? results[0] ?? null;
   const selectedAssetArray = Array.from(selectedAssetIds);
+  const selectedProviderOption = IMAGE_PROVIDER_OPTIONS.find((option) => option.value === imageProvider) ?? IMAGE_PROVIDER_OPTIONS[0];
   const workingPrompt = prepared
     ? `${prepared.finalPrompt}\n\nAvoid: ${prepared.negativePrompt}\nComposition: ${prepared.compositionNotes}\nText guidance: ${prepared.textRecommendation}`
     : roughIdea;
@@ -160,6 +173,7 @@ export default function ImageStudio() {
           topic: topic || roughIdea.slice(0, 80) || "Generated image",
           aspectRatio,
           assetIds: selectedAssetArray,
+          imageProvider,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -170,6 +184,7 @@ export default function ImageStudio() {
         prompt: data.prompt ?? workingPrompt,
         style: data.style,
         postId: data.post?.id,
+        provider: data.provider,
       };
       setResults((current) => [result, ...current]);
       setSelectedResultId(result.id);
@@ -244,6 +259,7 @@ export default function ImageStudio() {
           aspectRatio,
           count: 3,
           topic: topic || "Image variations",
+          imageProvider,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -254,6 +270,7 @@ export default function ImageStudio() {
         prompt: item.prompt,
         style: `variation ${item.variation}`,
         postId: item.post?.id,
+        provider: item.provider,
       }));
       setResults((current) => [...newResults, ...current]);
       if (newResults[0]) setSelectedResultId(newResults[0].id);
@@ -356,6 +373,18 @@ export default function ImageStudio() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label>Image provider</Label>
+                  <Select value={imageProvider} onValueChange={setImageProvider}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {IMAGE_PROVIDER_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Best for: {selectedProviderOption.bestFor}</p>
+                </div>
               </div>
 
               <div className="space-y-1.5">
@@ -389,6 +418,15 @@ export default function ImageStudio() {
               <CardDescription>Upload a photo for edit mode, or select imported brand assets for style context.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {incomingImageUrl && !referenceImage && (
+                <div className="flex items-center gap-3 rounded-md border border-violet-200 bg-violet-50/50 p-2">
+                  <img src={incomingImageUrl} alt="asset reference" className="h-16 w-16 shrink-0 rounded object-cover border" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-violet-800">Asset reference loaded</p>
+                    <p className="text-xs text-violet-600 mt-0.5">From Brand Assets — included as context in generation.</p>
+                  </div>
+                </div>
+              )}
               {referenceImage ? (
                 <div className="flex items-center gap-3 rounded-md border bg-muted/30 p-2">
                   <img src={referenceImage.previewUrl} alt="reference" className="h-16 w-16 shrink-0 rounded object-cover" />
@@ -527,7 +565,7 @@ export default function ImageStudio() {
                         onClick={() => setSelectedResultId(result.id)}
                       >
                         <img src={result.imageUrl} alt="" className="aspect-square w-full object-cover" />
-                        <span className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-[10px] text-white">{result.style ?? "generated"}</span>
+                        <span className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-[10px] text-white">{[result.provider, result.style ?? "generated"].filter(Boolean).join(" · ")}</span>
                         {selected && <CheckCircle2 className="absolute right-2 top-2 h-5 w-5 rounded-full bg-white text-primary" />}
                       </button>
                     );

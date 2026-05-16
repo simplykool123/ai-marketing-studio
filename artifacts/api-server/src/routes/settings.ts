@@ -5,11 +5,15 @@ import { eq, and, sql } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 import {
   getProviderKeyStatus,
+  getProviderControls,
+  normalizeProviderControls,
   generateTextWithProvider,
+  generateTextWithRawKey,
   resolveModel,
   resolveApiKey,
   toAiErrorResponse,
   safeErrorMessage,
+  aiErrorCategory,
 } from "../lib/ai-provider.js";
 import { encrypt, decrypt, maskKey, extractHint } from "../lib/encryption.js";
 import { isEncryptionConfigured } from "../lib/crypto.js";
@@ -18,7 +22,7 @@ import { logger } from "../lib/logger.js";
 
 const router = Router();
 
-const VALID_PROVIDERS = ["anthropic", "openai", "gemini"] as const;
+const VALID_PROVIDERS = ["anthropic", "openai", "gemini", "replicate", "ideogram", "serper", "tavily", "twitter", "kling", "elevenlabs"] as const;
 type Provider = typeof VALID_PROVIDERS[number];
 type HealthStatus = "green" | "yellow" | "red";
 
@@ -37,6 +41,46 @@ router.get("/settings/provider-status", requireAuth, async (req: AuthRequest, re
     res.json(status);
   } catch {
     res.status(500).json({ error: "Failed to get provider status" });
+  }
+});
+
+router.get("/settings/provider-controls", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  try {
+    const [controls, status] = await Promise.all([
+      getProviderControls(req.userId),
+      getProviderKeyStatus(req.userId),
+    ]);
+    res.json({ controls, status });
+  } catch {
+    res.status(500).json({ error: "Failed to get provider controls" });
+  }
+});
+
+router.put("/settings/provider-controls", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  try {
+    const userId = req.userId!;
+    const controls = normalizeProviderControls(req.body?.controls);
+    const [existing] = await db
+      .select()
+      .from(userSettingsTable)
+      .where(eq(userSettingsTable.userId, userId))
+      .limit(1);
+
+    const [saved] = existing
+      ? await db
+          .update(userSettingsTable)
+          .set({ providerControls: controls, updatedAt: new Date() })
+          .where(eq(userSettingsTable.userId, userId))
+          .returning()
+      : await db
+          .insert(userSettingsTable)
+          .values({ userId, providerControls: controls })
+          .returning();
+
+    res.json({ controls: normalizeProviderControls(saved.providerControls) });
+  } catch (err) {
+    logger.error({ error: safeErrorMessage(err) }, "Provider controls save error");
+    res.status(500).json({ error: "Failed to save provider controls" });
   }
 });
 
@@ -110,6 +154,38 @@ router.get("/settings/health", requireAuth, async (req: AuthRequest, res): Promi
     falConfigured ? "Video generation key is configured." : "Missing. Video Studio should show the configured missing-key message."
   ));
 
+  const replicateConfigured = envConfigured("REPLICATE_API_KEY");
+  items.push(healthItem(
+    "replicate_key",
+    "REPLICATE_API_KEY",
+    replicateConfigured ? "green" : "yellow",
+    replicateConfigured ? "Flux image generation is configured." : "Missing. Flux stays disabled unless a key is saved in Settings → AI Keys."
+  ));
+
+  const ideogramConfigured = envConfigured("IDEOGRAM_API_KEY");
+  items.push(healthItem(
+    "ideogram_key",
+    "IDEOGRAM_API_KEY",
+    ideogramConfigured ? "green" : "yellow",
+    ideogramConfigured ? "Ideogram image generation is configured." : "Missing. Ideogram stays disabled unless a key is saved in Settings → AI Keys."
+  ));
+
+  const klingConfigured = envConfigured("KLING_API_KEY");
+  items.push(healthItem(
+    "kling_key",
+    "KLING_API_KEY",
+    klingConfigured ? "yellow" : "yellow",
+    klingConfigured ? "Kling key is present; API integration remains scaffold-only until endpoint details are enabled." : "Missing. Video generation stays disconnected; reel script flow still works."
+  ));
+
+  const elevenLabsConfigured = envConfigured("ELEVENLABS_API_KEY");
+  items.push(healthItem(
+    "elevenlabs_key",
+    "ELEVENLABS_API_KEY",
+    elevenLabsConfigured ? "yellow" : "yellow",
+    elevenLabsConfigured ? "ElevenLabs key is present; voiceover generation remains scaffold-only until provider flow is enabled." : "Missing. Voiceover audio is disabled; reel script flow still works."
+  ));
+
   const googleDriveConfigured = envConfigured("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI");
   items.push(healthItem(
     "google_drive_archive",
@@ -141,6 +217,13 @@ router.get("/settings/api-keys", requireAuth, async (req: AuthRequest, res): Pro
       anthropic: null,
       openai: null,
       gemini: null,
+      replicate: null,
+      ideogram: null,
+      serper: null,
+      tavily: null,
+      twitter: null,
+      kling: null,
+      elevenlabs: null,
     };
     for (const row of rows) {
       result[row.provider] = { masked: maskKey(row.provider, row.keyHint), source: "database" };
@@ -203,6 +286,7 @@ router.delete("/settings/api-keys/:provider", requireAuth, async (req: AuthReque
 
 // POST /settings/test-ai-provider — verify a provider+model works end-to-end
 router.post("/settings/test-ai-provider", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const routeUsed = "settings.test-ai-provider → generateTextWithProvider";
   try {
     const { provider, model: rawModel } = req.body as { provider?: string; model?: string };
     if (!provider) { res.status(400).json({ error: "provider is required" }); return; }
@@ -210,22 +294,61 @@ router.post("/settings/test-ai-provider", requireAuth, async (req: AuthRequest, 
     const status = await getProviderKeyStatus(req.userId);
     const providerStatus = status[provider];
     if (!providerStatus?.keyExists) {
-      res.json({ success: false, provider, model: rawModel ?? "", keyFound: false, error: `No API key configured for ${provider}. Add one in Settings → AI Keys.` });
+      res.json({
+        success: false,
+        provider,
+        model: rawModel ?? "",
+        keyFound: false,
+        routeUsed,
+        error: `No API key configured for ${provider}. Add one in Settings → AI Keys.`,
+      });
       return;
     }
 
     const model = resolveModel(provider, rawModel ?? "");
     const keySource = providerStatus.source;
-    logger.info({ provider, model, keySource }, "AI provider test requested");
+    const keyHint = providerStatus.keyHint;
+    logger.info({ provider, model, keySource, keyHint, userIdPresent: req.userId ? "yes" : "no", routeUsed }, "AI provider test requested");
 
     const response = await generateTextWithProvider(provider, model, "Reply with only the word OK and nothing else.", 10, req.userId);
     const success = response.trim().toLowerCase().includes("ok");
+    let warning: string | undefined;
+    let envComparison: { keySource: "env"; keyHint: string; success: boolean; failureReason?: string } | undefined;
 
-    res.json({ success, provider, model, keyFound: true, keySource });
+    if (provider === "openai" && keySource === "database" && process.env.OPENAI_KEY) {
+      const envHint = extractHint(process.env.OPENAI_KEY);
+      try {
+        const envResponse = await generateTextWithRawKey(provider, model, process.env.OPENAI_KEY, "Reply with only the word OK and nothing else.", 10);
+        envComparison = {
+          keySource: "env",
+          keyHint: envHint,
+          success: envResponse.trim().toLowerCase().includes("ok"),
+        };
+      } catch (err) {
+        envComparison = {
+          keySource: "env",
+          keyHint: envHint,
+          success: false,
+          failureReason: aiErrorCategory(err),
+        };
+      }
+      if (success && envComparison && !envComparison.success) {
+        warning = "OpenAI DB key works, but server .env OpenAI key is invalid. Some routes may be using env because userId was not passed.";
+      }
+    }
+
+    res.json({ success, provider, model, keyFound: true, keySource, keyHint, routeUsed, warning, envComparison });
   } catch (err) {
-    logger.error({ error: safeErrorMessage(err) }, "AI provider test error");
+    logger.error({ error: safeErrorMessage(err), routeUsed }, "AI provider test error");
     const { message } = toAiErrorResponse(err, "Provider test failed — check your API key.");
-    res.json({ success: false, provider: req.body?.provider ?? "", model: req.body?.model ?? "", keyFound: true, error: message });
+    res.json({
+      success: false,
+      provider: req.body?.provider ?? "",
+      model: req.body?.model ?? "",
+      keyFound: true,
+      routeUsed,
+      error: message,
+    });
   }
 });
 

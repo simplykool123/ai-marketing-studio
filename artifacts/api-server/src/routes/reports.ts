@@ -112,6 +112,14 @@ function bestPlatform(posts: (typeof postsTable.$inferSelect)[]): string | null 
   return sorted[0]?.[0] ?? null;
 }
 
+function countsBy(posts: (typeof postsTable.$inferSelect)[], selector: (post: typeof postsTable.$inferSelect) => string | null | undefined): Record<string, number> {
+  return posts.reduce<Record<string, number>>((acc, post) => {
+    const key = selector(post) || "unknown";
+    acc[key] = (acc[key] ?? 0) + 1;
+    return acc;
+  }, {});
+}
+
 function memoryList(entries: Array<typeof contentMemoryTable.$inferSelect>, terms: string[]): string[] {
   return entries
     .filter((entry) => {
@@ -211,6 +219,10 @@ router.get("/clients/:clientId/reports/summary", async (req: AuthRequest, res): 
       inArrayStatus(post.status, ["approved", "export_ready", "scheduled"]) && within(post.scheduledAt, start, end)
     );
     const metrics = combineMetrics(publishedInPeriod);
+    const createdInPeriod = posts.filter((post) => within(post.createdAt, start, end));
+    const approvedInPeriod = posts.filter((post) => inArrayStatus(post.status, ["approved", "export_ready", "scheduled", "posted", "published"]) && within(post.updatedAt, start, end));
+    const rejectedInPeriod = posts.filter((post) => post.status === "rejected" && within(post.updatedAt, start, end));
+    const campaignCount = new Set(createdInPeriod.map((post) => post.campaignId).filter(Boolean)).size;
     const whatWorked = memoryList(memories, ["what worked", "best hooks", "historical top topics", "worked", "winning"]);
     const whatDidNotWork = memoryList(memories, ["what did not work", "weak", "avoid_repeat", "repetitive"]);
     const repeatRisks = memoryList(memories, ["repeat", "avoid"]);
@@ -237,6 +249,12 @@ router.get("/clients/:clientId/reports/summary", async (req: AuthRequest, res): 
         totalImpressions: metrics.impressions,
         engagementRate: engagementRate(metrics),
         bestPerformingPlatform: bestPlatform(publishedInPeriod),
+        draftsGenerated: createdInPeriod.length,
+        approvedDrafts: approvedInPeriod.length,
+        rejectedDrafts: rejectedInPeriod.length,
+        campaignCount,
+        platformMix: countsBy(createdInPeriod, (post) => post.platform),
+        formatMix: countsBy(createdInPeriod, (post) => post.contentType ?? post.postType),
       },
       publishedPosts: publishedInPeriod.map((post) => ({
         id: post.id,

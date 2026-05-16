@@ -8,6 +8,9 @@ export const postingRulesTable = pgTable("posting_rules", {
   maxPostsPerDay: jsonb("max_posts_per_day").$type<Record<string, number>>().notNull().default({}),
   preferredWindows: jsonb("preferred_windows").$type<number[]>().notNull().default([9, 12, 15, 18]),
   blackoutDates: jsonb("blackout_dates").$type<string[]>().notNull().default([]),
+  timezone: text("timezone").notNull().default("UTC"),
+  preferredDays: jsonb("preferred_days").$type<number[]>().notNull().default([1, 2, 3, 4, 5]),
+  minGapHours: integer("min_gap_hours").notNull().default(4),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

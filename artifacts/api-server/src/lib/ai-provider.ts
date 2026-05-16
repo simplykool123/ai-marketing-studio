@@ -3,7 +3,7 @@
  *
  * Key resolution order for every request:
  *   1. User's encrypted key stored in DB (decrypted on the fly)
- *   2. Server-level .env key (ANTHROPIC_KEY / OPENAI_KEY / GEMINI_KEY)
+ *   2. Server-level .env key (ANTHROPIC_KEY / OPENAI_KEY / GEMINI_KEY / provider-specific keys)
  *
  * Keys are never logged or exposed in error messages.
  * Future: when multi-tenant encrypted DB keys are needed, extend resolveApiKey().
@@ -13,7 +13,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { db } from "@workspace/db";
-import { userApiKeysTable } from "@workspace/db/schema";
+import { userApiKeysTable, userSettingsTable } from "@workspace/db/schema";
 import { and, eq } from "drizzle-orm";
 import { decrypt } from "./encryption.js";
 import { logger } from "./logger.js";
@@ -45,6 +45,37 @@ export type AiErrorCategory =
   | "network"
   | "unknown";
 
+export type ProviderHealthRecord = {
+  provider: string;
+  model?: string;
+  lastSuccessAt?: string;
+  lastFailureAt?: string;
+  lastFailureCategory?: AiErrorCategory;
+  lastFailureReason?: string;
+};
+
+export type ProviderAttempt = {
+  provider: string;
+  model: string;
+  category: AiErrorCategory;
+  reason: string;
+};
+
+const providerHealth = new Map<string, ProviderHealthRecord>();
+
+export class AiProviderFallbackError extends AiConfigError {
+  attempts: ProviderAttempt[];
+
+  constructor(attempts: ProviderAttempt[]) {
+    const summary = attempts.length
+      ? attempts.map((attempt) => `${providerDisplayName(attempt.provider)} ${attempt.reason}`).join(", ")
+      : "No configured provider keys were available";
+    super(`No working AI provider available. ${summary}. Please update Settings → AI Keys.`);
+    this.name = "AiProviderFallbackError";
+    this.attempts = attempts;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Key resolution — DB first, then .env
 // ---------------------------------------------------------------------------
@@ -54,7 +85,13 @@ export type AiErrorCategory =
  * Checks the user's DB-stored encrypted key first, falls back to .env.
  * Throws AiConfigError if no key is available.
  */
-export async function resolveApiKey(provider: string, userId?: string): Promise<{ key: string; source: "database" | "env" }> {
+type ResolvedApiKey = { key: string; source: "database" | "env"; keyHint: string };
+
+function keyHintFromPlaintext(key: string): string {
+  return key.slice(-4);
+}
+
+export async function resolveApiKey(provider: string, userId?: string): Promise<ResolvedApiKey> {
   const candidates = await resolveApiKeyCandidates(provider, userId);
   if (candidates.length > 0) return candidates[0]!;
 
@@ -63,32 +100,28 @@ export async function resolveApiKey(provider: string, userId?: string): Promise<
   );
 }
 
-async function resolveApiKeyCandidates(provider: string, userId?: string): Promise<Array<{ key: string; source: "database" | "env" }>> {
-  const candidates: Array<{ key: string; source: "database" | "env" }> = [];
+async function resolveApiKeyCandidates(provider: string, userId?: string): Promise<ResolvedApiKey[]> {
+  const candidates: ResolvedApiKey[] = [];
 
   if (userId) {
     const [row] = await db
-      .select({ encryptedKey: userApiKeysTable.encryptedKey })
+      .select({ encryptedKey: userApiKeysTable.encryptedKey, keyHint: userApiKeysTable.keyHint })
       .from(userApiKeysTable)
       .where(and(eq(userApiKeysTable.userId, userId), eq(userApiKeysTable.provider, provider)))
       .limit(1);
     if (row) {
       try {
-        return [{ key: decrypt(row.encryptedKey), source: "database" }];
+        return [{ key: decrypt(row.encryptedKey), source: "database", keyHint: row.keyHint }];
       } catch {
         // Decryption failure falls through to .env
       }
     }
   }
 
-  const envKey =
-    provider === "anthropic" ? process.env.ANTHROPIC_KEY :
-    provider === "openai"    ? process.env.OPENAI_KEY :
-    provider === "gemini"    ? process.env.GEMINI_KEY :
-    undefined;
+  const envKey = envKeyForProvider(provider);
 
   if (envKey && !candidates.some((candidate) => candidate.key === envKey)) {
-    candidates.push({ key: envKey, source: "env" });
+    candidates.push({ key: envKey, source: "env", keyHint: keyHintFromPlaintext(envKey) });
   }
 
   return candidates;
@@ -101,33 +134,164 @@ async function resolveApiKeyCandidates(provider: string, userId?: string): Promi
 export type ProviderKeyStatus = {
   keyExists: boolean;
   source: "env" | "database" | "none";
+  keyHint?: string;
+  enabled?: boolean;
+  priority?: number;
 };
 
+export type ProviderCategory = "text" | "image" | "trend" | "video";
+
+export type ProviderControl = {
+  provider: string;
+  enabled: boolean;
+  priority: number;
+  category: ProviderCategory;
+  bestFor?: string;
+};
+
+export type ProviderControls = Record<ProviderCategory, ProviderControl[]>;
+
+export const DEFAULT_PROVIDER_CONTROLS: ProviderControls = {
+  text: [
+    { category: "text", provider: "openai", enabled: true, priority: 1, bestFor: "Strong general content and image fallback support." },
+    { category: "text", provider: "gemini", enabled: true, priority: 2, bestFor: "Fast free/low-cost fallback for briefs and drafts." },
+    { category: "text", provider: "anthropic", enabled: true, priority: 3, bestFor: "High-quality strategic reasoning and brand voice." },
+  ],
+  image: [
+    { category: "image", provider: "flux", enabled: true, priority: 1, bestFor: "Photorealistic lifestyle, people, product, and natural visuals." },
+    { category: "image", provider: "ideogram", enabled: true, priority: 2, bestFor: "Text-on-image, offer graphics, banners, and posters." },
+    { category: "image", provider: "openai", enabled: true, priority: 3, bestFor: "Reliable DALL-E fallback and general social images." },
+  ],
+  trend: [
+    { category: "trend", provider: "free", enabled: true, priority: 1, bestFor: "Google News RSS, AI Memory, campaigns, and approved/rejected history." },
+    { category: "trend", provider: "serper", enabled: true, priority: 2, bestFor: "Live Google/search/news signals when connected." },
+    { category: "trend", provider: "tavily", enabled: true, priority: 3, bestFor: "Optional deeper web research context." },
+    { category: "trend", provider: "twitter", enabled: false, priority: 4, bestFor: "Optional X signals only when a bearer token exists." },
+  ],
+  video: [
+    { category: "video", provider: "kling", enabled: false, priority: 1, bestFor: "Realistic short video once connected." },
+    { category: "video", provider: "elevenlabs", enabled: false, priority: 2, bestFor: "Voiceover audio once connected." },
+  ],
+};
+
+function isProviderCategory(value: string): value is ProviderCategory {
+  return value === "text" || value === "image" || value === "trend" || value === "video";
+}
+
+export function normalizeProviderControls(raw: unknown): ProviderControls {
+  const normalized = structuredClone(DEFAULT_PROVIDER_CONTROLS) as ProviderControls;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return normalized;
+  const record = raw as Record<string, unknown>;
+  for (const key of Object.keys(normalized)) {
+    if (!isProviderCategory(key)) continue;
+    const incoming = Array.isArray(record[key]) ? record[key] as unknown[] : [];
+    const byProvider = new Map(normalized[key].map((item) => [item.provider, item]));
+    for (const item of incoming) {
+      if (!item || typeof item !== "object") continue;
+      const value = item as Record<string, unknown>;
+      const provider = typeof value.provider === "string" ? value.provider : "";
+      const existing = byProvider.get(provider);
+      if (!existing) continue;
+      if (typeof value.enabled === "boolean") existing.enabled = value.enabled;
+      if (typeof value.priority === "number" && Number.isFinite(value.priority)) existing.priority = value.priority;
+    }
+    normalized[key] = [...byProvider.values()].sort((a, b) => a.priority - b.priority);
+  }
+  return normalized;
+}
+
+export async function getProviderControls(userId?: string): Promise<ProviderControls> {
+  if (!userId) return normalizeProviderControls(null);
+  const [settings] = await db
+    .select({ providerControls: userSettingsTable.providerControls })
+    .from(userSettingsTable)
+    .where(eq(userSettingsTable.userId, userId))
+    .limit(1);
+  return normalizeProviderControls(settings?.providerControls);
+}
+
+function keyProviderForControl(provider: string): string {
+  if (provider === "flux") return "replicate";
+  if (provider === "free") return "free";
+  return provider;
+}
+
+export async function getEligibleProviders(category: ProviderCategory, userId?: string): Promise<string[]> {
+  const [controls, status] = await Promise.all([
+    getProviderControls(userId),
+    getProviderKeyStatus(userId),
+  ]);
+  return controls[category]
+    .filter((control) => control.enabled)
+    .sort((a, b) => a.priority - b.priority)
+    .filter((control) => {
+      const keyProvider = keyProviderForControl(control.provider);
+      return keyProvider === "free" || status[keyProvider]?.keyExists === true;
+    })
+    .map((control) => control.provider);
+}
+
+export function envKeyForProvider(provider: string): string | undefined {
+  if (provider === "anthropic") return process.env.ANTHROPIC_KEY;
+  if (provider === "openai") return process.env.OPENAI_KEY;
+  if (provider === "gemini") return process.env.GEMINI_KEY;
+  if (provider === "replicate" || provider === "flux") return process.env.REPLICATE_API_KEY;
+  if (provider === "ideogram") return process.env.IDEOGRAM_API_KEY;
+  if (provider === "serper") return process.env.SERPER_API_KEY;
+  if (provider === "tavily") return process.env.TAVILY_API_KEY;
+  if (provider === "twitter") return process.env.TWITTER_BEARER_TOKEN;
+  if (provider === "kling") return process.env.KLING_API_KEY;
+  if (provider === "elevenlabs") return process.env.ELEVENLABS_API_KEY;
+  return undefined;
+}
+
 export async function getProviderKeyStatus(userId?: string): Promise<Record<string, ProviderKeyStatus>> {
-  const providers = ["anthropic", "openai", "gemini"];
+  const providers = [
+    "anthropic",
+    "openai",
+    "gemini",
+    "replicate",
+    "ideogram",
+    "serper",
+    "tavily",
+    "twitter",
+    "kling",
+    "elevenlabs",
+  ];
   const result: Record<string, ProviderKeyStatus> = {};
 
   // Check DB keys for this user
   const dbRows = userId
     ? await db
-        .select({ provider: userApiKeysTable.provider })
+        .select({ provider: userApiKeysTable.provider, keyHint: userApiKeysTable.keyHint })
         .from(userApiKeysTable)
         .where(eq(userApiKeysTable.userId, userId))
     : [];
-  const dbProviders = new Set(dbRows.map(r => r.provider));
+  const dbProviders = new Map(dbRows.map(r => [r.provider, r.keyHint]));
 
   for (const p of providers) {
     if (dbProviders.has(p)) {
-      result[p] = { keyExists: true, source: "database" };
+      result[p] = { keyExists: true, source: "database", keyHint: dbProviders.get(p) };
     } else {
-      const envKey =
-        p === "anthropic" ? process.env.ANTHROPIC_KEY :
-        p === "openai"    ? process.env.OPENAI_KEY :
-        p === "gemini"    ? process.env.GEMINI_KEY :
-        undefined;
+      const envKey = envKeyForProvider(p);
       result[p] = envKey
-        ? { keyExists: true, source: "env" }
+        ? { keyExists: true, source: "env", keyHint: keyHintFromPlaintext(envKey) }
         : { keyExists: false, source: "none" };
+    }
+  }
+
+  const controls = await getProviderControls(userId);
+  for (const category of Object.keys(controls) as ProviderCategory[]) {
+    for (const control of controls[category]) {
+      const keyProvider = keyProviderForControl(control.provider);
+      if (keyProvider === "free") continue;
+      if (result[keyProvider]) {
+        result[keyProvider] = {
+          ...result[keyProvider],
+          enabled: control.enabled,
+          priority: control.priority,
+        };
+      }
     }
   }
 
@@ -163,18 +327,16 @@ export async function resolveProviderAndModel(
   settings: { aiProvider: string; aiModel: string } | null,
   userId?: string
 ): Promise<{ provider: string; model: string }> {
+  const eligible = await getEligibleProviders("text", userId);
   if (settings) {
     const { aiProvider, aiModel } = settings;
-    const status = await getProviderKeyStatus(userId);
-    if (status[aiProvider]?.keyExists) {
+    if (eligible.includes(aiProvider)) {
       return { provider: aiProvider, model: resolveModel(aiProvider, aiModel) };
     }
   }
 
-  // Auto-detect from available keys in priority order: OpenAI → Gemini → Anthropic
-  const status = await getProviderKeyStatus(userId);
-  for (const p of PROVIDER_PRIORITY) {
-    if (status[p]?.keyExists) {
+  for (const p of eligible) {
+    if (p in DEFAULT_MODELS) {
       return { provider: p, model: DEFAULT_MODELS[p] };
     }
   }
@@ -252,6 +414,59 @@ export function safeErrorMessage(err: unknown): string {
   return "Unknown error";
 }
 
+function providerDisplayName(provider: string): string {
+  if (provider === "openai") return "OpenAI";
+  if (provider === "gemini") return "Gemini";
+  if (provider === "anthropic") return "Anthropic";
+  return provider;
+}
+
+function providerFailureReason(err: unknown): string {
+  const category = aiErrorCategory(err);
+  if (category === "auth") return "key failed auth";
+  if (category === "quota") return "quota exceeded";
+  if (category === "network") return "network unavailable";
+  if (category === "model") return "model unavailable";
+  if (category === "config") return "key missing";
+  return "unavailable";
+}
+
+function recordProviderFailure(provider: string, model: string, err: unknown): ProviderAttempt {
+  const category = aiErrorCategory(err);
+  const attempt = {
+    provider,
+    model,
+    category,
+    reason: providerFailureReason(err),
+  };
+  providerHealth.set(provider, {
+    ...(providerHealth.get(provider) ?? { provider }),
+    provider,
+    model,
+    lastFailureAt: new Date().toISOString(),
+    lastFailureCategory: category,
+    lastFailureReason: attempt.reason,
+  });
+  return attempt;
+}
+
+function recordProviderSuccess(provider: string, model: string): void {
+  providerHealth.set(provider, {
+    ...(providerHealth.get(provider) ?? { provider }),
+    provider,
+    model,
+    lastSuccessAt: new Date().toISOString(),
+  });
+}
+
+export function getProviderHealthSnapshot(): Record<string, ProviderHealthRecord> {
+  const snapshot: Record<string, ProviderHealthRecord> = {};
+  for (const provider of PROVIDER_PRIORITY) {
+    snapshot[provider] = providerHealth.get(provider) ?? { provider };
+  }
+  return snapshot;
+}
+
 // ---------------------------------------------------------------------------
 // Canonical text generation
 // ---------------------------------------------------------------------------
@@ -273,45 +488,70 @@ export async function generateTextWithProvider(
   let lastError: unknown;
   for (const candidate of candidates) {
     try {
-      logger.info({ provider, model, keySource: candidate.source }, "AI text generation requested");
+      logger.info(
+        {
+          provider,
+          model,
+          keySource: candidate.source,
+          keyHint: candidate.keyHint,
+          userIdPresent: userId ? "yes" : "no",
+        },
+        "AI text generation requested"
+      );
 
-      if (provider === "openai") {
-        const client = new OpenAI({ apiKey: candidate.key });
-        const res = await client.chat.completions.create({
-          model: model || "gpt-4o",
-          messages: [{ role: "user", content: prompt }],
-          max_tokens: maxTokens,
-        });
-        return res.choices[0]?.message?.content ?? "";
-      }
-
-      if (provider === "gemini") {
-        const genai = new GoogleGenerativeAI(candidate.key);
-        const geminiModel = genai.getGenerativeModel({ model: model || DEFAULT_MODELS.gemini });
-        const res = await geminiModel.generateContent(prompt);
-        return res.response.text();
-      }
-
-      const anthropic = new Anthropic({ apiKey: candidate.key });
-      const msg = await anthropic.messages.create({
-        model: model || "claude-sonnet-4-6",
-        max_tokens: maxTokens,
-        messages: [{ role: "user", content: prompt }],
-      });
-      return msg.content[0].type === "text" ? msg.content[0].text : "";
+      return await generateTextWithRawKey(provider, model, candidate.key, prompt, maxTokens);
     } catch (err) {
       lastError = err;
       if (!isAuthError(err) || candidate === candidates[candidates.length - 1]) {
         throw err;
       }
       logger.warn(
-        { provider, keySource: candidate.source, errorCategory: aiErrorCategory(err) },
+        {
+          provider,
+          keySource: candidate.source,
+          keyHint: candidate.keyHint,
+          userIdPresent: userId ? "yes" : "no",
+          errorCategory: aiErrorCategory(err),
+        },
         "AI text generation key failed — trying next configured key source"
       );
     }
   }
 
   throw lastError instanceof Error ? lastError : new Error("AI provider failed");
+}
+
+export async function generateTextWithRawKey(
+  provider: string,
+  model: string,
+  key: string,
+  prompt: string,
+  maxTokens = 1500,
+): Promise<string> {
+  if (provider === "openai") {
+    const client = new OpenAI({ apiKey: key });
+    const res = await client.chat.completions.create({
+      model: model || "gpt-4o",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: maxTokens,
+    });
+    return res.choices[0]?.message?.content ?? "";
+  }
+
+  if (provider === "gemini") {
+    const genai = new GoogleGenerativeAI(key);
+    const geminiModel = genai.getGenerativeModel({ model: model || DEFAULT_MODELS.gemini });
+    const res = await geminiModel.generateContent(prompt);
+    return res.response.text();
+  }
+
+  const anthropic = new Anthropic({ apiKey: key });
+  const msg = await anthropic.messages.create({
+    model: model || "claude-sonnet-4-6",
+    max_tokens: maxTokens,
+    messages: [{ role: "user", content: prompt }],
+  });
+  return msg.content[0].type === "text" ? msg.content[0].text : "";
 }
 
 // ---------------------------------------------------------------------------
@@ -374,58 +614,71 @@ export async function generateTextWithFallback(
   maxTokens: number,
   userId?: string
 ): Promise<GenerateWithFallbackResult> {
-  let initialProviderError: unknown;
-  // Attempt preferred provider
-  try {
-    logger.info({ provider, model }, "AI generation: trying provider");
-    const text = await generateTextWithProvider(provider, model, prompt, maxTokens, userId);
-    logger.info({ provider, model }, "AI generation: provider succeeded");
-    return { text, usedProvider: provider, usedModel: model, fallbackUsed: false };
-  } catch (err) {
-    initialProviderError = err;
-    if (!isQuotaOrCreditError(err) && !isAuthError(err)) throw err;
-    logger.warn(
-      { provider, errorCategory: aiErrorCategory(err) },
-      "AI generation: provider failed — trying fallback providers"
-    );
+  const attempts: ProviderAttempt[] = [];
+  const eligible = await getEligibleProviders("text", userId);
+  const seen = new Set<string>();
+  const candidates = [
+    ...(eligible.includes(provider) ? [provider] : []),
+    ...eligible.filter((p) => p !== provider),
+  ].filter((candidate) => {
+    if (seen.has(candidate)) return false;
+    seen.add(candidate);
+    return true;
+  });
+
+  if (candidates.length === 0) {
+    throw new AiProviderFallbackError([]);
   }
 
-  // Try remaining providers in priority order
-  const status = await getProviderKeyStatus(userId);
-  const candidates = PROVIDER_PRIORITY.filter((p) => p !== provider && status[p]?.keyExists);
-  let lastFallbackError: unknown;
-
-  for (const fallbackProvider of candidates) {
-    const fallbackModel = DEFAULT_MODELS[fallbackProvider];
+  for (const candidateProvider of candidates) {
+    const candidateModel = candidateProvider === provider
+      ? resolveModel(candidateProvider, model)
+      : DEFAULT_MODELS[candidateProvider as typeof PROVIDER_PRIORITY[number]] ?? model;
     try {
       logger.info(
-        { fallbackProvider, fallbackModel, originalProvider: provider },
-        "AI generation: trying fallback provider"
+        {
+          provider: candidateProvider,
+          model: candidateModel,
+          originalProvider: provider,
+          fallbackAttempt: candidateProvider !== provider,
+          userIdPresent: userId ? "yes" : "no",
+        },
+        "AI generation: provider attempted"
       );
-      const text = await generateTextWithProvider(fallbackProvider, fallbackModel, prompt, maxTokens, userId);
+      const text = await generateTextWithProvider(candidateProvider, candidateModel, prompt, maxTokens, userId);
+      recordProviderSuccess(candidateProvider, candidateModel);
       logger.info(
-        { fallbackProvider, originalProvider: provider },
-        "AI generation: fallback provider succeeded"
+        {
+          provider: candidateProvider,
+          model: candidateModel,
+          originalProvider: provider,
+          fallbackUsed: candidateProvider !== provider || attempts.length > 0,
+          userIdPresent: userId ? "yes" : "no",
+        },
+        "AI generation: provider succeeded"
       );
-      return { text, usedProvider: fallbackProvider, usedModel: fallbackModel, fallbackUsed: true };
+      return {
+        text,
+        usedProvider: candidateProvider,
+        usedModel: candidateModel,
+        fallbackUsed: candidateProvider !== provider || attempts.length > 0,
+      };
     } catch (err) {
-      lastFallbackError = err;
-      if (!isQuotaOrCreditError(err) && !isAuthError(err)) throw err;
+      const attempt = recordProviderFailure(candidateProvider, candidateModel, err);
+      attempts.push(attempt);
       logger.warn(
-        { fallbackProvider, errorCategory: aiErrorCategory(err) },
-        "AI generation: fallback provider failed — trying next"
+        {
+          provider: candidateProvider,
+          model: candidateModel,
+          originalProvider: provider,
+          errorCategory: attempt.category,
+          reason: attempt.reason,
+          userIdPresent: userId ? "yes" : "no",
+        },
+        "AI generation: provider failed — trying next configured provider"
       );
     }
   }
 
-  if (lastFallbackError && isAuthError(lastFallbackError)) {
-    throw lastFallbackError;
-  }
-  if (!lastFallbackError && initialProviderError && isAuthError(initialProviderError)) {
-    throw initialProviderError;
-  }
-
-  throw new AiConfigError(
-    "All configured AI providers are exhausted or unavailable. Check your API keys and quotas in Settings → AI Keys."
-  );
+  throw new AiProviderFallbackError(attempts);
 }

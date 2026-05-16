@@ -8,8 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Settings2, Clock, Ban, Plus, X, Save } from "lucide-react";
+import { Settings2, Clock, Ban, Plus, X, Save, Globe, CalendarDays, Timer } from "lucide-react";
 
 const PLATFORMS = ["instagram", "facebook", "twitter", "linkedin"] as const;
 const PLATFORM_LABELS: Record<string, string> = {
@@ -18,6 +19,32 @@ const PLATFORM_LABELS: Record<string, string> = {
   twitter: "Twitter",
   linkedin: "LinkedIn",
 };
+
+const DAY_OPTIONS = [
+  { value: 0, label: "Sun" },
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+];
+
+const COMMON_TIMEZONES = [
+  "UTC",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "Europe/London",
+  "Europe/Paris",
+  "Europe/Berlin",
+  "Asia/Kolkata",
+  "Asia/Dubai",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+];
 
 const HOUR_OPTIONS = [
   { value: 6, label: "6:00 AM" },
@@ -53,12 +80,18 @@ export default function PostingRulesPage() {
   const [preferredWindows, setPreferredWindows] = useState<number[]>([9, 12, 15, 18]);
   const [blackoutDates, setBlackoutDates] = useState<string[]>([]);
   const [newBlackout, setNewBlackout] = useState("");
+  const [timezone, setTimezone] = useState("UTC");
+  const [preferredDays, setPreferredDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [minGapHours, setMinGapHours] = useState(4);
 
   useEffect(() => {
     if (rules) {
       setMaxPostsPerDay((rules.maxPostsPerDay as Record<string, number>) ?? {});
       setPreferredWindows((rules.preferredWindows as number[]) ?? [9, 12, 15, 18]);
       setBlackoutDates((rules.blackoutDates as string[]) ?? []);
+      setTimezone((rules as any).timezone ?? "UTC");
+      setPreferredDays((rules as any).preferredDays ?? [1, 2, 3, 4, 5]);
+      setMinGapHours((rules as any).minGapHours ?? 4);
     }
   }, [rules]);
 
@@ -68,7 +101,10 @@ export default function PostingRulesPage() {
         maxPostsPerDay,
         preferredWindows,
         blackoutDates,
-      }),
+        timezone,
+        preferredDays,
+        minGapHours,
+      } as any),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["postingRules", clientId] });
       toast({ title: "Posting rules saved" });
@@ -79,6 +115,12 @@ export default function PostingRulesPage() {
   const toggleWindow = (hour: number) => {
     setPreferredWindows((prev) =>
       prev.includes(hour) ? prev.filter((h) => h !== hour) : [...prev, hour].sort((a, b) => a - b)
+    );
+  };
+
+  const toggleDay = (day: number) => {
+    setPreferredDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort((a, b) => a - b)
     );
   };
 
@@ -224,6 +266,89 @@ export default function PostingRulesPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Preferred days */}
+      <Card className="bg-card">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <CalendarDays className="w-4 h-4 text-primary" />
+            Preferred Posting Days
+          </CardTitle>
+          <CardDescription>
+            Only schedule posts on these days of the week.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-2">
+            {DAY_OPTIONS.map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => toggleDay(value)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                  preferredDays.includes(value)
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background text-muted-foreground border-border hover:border-primary/50"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {preferredDays.length === 0 && (
+            <p className="text-xs text-muted-foreground mt-2">No days selected — auto-scheduler will use weekdays (Mon–Fri).</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Min gap + timezone */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Card className="bg-card">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Timer className="w-4 h-4 text-primary" />
+              Minimum Gap Between Posts
+            </CardTitle>
+            <CardDescription>Hours between posts on the same day.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Input
+              type="number"
+              min={1}
+              max={24}
+              value={minGapHours}
+              onChange={(e) => {
+                const val = parseInt(e.target.value);
+                setMinGapHours(isNaN(val) ? 4 : Math.max(1, Math.min(24, val)));
+              }}
+              className="w-28"
+            />
+            <p className="text-xs text-muted-foreground mt-2">Default: 4 hours</p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Globe className="w-4 h-4 text-primary" />
+              Timezone
+            </CardTitle>
+            <CardDescription>All scheduled times are in this timezone.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Select value={timezone} onValueChange={setTimezone}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {COMMON_TIMEZONES.map((tz) => (
+                  <SelectItem key={tz} value={tz}>{tz}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </CardContent>
+        </Card>
+      </div>
 
       <div className="flex justify-end">
         <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>

@@ -13,12 +13,10 @@
  * Text providers map to the same names used by ai-provider.ts:
  *   "anthropic" | "openai" | "gemini"
  *
- * Image + video providers beyond DALL-E 3 are interface-only for now
- * (available: false) — the router documents them so the UI can show
- * "coming soon" and the API can extend support without structural changes.
+ * Image providers include live integrations plus DALL-E fallback.
  */
 
-import { getProviderKeyStatus } from "./ai-provider.js";
+import { getEligibleProviders } from "./ai-provider.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,7 +25,7 @@ import { getProviderKeyStatus } from "./ai-provider.js";
 export type QualityMode = "cheap" | "balanced" | "best_quality" | "fastest";
 
 export type TextProviderName = "openai" | "anthropic" | "gemini" | "deepseek" | "kimi";
-export type ImageProviderName = "openai" | "grok" | "gemini" | "ideogram" | "flux";
+export type ImageProviderName = "openai" | "ideogram" | "flux";
 export type VideoProviderName = "kling" | "runway" | "pika" | "luma" | "veo";
 
 export interface TextProviderOption {
@@ -43,7 +41,8 @@ export interface ImageProviderOption {
   label: string;
   model: string;
   available: boolean;       // true = integrated; false = coming soon
-  internalKey?: "openai";   // only openai is integrated right now
+  internalKey?: "openai" | "replicate" | "ideogram";
+  bestFor: string;
   notes: string;
 }
 
@@ -90,23 +89,18 @@ export const TEXT_PROVIDERS: Record<QualityMode, TextProviderOption[]> = {
 export const IMAGE_PROVIDERS: ImageProviderOption[] = [
   {
     name: "openai",    label: "DALL-E 3",     model: "dall-e-3",   available: true,  internalKey: "openai",
-    notes: "Integrated — generates via OpenAI API",
+    bestFor: "Reliable fallback and general-purpose social images.",
+    notes: "Integrated via OpenAI image API",
   },
   {
-    name: "grok",      label: "Grok Aurora",  model: "aurora",     available: false,
-    notes: "Coming soon — xAI image generation",
+    name: "flux",      label: "Flux via Replicate", model: "black-forest-labs/flux-1.1-pro", available: true, internalKey: "replicate",
+    bestFor: "Photorealistic lifestyle, people, product, and natural social visuals.",
+    notes: "Integrated via Replicate official model predictions",
   },
   {
-    name: "gemini",    label: "Gemini Imagen", model: "imagen-3",  available: false,
-    notes: "Coming soon — Google Imagen 3",
-  },
-  {
-    name: "ideogram",  label: "Ideogram 2",   model: "ideogram-v2", available: false,
-    notes: "Coming soon — excellent for text-in-image",
-  },
-  {
-    name: "flux",      label: "Flux Pro",     model: "flux-pro",   available: false,
-    notes: "Coming soon — Black Forest Labs",
+    name: "ideogram",  label: "Ideogram",   model: "ideogram-v3", available: true, internalKey: "ideogram",
+    bestFor: "Text-on-image, offer posts, banners, posters, and CTA graphics.",
+    notes: "Integrated via Ideogram API",
   },
 ];
 
@@ -135,18 +129,18 @@ export async function resolveTextProviderForMode(
   mode: QualityMode,
   userId?: string
 ): Promise<{ provider: string; model: string; label: string }> {
-  const status = await getProviderKeyStatus(userId);
+  const eligible = new Set(await getEligibleProviders("text", userId));
   const candidates = TEXT_PROVIDERS[mode] ?? TEXT_PROVIDERS.balanced;
 
   for (const opt of candidates) {
-    if (status[opt.internalKey]?.keyExists) {
+    if (eligible.has(opt.internalKey)) {
       return { provider: opt.internalKey, model: opt.model, label: opt.label };
     }
   }
 
   // If the preferred mode has no keys, fall back to balanced, then any
   for (const opt of TEXT_PROVIDERS.balanced) {
-    if (status[opt.internalKey]?.keyExists) {
+    if (eligible.has(opt.internalKey)) {
       return { provider: opt.internalKey, model: opt.model, label: opt.label };
     }
   }

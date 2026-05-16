@@ -11,6 +11,7 @@ import {
   Radar,
   Sparkles,
   TrendingUp,
+  Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -94,6 +95,22 @@ function firstSentence(text: string): string {
 
 function trendIdeaParam(opportunity: ContentOpportunity): string {
   return encodeURIComponent(`${opportunity.idea}. Hook: ${opportunity.hook}. Visual: ${opportunity.visualDirection}`);
+}
+
+function opportunityFormat(format: string): "image" | "video" | "blog" {
+  if (format === "reel" || format === "video") return "video";
+  return "image";
+}
+
+function creativeStudioHref(clientId: string, opportunity: ContentOpportunity): string {
+  const qs = new URLSearchParams({
+    topic: `${opportunity.idea}. Hook: ${opportunity.hook}`,
+    trendTopic: opportunity.trendSource ?? opportunity.idea,
+    platform: opportunity.platform,
+    format: opportunityFormat(opportunity.format),
+    from: "trends",
+  });
+  return `/clients/${clientId}/creative-studio?${qs.toString()}`;
 }
 
 export default function TrendIntelligence() {
@@ -416,18 +433,18 @@ export default function TrendIntelligence() {
                       <p><span className="font-medium">Brand fit:</span> {opportunity.brandFitNotes}</p>
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <Button size="sm" className="gap-1.5" onClick={() => createDraft(opportunity, index)} disabled={busyId === `draft-${index}`}>
+                      <Link href={creativeStudioHref(clientId ?? "", opportunity)}>
+                        <Button size="sm" className="gap-1.5">
+                          <Wand2 className="h-3.5 w-3.5" />
+                          Create in Creative Studio
+                        </Button>
+                      </Link>
+                      <Button size="sm" variant="outline" className="gap-1.5" onClick={() => createDraft(opportunity, index)} disabled={busyId === `draft-${index}`}>
                         {busyId === `draft-${index}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
-                        Create draft from idea
+                        Create text draft
                       </Button>
                       <Link href={`/clients/${clientId}/campaigns/generate?campaignName=${encodeURIComponent(`Trend: ${opportunity.idea.slice(0, 46)}`)}&theme=${encodeURIComponent(opportunity.idea)}`}>
                         <Button size="sm" variant="outline">Send to Campaign Planner</Button>
-                      </Link>
-                      <Link href={`/clients/${clientId}/image-studio?idea=${trendIdeaParam(opportunity)}`}>
-                        <Button size="sm" variant="outline">Use in Image Studio</Button>
-                      </Link>
-                      <Link href={`/clients/${clientId}/video-studio?idea=${trendIdeaParam(opportunity)}`}>
-                        <Button size="sm" variant="outline">Use in Video Studio</Button>
                       </Link>
                     </div>
                   </div>

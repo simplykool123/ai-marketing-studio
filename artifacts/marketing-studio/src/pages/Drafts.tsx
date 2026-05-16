@@ -15,7 +15,7 @@ import {
   type UpdatePostBodyPlatform,
   type ApprovePostBodyPlatform,
 } from "@workspace/api-client-react";
-import { useQueryClient, useMutation } from "@tanstack/react-query";
+import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -51,6 +51,8 @@ import {
   RotateCcw,
   Eye,
   XCircle,
+  Sparkles,
+  Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
@@ -132,7 +134,71 @@ type QualityReviewReport = {
   reviewedAt?: string;
 };
 
+type GrowthRules = {
+  websiteLink?: string;
+  whatsappNumber?: string;
+  defaultCta?: string;
+  preferredHashtags?: string;
+  seoKeywords?: string;
+  locationServiceKeywords?: string;
+  avoidPhrases?: string;
+  platformCtaRules?: string;
+};
+
+type PreflightCheck = {
+  key: string;
+  label: string;
+  status: "pass" | "warn" | "info";
+  detail: string;
+};
+
+type PreflightFixSuggestion = {
+  revisedCaption: string;
+  revisedHashtags: string[];
+  changesMade: string[];
+  notes: string;
+};
+
+type CampaignSummary = {
+  id: string;
+  name: string;
+  goal?: string | null;
+};
+
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+async function fetchGrowthRules(clientId: string): Promise<GrowthRules | null> {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/memory`);
+  if (!res.ok) return null;
+  const entries = await res.json() as Array<{ key: string; value: string }>;
+  const latest = [...entries].reverse().find((entry) => entry.key === "Content Growth Rules / client defaults");
+  if (!latest?.value) return null;
+  try {
+    return JSON.parse(latest.value) as GrowthRules;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchCampaignSummary(clientId: string, campaignId: string): Promise<CampaignSummary | null> {
+  const token = localStorage.getItem("ams_token");
+  const res = await fetch(`${BASE}/api/clients/${clientId}/campaigns/${campaignId}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) return null;
+  return res.json() as Promise<CampaignSummary>;
+}
+
+async function requestPreflightFix(clientId: string, postId: string, issues: string[]): Promise<PreflightFixSuggestion> {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/preflight-fix`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ issues }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Failed to fix preflight issues");
+  return data.suggestion as PreflightFixSuggestion;
+}
 
 const CONTENT_FILTERS = [
   { value: "all", label: "All" },
@@ -219,6 +285,167 @@ function firstString(...values: unknown[]): string | null {
   return null;
 }
 
+function blogDraftPreview(value: unknown): string {
+  if (typeof value === "string") return value;
+  const draft = asRecord(value);
+  if (!Object.keys(draft).length) return "";
+  const body = Array.isArray(draft.body_paragraphs)
+    ? draft.body_paragraphs.map((item: any) => {
+        const row = asRecord(item);
+        return [row.heading ? `### ${row.heading}` : null, row.content].filter(Boolean).join("\n");
+      })
+    : [];
+  return [
+    draft.title ? `## ${draft.title}` : null,
+    draft.introduction,
+    ...body,
+    draft.conclusion ? `### Conclusion\n${draft.conclusion}` : null,
+  ].filter(Boolean).join("\n\n");
+}
+
+function splitRuleList(value?: string): string[] {
+  if (!value) return [];
+  return value.split(/\n|,/).map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function postText(post: Post): string {
+  const schema = asRecord(post.contentSchema);
+  return [
+    post.topic,
+    post.caption,
+    post.hashtags,
+    post.longFormBody,
+    schema.caption,
+    schema.captionAngle,
+    schema.hook,
+    schema.cta,
+    schema.metaDescription,
+  ].filter(Boolean).join(" ");
+}
+
+function isTrendOrigin(post: Post): boolean {
+  const schema = asRecord(post.contentSchema);
+  const meta = asRecord(post.generationMetadata);
+  return schema.source === "trend_intelligence" || meta.route === "trend_intelligence.create_draft" || !!schema.trendSource;
+}
+
+function platformNeedsHashtags(platform?: string | null): boolean {
+  return platform === "instagram" || platform === "facebook";
+}
+
+function contentNeedsMedia(post: Post): boolean {
+  const group = contentGroup(post);
+  if (group === "blog" || group === "newsletter") return false;
+  if (group === "video") return true;
+  if (post.platform === "instagram" || post.platform === "youtube") return true;
+  return group === "image" || !!post.imagePrompt || !!postImagePrompt(post);
+}
+
+function platformLengthLooksOk(post: Post): boolean {
+  const length = (post.caption ?? "").length;
+  if (post.platform === "twitter") return length <= 280;
+  if (post.platform === "linkedin") return length >= 80 && length <= 1800;
+  if (post.platform === "instagram") return length >= 40 && length <= 2200;
+  return length > 10;
+}
+
+function hasAnyGrowthRules(rules: GrowthRules | null | undefined): boolean {
+  return !!rules && Object.values(rules).some((value) => typeof value === "string" && value.trim());
+}
+
+function buildPreflightChecks(post: Post, rules?: GrowthRules | null): PreflightCheck[] {
+  const text = normalizeText(postText(post));
+  const schema = asRecord(post.contentSchema);
+  const platform = post.platform ?? "instagram";
+  const preferredHashtags = splitRuleList(rules?.preferredHashtags);
+  const seoKeywords = [...splitRuleList(rules?.seoKeywords), ...splitRuleList(rules?.locationServiceKeywords)];
+  const avoidPhrases = splitRuleList(rules?.avoidPhrases);
+  const hasCta = /\b(book|call|message|dm|contact|visit|shop|save|learn|download|schedule|reply|comment|share|follow|subscribe|get started)\b/i.test(post.caption ?? "")
+    || (!!rules?.defaultCta && text.includes(normalizeText(rules.defaultCta)));
+  const hasLink = !!rules?.websiteLink && text.includes(normalizeText(rules.websiteLink));
+  const hasWhatsapp = !!rules?.whatsappNumber && text.includes(normalizeText(rules.whatsappNumber));
+  const matchingPreferredHashtags = preferredHashtags.filter((tag) => text.includes(normalizeText(tag)));
+  const matchingSeoKeywords = seoKeywords.filter((keyword) => text.includes(normalizeText(keyword)));
+  const usedAvoidPhrase = avoidPhrases.find((phrase) => text.includes(normalizeText(phrase)));
+  const mediaOk = contentGroup(post) === "video" ? !!postVideoUrl(post) : !contentNeedsMedia(post) || !!postImageUrl(post);
+  const trendOrigin = isTrendOrigin(post);
+
+  return [
+    {
+      key: "brand",
+      label: "Brand voice used",
+      status: post.skillId || post.generationMetadata || post.contentSchema ? "pass" : "info",
+      detail: post.skillId || post.generationMetadata || post.contentSchema ? "Generated with saved client context." : "Manual draft; compare against Brand DNA before approval.",
+    },
+    {
+      key: "cta",
+      label: "CTA included or intentionally skipped",
+      status: hasCta ? "pass" : "warn",
+      detail: hasCta ? "Caption includes a business action." : rules?.defaultCta ? `Consider CTA: ${rules.defaultCta}` : "Add a clear next step when appropriate.",
+    },
+    {
+      key: "link",
+      label: "Website/WhatsApp usage",
+      status: !rules?.websiteLink && !rules?.whatsappNumber ? "info" : hasLink || hasWhatsapp ? "pass" : "info",
+      detail: !rules?.websiteLink && !rules?.whatsappNumber
+        ? "No website or WhatsApp rule saved."
+        : hasLink || hasWhatsapp
+          ? "Saved contact path is included."
+          : "Not included; okay if this post is awareness or value-led.",
+    },
+    {
+      key: "hashtags",
+      label: "Hashtags fit platform",
+      status: platformNeedsHashtags(platform) ? (post.hashtags || matchingPreferredHashtags.length ? "pass" : "warn") : "info",
+      detail: platformNeedsHashtags(platform)
+        ? post.hashtags || matchingPreferredHashtags.length ? "Hashtags are present." : "Instagram/Facebook usually benefit from a small hashtag set."
+        : "This platform should use fewer or no hashtags.",
+    },
+    {
+      key: "seo",
+      label: "SEO/location keywords",
+      status: seoKeywords.length === 0 ? "info" : matchingSeoKeywords.length > 0 || contentGroup(post) !== "blog" ? "pass" : "warn",
+      detail: seoKeywords.length === 0
+        ? "No SEO or location keywords saved."
+        : matchingSeoKeywords.length > 0
+          ? `Uses: ${matchingSeoKeywords.slice(0, 3).join(", ")}`
+          : "Blog/search-focused content should include a saved keyword.",
+    },
+    {
+      key: "media",
+      label: "Image/video readiness",
+      status: mediaOk ? "pass" : "warn",
+      detail: mediaOk ? "Required visual media is attached." : contentGroup(post) === "video" ? "No final video attached yet." : "No final artwork/image attached yet.",
+    },
+    {
+      key: "trend",
+      label: "Trend/source context",
+      status: trendOrigin ? "pass" : "info",
+      detail: trendOrigin ? `Trend source: ${schema.trendSource ?? "Trend Intelligence"}` : "Not a trend-origin draft.",
+    },
+    {
+      key: "avoid",
+      label: "No avoid-phrases used",
+      status: usedAvoidPhrase ? "warn" : "pass",
+      detail: usedAvoidPhrase ? `Avoid phrase found: ${usedAvoidPhrase}` : "No saved avoid phrase detected.",
+    },
+    {
+      key: "format",
+      label: "Platform length/format",
+      status: platformLengthLooksOk(post) ? "pass" : "warn",
+      detail: platformLengthLooksOk(post) ? "Caption length looks platform-safe." : "Caption may be too short, too long, or not platform-shaped.",
+    },
+  ];
+}
+
+function preflightWarnings(checks: PreflightCheck[]): string[] {
+  return checks.filter((check) => check.status === "warn").map((check) => `${check.label}: ${check.detail}`);
+}
+
 
 function dateFromIsoDay(value: unknown): Date | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
@@ -238,6 +465,10 @@ function occasionScheduleDate(post: Post): Date | undefined {
 function suggestedScheduleDate(post: Post): Date {
   const occasionDate = occasionScheduleDate(post);
   if (occasionDate) return occasionDate;
+  if (post.scheduledAt) {
+    const scheduled = new Date(post.scheduledAt);
+    if (!Number.isNaN(scheduled.getTime())) return scheduled;
+  }
   const now = new Date();
   const date = new Date(now);
   if (now.getHours() >= 18) date.setDate(date.getDate() + 1);
@@ -268,16 +499,42 @@ function schemaPreview(post: Post): string {
     return [schema.subject, schema.preheader, ...(Array.isArray(schema.sections) ? schema.sections : []), post.caption].filter(Boolean).join(" ");
   }
   if (type === "video") {
-    const scenes = Array.isArray(schema.scenes) ? schema.scenes.map((scene: any) => [scene.visual, scene.text, scene.voiceover].filter(Boolean).join(" ")) : [];
+    const scenes = Array.isArray(schema.scenes) ? schema.scenes.map((scene: any) => [scene.visual, scene.text, scene.onScreenText, scene.voiceover].filter(Boolean).join(" ")) : [];
     return [schema.hook, ...scenes, schema.cta, post.longFormBody, post.caption].filter(Boolean).join(" ");
   }
   if (type === "image") {
     return [schema.prompt, schema.imageUrl, schema.style, schema.rationale, post.imagePrompt, post.selectedImageUrl, post.caption].filter(Boolean).join(" ");
   }
   if (Array.isArray(schema.slides)) {
-    return schema.slides.map((slide: any) => [slide.title, slide.text, slide.caption].filter(Boolean).join(" ")).join(" ");
+    return schema.slides.map((slide: any) => [slide.title, slide.headline, slide.text, slide.body, slide.caption, slide.visualNote].filter(Boolean).join(" ")).join(" ");
   }
   return [schema.captionAngle, schema.caption, schema.hashtags, schema.imagePrompt, post.caption, post.hashtags].filter(Boolean).join(" ");
+}
+
+async function fetchSuggestedSchedule(clientId: string, postId: string): Promise<{ scheduledAt: string; hour: number } | null> {
+  try {
+    const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/suggest-schedule`);
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function bulkApproveApi(clientId: string, payload: {
+  postIds: string[];
+  spreadSchedule?: boolean;
+  campaignId?: string;
+  campaignName?: string;
+}): Promise<{ count: number; scheduled: boolean }> {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/posts/bulk-approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Bulk approve failed");
+  return data;
 }
 
 async function mockPost(clientId: string, postId: string) {
@@ -351,6 +608,16 @@ async function reviewDraftQuality(clientId: string, postId: string) {
   return data;
 }
 
+async function retrySkillDraft(clientId: string, postId: string) {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/retry-skill`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await res.json().catch(() => ({})) as { post?: Post; error?: string };
+  if (!res.ok) throw new Error(data.error ?? "Failed to retry draft");
+  return data.post;
+}
+
 export default function Drafts() {
   const { clientId } = useParams<{ clientId: string }>();
   const search = useSearch();
@@ -363,6 +630,16 @@ export default function Drafts() {
   const listParams = campaignIdFilter ? { campaignId: campaignIdFilter } : undefined;
   const { data: posts, isLoading } = useListPosts(clientId || "", listParams);
   const { data: clientData } = useGetClient(clientId || "");
+  const { data: growthRules = null } = useQuery({
+    queryKey: ["content-growth-rules", clientId],
+    queryFn: () => fetchGrowthRules(clientId!),
+    enabled: !!clientId,
+  });
+  const { data: campaignSummary = null } = useQuery({
+    queryKey: ["campaign-summary", clientId, campaignIdFilter],
+    queryFn: () => fetchCampaignSummary(clientId!, campaignIdFilter!),
+    enabled: !!clientId && !!campaignIdFilter,
+  });
   const approvePost = useApprovePost();
   const deletePost = useDeletePost();
   const updatePost = useUpdatePost();
@@ -402,7 +679,12 @@ export default function Drafts() {
   const [rewriteTargetPlatform, setRewriteTargetPlatform] = useState<string>("linkedin");
   const [isRewritingPlatform, setIsRewritingPlatform] = useState(false);
   const [reviewingQualityPostId, setReviewingQualityPostId] = useState<string | null>(null);
+  const [retryingSkillPostId, setRetryingSkillPostId] = useState<string | null>(null);
   const [applyingQualityPostId, setApplyingQualityPostId] = useState<string | null>(null);
+  const [fixingPreflightPostId, setFixingPreflightPostId] = useState<string | null>(null);
+  const [preflightFixPost, setPreflightFixPost] = useState<Post | null>(null);
+  const [preflightFix, setPreflightFix] = useState<PreflightFixSuggestion | null>(null);
+  const [applyingPreflightFix, setApplyingPreflightFix] = useState(false);
 
   const invalidatePosts = () => {
     if (clientId) queryClient.invalidateQueries({ queryKey: getListPostsQueryKey(clientId, listParams) });
@@ -470,12 +752,25 @@ export default function Drafts() {
     });
   }, [allPosts, postIdFilter]);
 
-  const openApprove = (post: Post) => {
+  const openApprove = async (post: Post) => {
     setSelectedPostId(post.id);
     setApprovePlatform(post.platform || "instagram");
     setDate(suggestedScheduleDate(post));
     setApproveTime("09:00");
     setIsApproveOpen(true);
+    // Asynchronously fetch a smarter suggested schedule from posting rules
+    if (clientId) {
+      const suggestion = await fetchSuggestedSchedule(clientId, post.id);
+      if (suggestion?.scheduledAt) {
+        const d = new Date(suggestion.scheduledAt);
+        if (!isNaN(d.getTime())) {
+          setDate(d);
+          const hh = String(d.getHours()).padStart(2, "0");
+          const mm = String(d.getMinutes()).padStart(2, "0");
+          setApproveTime(`${hh}:${mm}`);
+        }
+      }
+    }
   };
 
   const openEdit = (post: Post) => {
@@ -574,6 +869,23 @@ export default function Drafts() {
     queryClient.invalidateQueries({ queryKey: ["client-images", clientId] });
     toast({ title: "Final artwork saved" });
   };
+
+  const bulkApproveMutation = useMutation({
+    mutationFn: (payload: { postIds: string[]; spreadSchedule?: boolean; campaignId?: string; campaignName?: string }) =>
+      bulkApproveApi(clientId!, payload),
+    onSuccess: (result) => {
+      invalidatePosts();
+      toast({
+        title: `Approved ${result.count} draft${result.count === 1 ? "" : "s"}`,
+        description: result.scheduled ? "Scheduled across dates using your posting rules." : "Moved to Publish Queue.",
+      });
+    },
+    onError: (err) => toast({
+      title: "Bulk approve failed",
+      description: err instanceof Error ? err.message : "Could not approve campaign drafts.",
+      variant: "destructive",
+    }),
+  });
 
   const mockPostMutation = useMutation({
     mutationFn: ({ postId }: { postId: string }) => mockPost(clientId!, postId),
@@ -739,6 +1051,16 @@ export default function Drafts() {
     );
   };
 
+  const handleCopyImagePrompt = async (post: Post) => {
+    const prompt = postImagePrompt(post);
+    if (!prompt) {
+      toast({ title: "No image prompt available", description: "Generate or edit the draft first." });
+      return;
+    }
+    await navigator.clipboard.writeText(prompt);
+    toast({ title: "Image prompt copied", description: "Use it in ChatGPT, Gemini, or your preferred image tool, then upload the result." });
+  };
+
   const handlePublish = (postId: string) => {
     if (!clientId) return;
     setPublishingPostId(postId);
@@ -849,6 +1171,27 @@ export default function Drafts() {
     }
   };
 
+  const handleRetrySkillDraft = async (post: Post) => {
+    if (!clientId || !post.skillId) return;
+    setRetryingSkillPostId(post.id);
+    try {
+      const retried = await retrySkillDraft(clientId, post.id);
+      invalidatePosts();
+      toast({
+        title: "Draft retried",
+        description: retried?.id ? "A fresh version was saved to Review." : "AI created a fresh version.",
+      });
+    } catch (err) {
+      toast({
+        title: "Retry failed",
+        description: err instanceof Error ? err.message : "Check AI provider settings and try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setRetryingSkillPostId(null);
+    }
+  };
+
   const handleApplyQualityCaption = async (post: Post) => {
     if (!clientId) return;
     const report = qualityReport(post.qualityReport);
@@ -874,6 +1217,54 @@ export default function Drafts() {
       toast({ title: "Failed to apply improved caption", variant: "destructive" });
     } finally {
       setApplyingQualityPostId(null);
+    }
+  };
+
+  const handleFixPreflight = async (post: Post) => {
+    if (!clientId) return;
+    const checks = buildPreflightChecks(post, growthRules);
+    setFixingPreflightPostId(post.id);
+    try {
+      const suggestion = await requestPreflightFix(clientId, post.id, preflightWarnings(checks));
+      setPreflightFixPost(post);
+      setPreflightFix(suggestion);
+      toast({ title: "Preflight fix ready", description: "Review the suggestion before applying it." });
+    } catch (err) {
+      toast({
+        title: "Fix with AI failed",
+        description: err instanceof Error ? err.message : "Could not prepare a preflight fix.",
+        variant: "destructive",
+      });
+    } finally {
+      setFixingPreflightPostId(null);
+    }
+  };
+
+  const handleApplyPreflightFix = async () => {
+    if (!clientId || !preflightFixPost || !preflightFix) return;
+    setApplyingPreflightFix(true);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        updatePost.mutate(
+          {
+            clientId,
+            postId: preflightFixPost.id,
+            data: {
+              caption: preflightFix.revisedCaption,
+              hashtags: preflightFix.revisedHashtags.join(" "),
+            },
+          },
+          { onSuccess: () => resolve(), onError: reject }
+        );
+      });
+      invalidatePosts();
+      setPreflightFixPost(null);
+      setPreflightFix(null);
+      toast({ title: "Preflight fix applied" });
+    } catch {
+      toast({ title: "Failed to apply preflight fix", variant: "destructive" });
+    } finally {
+      setApplyingPreflightFix(false);
     }
   };
 
@@ -931,13 +1322,19 @@ export default function Drafts() {
               onDelete={() => handleDelete(post.id)}
               onRegenerateCopy={() => handleRegenerateCopy(post.id)}
               onGenerateImage={() => handleGenerateImage(post.id)}
+              onCopyImagePrompt={() => handleCopyImagePrompt(post)}
               onRewrite={() => openRewrite(post)}
               onQualityReview={canReview(post) ? () => handleQualityReview(post) : undefined}
+              onRetrySkill={post.skillId ? () => handleRetrySkillDraft(post) : undefined}
               onApplyQualityCaption={() => handleApplyQualityCaption(post)}
+              onFixPreflight={canReview(post) ? () => handleFixPreflight(post) : undefined}
               isRegeneratingCopy={regeneratingPostId === post.id}
               isGeneratingImage={generatingImagePostIds.has(post.id)}
               isReviewingQuality={reviewingQualityPostId === post.id}
+              isRetryingSkill={retryingSkillPostId === post.id}
               isApplyingQualityCaption={applyingQualityPostId === post.id}
+              isFixingPreflight={fixingPreflightPostId === post.id}
+              growthRules={growthRules}
             />
           ))}
         </div>
@@ -954,9 +1351,14 @@ export default function Drafts() {
             onApprove={canReview(previewPost) ? () => openApprove(previewPost) : undefined}
             onReject={canReview(previewPost) ? () => openReject(previewPost) : undefined}
             onQualityReview={canReview(previewPost) ? () => handleQualityReview(previewPost) : undefined}
+            onRetrySkill={previewPost?.skillId ? () => handleRetrySkillDraft(previewPost) : undefined}
             onApplyQualityCaption={previewPost ? () => handleApplyQualityCaption(previewPost) : undefined}
+            onFixPreflight={canReview(previewPost) ? () => handleFixPreflight(previewPost) : undefined}
             isReviewingQuality={!!previewPost && reviewingQualityPostId === previewPost.id}
+            isRetryingSkill={!!previewPost && retryingSkillPostId === previewPost.id}
             isApplyingQualityCaption={!!previewPost && applyingQualityPostId === previewPost.id}
+            isFixingPreflight={!!previewPost && fixingPreflightPostId === previewPost.id}
+            growthRules={growthRules}
           />
         </div>
       </div>
@@ -1060,17 +1462,46 @@ export default function Drafts() {
       </div>
 
       {campaignIdFilter && (
-        <div className="flex flex-col gap-2 rounded-md border border-primary/30 bg-primary/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 rounded-md border border-primary/30 bg-primary/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-2">
             <AlertCircle className="w-4 h-4 text-primary mt-0.5 shrink-0" />
             <div>
-              <p className="text-sm font-semibold text-primary">Campaign filter active</p>
-              <p className="text-xs text-muted-foreground">Showing drafts and posts from this campaign only.</p>
+              <p className="text-sm font-semibold text-primary">{campaignSummary?.name ?? "Campaign filter active"}</p>
+              <p className="text-xs text-muted-foreground">
+                Showing related drafts together{campaignSummary?.goal ? ` · Goal: ${campaignSummary.goal}` : ""}.
+                {needsReview.filter(p => p.campaignId === campaignIdFilter).length > 0 && (
+                  <> · {needsReview.filter(p => p.campaignId === campaignIdFilter).length} pending approval.</>
+                )}
+              </p>
             </div>
           </div>
-          <a href={`/clients/${clientId}/drafts`} className="text-sm font-medium text-primary underline">
-            Clear filter
-          </a>
+          <div className="flex flex-wrap items-center gap-2">
+            {needsReview.filter(p => p.campaignId === campaignIdFilter).length > 0 && (
+              <Button
+                size="sm"
+                variant="default"
+                className="h-7 text-xs gap-1.5"
+                disabled={bulkApproveMutation.isPending}
+                onClick={() => {
+                  const pending = needsReview.filter(p => p.campaignId === campaignIdFilter);
+                  bulkApproveMutation.mutate({
+                    postIds: pending.map(p => p.id),
+                    spreadSchedule: true,
+                    campaignId: campaignIdFilter,
+                    campaignName: campaignSummary?.name,
+                  });
+                }}
+              >
+                {bulkApproveMutation.isPending
+                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                  : <CheckCircle className="w-3 h-3" />}
+                Approve all & schedule
+              </Button>
+            )}
+            <a href={`/clients/${clientId}/drafts`} className="text-sm font-medium text-primary underline">
+              Clear filter
+            </a>
+          </div>
         </div>
       )}
 
@@ -1127,7 +1558,7 @@ export default function Drafts() {
       <Tabs value={activeReviewTab} onValueChange={updateReviewTab}>
         <TabsList>
           <TabsTrigger value="pending">
-            Needs Review / Pending
+            Pending
             {needsReview.length > 0 && (
               <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0 h-4">
                 {needsReview.length}
@@ -1135,7 +1566,7 @@ export default function Drafts() {
             )}
           </TabsTrigger>
           <TabsTrigger value="drafts">
-            Drafts
+            All Drafts
             {drafts.length > 0 && (
               <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0 h-4">
                 {drafts.length}
@@ -1143,7 +1574,7 @@ export default function Drafts() {
             )}
           </TabsTrigger>
           <TabsTrigger value="ready">
-            Approved / Ready
+            Approved
             {approved.length > 0 && (
               <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0 h-4">
                 {approved.length}
@@ -1151,7 +1582,7 @@ export default function Drafts() {
             )}
           </TabsTrigger>
           <TabsTrigger value="history">
-            Rejected / History
+            Rejected
             {history.length > 0 && (
               <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0 h-4">
                 {history.length}
@@ -1205,8 +1636,13 @@ export default function Drafts() {
                   onPublish={() => handlePublish(post.id)}
                   onRewrite={() => openRewrite(post)}
                   onApplyQualityCaption={() => handleApplyQualityCaption(post)}
+                  onFixPreflight={() => handleFixPreflight(post)}
+                  onRetrySkill={post.skillId ? () => handleRetrySkillDraft(post) : undefined}
                   isPublishing={publishingPostId === post.id}
                   isApplyingQualityCaption={applyingQualityPostId === post.id}
+                  isFixingPreflight={fixingPreflightPostId === post.id}
+                  isRetryingSkill={retryingSkillPostId === post.id}
+                  growthRules={growthRules}
                   actionBar={<PostActionBar post={post} />}
                 />
               ))}
@@ -1235,7 +1671,12 @@ export default function Drafts() {
                   onEdit={() => openEdit(post)}
                   onDelete={() => handleDelete(post.id)}
                   onApplyQualityCaption={() => handleApplyQualityCaption(post)}
+                  onFixPreflight={() => handleFixPreflight(post)}
+                  onRetrySkill={post.skillId ? () => handleRetrySkillDraft(post) : undefined}
                   isApplyingQualityCaption={applyingQualityPostId === post.id}
+                  isFixingPreflight={fixingPreflightPostId === post.id}
+                  isRetryingSkill={retryingSkillPostId === post.id}
+                  growthRules={growthRules}
                 />
               ))}
             </div>
@@ -1468,6 +1909,57 @@ export default function Drafts() {
         </DialogContent>
       </Dialog>
 
+      {/* Preflight Fix Dialog */}
+      <Dialog open={!!preflightFixPost && !!preflightFix} onOpenChange={(open) => {
+        if (!open && !applyingPreflightFix) {
+          setPreflightFixPost(null);
+          setPreflightFix(null);
+        }
+      }}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Fix with AI</DialogTitle>
+            <DialogDescription>
+              Suggested copy only. Review it, then apply manually if it is better.
+            </DialogDescription>
+          </DialogHeader>
+          {preflightFixPost && preflightFix && (
+            <div className="space-y-4 py-2">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-md border bg-muted/20 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Current caption</p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm">{preflightFixPost.caption}</p>
+                  {preflightFixPost.hashtags && <p className="mt-2 text-xs text-primary">{preflightFixPost.hashtags}</p>}
+                </div>
+                <div className="rounded-md border border-primary/25 bg-primary/5 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-primary">Suggested caption</p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm">{preflightFix.revisedCaption}</p>
+                  {preflightFix.revisedHashtags.length > 0 && (
+                    <p className="mt-2 text-xs text-primary">{preflightFix.revisedHashtags.join(" ")}</p>
+                  )}
+                </div>
+              </div>
+              {preflightFix.changesMade.length > 0 && (
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What changed</p>
+                  <ul className="mt-2 list-disc space-y-1 pl-4 text-sm">
+                    {preflightFix.changesMade.map((change, index) => <li key={index}>{change}</li>)}
+                  </ul>
+                </div>
+              )}
+              {preflightFix.notes && <p className="text-xs text-muted-foreground">{preflightFix.notes}</p>}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => { setPreflightFixPost(null); setPreflightFix(null); }} disabled={applyingPreflightFix}>Cancel</Button>
+            <Button onClick={handleApplyPreflightFix} disabled={applyingPreflightFix}>
+              {applyingPreflightFix && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Apply suggestion
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <ArtworkEditorDialog
         open={!!artworkPost}
         onClose={() => setArtworkPost(null)}
@@ -1492,8 +1984,36 @@ function QualityBadge({ score }: { score?: number | null }) {
         : "bg-red-50 text-red-700 border-red-200"
       )}
     >
-      Quality {Math.round(score * 100)}
+      AI quality {Math.round(score * 100)}
     </Badge>
+  );
+}
+
+function titleCaseSkillId(value: string): string {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function aiSkillSummary(post: Post): { skill: string; quality?: string } | null {
+  const schema = asRecord(post.contentSchema);
+  const schemaSkill = asRecord(schema.aiSkill);
+  const metadata = asRecord(post.generationMetadata);
+  const skillId = post.skillId || schemaSkill.skillId || metadata.skillId;
+  if (!skillId) return null;
+  const quality = firstString(schemaSkill.qualityBadge, metadata.qualityBadge);
+  return { skill: titleCaseSkillId(String(skillId)), quality: quality ?? undefined };
+}
+
+function AiSkillLine({ post }: { post: Post }) {
+  const summary = aiSkillSummary(post);
+  if (!summary) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+      <Sparkles className="h-3.5 w-3.5 text-primary" />
+      <span>AI mode: {summary.skill}</span>
+      {summary.quality && <span>· AI quality: {summary.quality}</span>}
+    </div>
   );
 }
 
@@ -1571,6 +2091,114 @@ function QualityReviewPanel({
           Apply improved caption
         </Button>
       )}
+    </div>
+  );
+}
+
+function PreflightPanel({
+  post,
+  growthRules,
+  onFix,
+  isFixing,
+  compact = false,
+}: {
+  post: Post;
+  growthRules?: GrowthRules | null;
+  onFix?: () => void;
+  isFixing?: boolean;
+  compact?: boolean;
+}) {
+  const checks = buildPreflightChecks(post, growthRules);
+  const warnings = preflightWarnings(checks);
+  const passed = checks.filter((check) => check.status === "pass").length;
+  const trendOrigin = isTrendOrigin(post);
+
+  return (
+    <div className="rounded-md border bg-muted/20 p-3 text-sm space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline" className={warnings.length ? "border-amber-200 bg-amber-50 text-amber-700" : "border-green-200 bg-green-50 text-green-700"}>
+            Preflight {passed}/{checks.length}
+          </Badge>
+          {trendOrigin && <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">Trend-based draft</Badge>}
+        </div>
+        {onFix && warnings.length > 0 && (
+          <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={onFix} disabled={isFixing}>
+            {isFixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+            Fix with AI
+          </Button>
+        )}
+      </div>
+      {!hasAnyGrowthRules(growthRules) && (
+        <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>Add website, WhatsApp, CTA, hashtags and SEO keywords in Brand Profile to make posts more business-ready.</span>
+        </div>
+      )}
+      <div className={cn("grid gap-1.5", compact ? "" : "sm:grid-cols-2")}>
+        {checks.slice(0, compact ? 5 : checks.length).map((check) => (
+          <div key={check.key} className="flex items-start gap-2 text-xs">
+            {check.status === "pass" ? (
+              <CheckCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600" />
+            ) : check.status === "warn" ? (
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+            ) : (
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            )}
+            <span title={check.detail}>
+              <span className="font-medium">{check.label}</span>
+              {!compact && <span className="text-muted-foreground"> - {check.detail}</span>}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CaptionOptimizerLight({ post, report }: { post: Post; report: QualityReviewReport | null }) {
+  const platform = (post.platform ?? "instagram").toLowerCase();
+  const caption = post.caption ?? "";
+  const hashtags = (post.hashtags ?? "").split(/\s+/).filter(Boolean);
+  const revisedHashtags = report?.revisedHashtags?.filter(Boolean) ?? [];
+  const hook = caption.split(/\n|\.|!|\?/)[0]?.trim() ?? "";
+  const hookStrength =
+    hook.length >= 45 && /you|your|why|how|stop|save|before|mistake|secret/i.test(hook) ? "Strong" :
+    hook.length >= 22 ? "Medium" : "Needs work";
+  const ctaClear = /book|call|dm|message|save|share|comment|visit|learn|shop|download|reply|contact/i.test(caption);
+  const platformFit =
+    platform === "linkedin" && hashtags.length > 5 ? "Use fewer hashtags for LinkedIn." :
+    ["instagram", "facebook"].includes(platform) && hashtags.length === 0 ? "Add a small relevant hashtag set." :
+    platform.includes("twitter") && caption.length > 260 ? "Shorten for X/Twitter." :
+    "Looks aligned enough to review.";
+  const suggestions = [
+    { label: "Hook strength", value: hookStrength === "Needs work" ? "Improve hook with a clearer promise or tension." : `${hookStrength}: ${hook || "Opening line"}` },
+    { label: "CTA suggestion", value: report?.ctaSuggestion || (ctaClear ? "CTA is clear." : "Add one low-friction next step, such as save, comment, DM, or visit.") },
+    { label: "Platform fit", value: platformFit },
+  ];
+
+  return (
+    <div className="rounded-md border bg-emerald-50/40 p-3 text-sm space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Caption optimizer</p>
+        <Badge variant="outline" className="border-emerald-200 bg-white/70 text-[10px] text-emerald-700">Optional</Badge>
+      </div>
+      {revisedHashtags.length > 0 ? (
+        <div>
+          <p className="text-xs font-medium text-emerald-900">Suggested hashtags</p>
+          <p className="mt-0.5 text-xs text-emerald-800">{revisedHashtags.join(" ")}</p>
+        </div>
+      ) : hashtags.length > 0 ? (
+        <div>
+          <p className="text-xs font-medium text-emerald-900">Suggested hashtags</p>
+          <p className="mt-0.5 text-xs text-emerald-800">{hashtags.slice(0, platform === "linkedin" ? 4 : 8).join(" ")}</p>
+        </div>
+      ) : null}
+      <div className="grid gap-1.5 text-xs text-emerald-900">
+        {suggestions.map((item) => (
+          <p key={item.label}><span className="font-medium">{item.label}:</span> {item.value}</p>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1689,8 +2317,8 @@ function DraftPreviewContent({ post }: { post: Post }) {
       <div className="space-y-4">
         <TextBlock title="SEO title">{schema.seoTitle || post.title || post.topic}</TextBlock>
         <TextBlock title="Meta description">{schema.metaDescription || post.caption}</TextBlock>
-        <ListBlock title="Outline" items={schema.sections} />
-        <TextBlock title="Full draft preview">{schema.fullDraft || post.longFormBody}</TextBlock>
+        <ListBlock title="Outline" items={schema.outline || schema.sections} />
+        <TextBlock title="Full draft preview">{schema.fullDraft || post.longFormBody || blogDraftPreview(schema.blog_post_draft)}</TextBlock>
         <ListBlock title="FAQ" items={schema.faq} />
       </div>
     );
@@ -1728,8 +2356,8 @@ function DraftPreviewContent({ post }: { post: Post }) {
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scenes</p>
           {scenes.length > 0 ? scenes.map((scene: any, index: number) => (
             <div key={index} className="rounded-md border p-3 text-sm">
-              <p className="font-medium">Scene {scene.order ?? index + 1}{scene.duration ? ` · ${scene.duration}` : ""}</p>
-              <p className="text-muted-foreground mt-1">{[scene.visual, scene.text, scene.voiceover].filter(Boolean).join(" ")}</p>
+              <p className="font-medium">Scene {scene.order ?? scene.scene ?? index + 1}{scene.duration ? ` · ${scene.duration}` : ""}</p>
+              <p className="text-muted-foreground mt-1">{[scene.visual, scene.text, scene.onScreenText, scene.voiceover].filter(Boolean).join(" ")}</p>
             </div>
           )) : <p className="text-sm text-muted-foreground">{post.longFormBody || post.caption}</p>}
         </div>
@@ -1767,10 +2395,13 @@ function DraftPreviewContent({ post }: { post: Post }) {
       <div className="space-y-3">
         {schema.slides.map((slide: any, index: number) => (
           <div key={index} className="rounded-md border p-3">
-            <p className="text-sm font-medium">Slide {index + 1}{slide.title ? ` · ${slide.title}` : ""}</p>
-            <p className="text-sm text-muted-foreground mt-1">{slide.text || slide.caption || JSON.stringify(slide)}</p>
+            <p className="text-sm font-medium">Slide {slide.slide ?? index + 1}{slide.title || slide.headline ? ` · ${slide.title || slide.headline}` : ""}</p>
+            <p className="text-sm text-muted-foreground mt-1">{slide.text || slide.body || slide.caption || JSON.stringify(slide)}</p>
+            {slide.visualNote && <p className="mt-2 text-xs text-muted-foreground">Visual: {slide.visualNote}</p>}
           </div>
         ))}
+        <TextBlock title="Caption">{schema.caption || post.caption}</TextBlock>
+        <TextBlock title="Visual direction">{schema.visualDirection}</TextBlock>
       </div>
     );
   }
@@ -1794,17 +2425,27 @@ function DraftPreviewPanel({
   onApprove,
   onReject,
   onQualityReview,
+  onRetrySkill,
   onApplyQualityCaption,
+  onFixPreflight,
   isReviewingQuality,
+  isRetryingSkill,
   isApplyingQualityCaption,
+  isFixingPreflight,
+  growthRules,
 }: {
   post: Post | null;
   onApprove?: () => void;
   onReject?: () => void;
   onQualityReview?: () => void;
+  onRetrySkill?: () => void;
   onApplyQualityCaption?: () => void;
+  onFixPreflight?: () => void;
   isReviewingQuality?: boolean;
+  isRetryingSkill?: boolean;
   isApplyingQualityCaption?: boolean;
+  isFixingPreflight?: boolean;
+  growthRules?: GrowthRules | null;
 }) {
   if (!post) {
     return (
@@ -1829,16 +2470,34 @@ function DraftPreviewPanel({
             <QualityBadge score={post.qualityScore} />
           </div>
           <h2 className="text-lg font-semibold leading-tight">{post.title || post.topic || "Untitled draft"}</h2>
+          <div className="mt-2">
+            <AiSkillLine post={post} />
+          </div>
           <p className="text-xs text-muted-foreground mt-1">Status: {displayStatus(post)}</p>
         </div>
 
         <PostHistoryTimeline post={post} />
+
+        <PreflightPanel
+          post={post}
+          growthRules={growthRules}
+          onFix={onFixPreflight}
+          isFixing={isFixingPreflight}
+        />
+
+        <CaptionOptimizerLight post={post} report={report} />
 
         <div className="flex flex-wrap gap-2">
           {onQualityReview && (
             <Button size="sm" variant="outline" onClick={onQualityReview} disabled={isReviewingQuality}>
               {isReviewingQuality ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />}
               Review quality
+            </Button>
+          )}
+          {onRetrySkill && (
+            <Button size="sm" variant="outline" onClick={onRetrySkill} disabled={isRetryingSkill}>
+              {isRetryingSkill ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+              Retry with AI
             </Button>
           )}
         </div>
@@ -1882,15 +2541,21 @@ function PostCard({
   onDelete,
   onRegenerateCopy,
   onGenerateImage,
+  onCopyImagePrompt,
   onRewrite,
   onQualityReview,
+  onRetrySkill,
   onApplyQualityCaption,
+  onFixPreflight,
   onPublish,
   isRegeneratingCopy,
   isGeneratingImage,
   isReviewingQuality,
+  isRetryingSkill,
   isApplyingQualityCaption,
+  isFixingPreflight,
   isPublishing,
+  growthRules,
   actionBar,
 }: {
   post: Post;
@@ -1902,15 +2567,21 @@ function PostCard({
   onDelete: () => void;
   onRegenerateCopy?: () => void;
   onGenerateImage?: () => void;
+  onCopyImagePrompt?: () => void;
   onRewrite?: () => void;
   onQualityReview?: () => void;
+  onRetrySkill?: () => void;
   onApplyQualityCaption?: () => void;
+  onFixPreflight?: () => void;
   onPublish?: () => void;
   isRegeneratingCopy?: boolean;
   isGeneratingImage?: boolean;
   isReviewingQuality?: boolean;
+  isRetryingSkill?: boolean;
   isApplyingQualityCaption?: boolean;
+  isFixingPreflight?: boolean;
   isPublishing?: boolean;
+  growthRules?: GrowthRules | null;
   actionBar?: ReactNode;
 }) {
   const isDraft = post.status === "draft" || post.status === "in_review";
@@ -1920,6 +2591,8 @@ function PostCard({
   const platformClass = PLATFORM_COLORS[post.platform || ""] || "bg-muted text-muted-foreground";
   const imageUrl = postImageUrl(post);
   const report = qualityReport(post.qualityReport);
+  const preflight = buildPreflightChecks(post, growthRules);
+  const preflightWarnCount = preflight.filter((check) => check.status === "warn").length;
 
   const statusBadgeClass = ((post.status === "posted" || post.status === "published") && !post.publishedAt)
     ? "bg-muted text-muted-foreground border border-border"
@@ -1995,7 +2668,7 @@ function PostCard({
             </span>
             {post.qualityScore != null && (
               <span
-                title="Quality score from AI skill evaluation"
+                title="AI quality score"
                 className={cn(
                   "text-[9px] font-bold px-1.5 py-0.5 rounded-full border",
                   post.qualityScore >= 0.75 ? "bg-green-50 text-green-700 border-green-200"
@@ -2006,12 +2679,26 @@ function PostCard({
                 Q {Math.round(post.qualityScore * 100)}
               </span>
             )}
+            {isTrendOrigin(post) && (
+              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full border bg-primary/10 text-primary border-primary/20">
+                Trend
+              </span>
+            )}
+            <span className={cn(
+              "text-[9px] font-medium px-1.5 py-0.5 rounded-full border",
+              preflightWarnCount ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-green-50 text-green-700 border-green-200"
+            )}>
+              Preflight {preflightWarnCount ? `${preflightWarnCount} issue${preflightWarnCount === 1 ? "" : "s"}` : "ready"}
+            </span>
           </div>
           <span className="text-xs text-muted-foreground">
             {format(new Date(post.createdAt), "MMM d")}
           </span>
         </div>
         {post.topic && <p className="text-xs text-muted-foreground font-medium mb-1 truncate">{post.topic}</p>}
+        <div className="mb-2">
+          <AiSkillLine post={post} />
+        </div>
         {isRegeneratingCopy ? (
           <div className="flex items-center gap-2 py-2 flex-1">
             <Loader2 className="w-4 h-4 text-primary animate-spin shrink-0" />
@@ -2067,6 +2754,16 @@ function PostCard({
           </div>
         )}
 
+        <div className="mt-2">
+          <PreflightPanel
+            post={post}
+            growthRules={growthRules}
+            onFix={onFixPreflight}
+            isFixing={isFixingPreflight}
+            compact
+          />
+        </div>
+
         {isDraft && (
           <div className="mt-3 space-y-2">
             {onQualityReview && (
@@ -2080,7 +2777,7 @@ function PostCard({
                 <Eye className="w-4 h-4 mr-2" /> Review Draft
               </Button>
             )}
-            {(onRegenerateCopy || onGenerateImage) && (
+            {(onRegenerateCopy || onGenerateImage || onCopyImagePrompt) && (
               <div className="flex gap-1.5">
                 {onRegenerateCopy && (
                   <Button
@@ -2106,6 +2803,18 @@ function PostCard({
                     {imageUrl ? "New Image" : "Gen Image"}
                   </Button>
                 )}
+                {onCopyImagePrompt && postImagePrompt(post) && (
+                  <Button
+                    variant="outline" size="sm"
+                    className="flex-1 h-7 text-xs gap-1"
+                    onClick={onCopyImagePrompt}
+                    disabled={isRegeneratingCopy || isGeneratingImage}
+                    title="Copy prompt for manual image generation"
+                  >
+                    <Copy className="w-3 h-3" />
+                    Copy Prompt
+                  </Button>
+                )}
               </div>
             )}
             {onRewrite && (
@@ -2118,6 +2827,18 @@ function PostCard({
               >
                 <RefreshCw className="w-3 h-3" />
                 Rewrite for platform
+              </Button>
+            )}
+            {onRetrySkill && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full h-7 text-xs gap-1"
+                onClick={onRetrySkill}
+                disabled={isRetryingSkill || isRegeneratingCopy || isGeneratingImage}
+              >
+                {isRetryingSkill ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                Retry with AI
               </Button>
             )}
             {onApprove && (

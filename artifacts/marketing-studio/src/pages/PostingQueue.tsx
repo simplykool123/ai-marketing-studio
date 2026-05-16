@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, Link, useSearch } from "wouter";
 import {
   useListPosts,
@@ -23,8 +23,9 @@ import { format, isToday, isTomorrow, isPast } from "date-fns";
 import {
   CheckCircle2, Clock, CalendarCheck, ListOrdered, PenLine,
   Loader2, AlertCircle, Workflow, Info, X, MoreHorizontal,
-  Download, Copy, CalendarPlus, FileJson,
+  Download, Copy, CalendarPlus, FileJson, CalendarClock, Flag,
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 const PLATFORM_COLORS: Record<string, string> = {
@@ -92,6 +93,14 @@ type MetaStatus = {
   missing: string[];
 };
 
+type BlogConnection = {
+  id: string;
+  siteName: string;
+  siteUrl: string;
+  endpointUrl: string;
+  status: string;
+};
+
 function asRecord(value: unknown): Record<string, any> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
 }
@@ -109,6 +118,24 @@ function postImageUrl(post: any): string | null {
     schema.backgroundImageUrl ||
     null
   );
+}
+
+function postVideoUrl(post: any): string | null {
+  const schema = asRecord(post.contentSchema);
+  return String(schema.videoUrl || schema.durableVideoUrl || schema.finalVideoUrl || "").trim() || null;
+}
+
+function contentNeedsMedia(post: any): boolean {
+  const type = `${post.contentType ?? ""} ${post.postType ?? ""} ${post.platform ?? ""}`.toLowerCase();
+  if (type.includes("blog") || type.includes("newsletter")) return false;
+  if (type.includes("video") || post.platform === "youtube") return true;
+  return post.platform === "instagram" || type.includes("image");
+}
+
+function hasRequiredMedia(post: any): boolean {
+  const type = `${post.contentType ?? ""} ${post.postType ?? ""}`.toLowerCase();
+  if (type.includes("video") || post.platform === "youtube") return !!postVideoUrl(post);
+  return !contentNeedsMedia(post) || !!postImageUrl(post);
 }
 
 function finalArtworkUrl(post: any): string {
@@ -153,6 +180,17 @@ async function webhookExportApi(clientId: string, postId: string) {
   });
   if (!res.ok) throw new Error("Failed to webhook export");
   return res.json();
+}
+
+async function rescheduleApi(clientId: string, postId: string, scheduledAt: string) {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/posts/${postId}/reschedule`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ scheduledAt }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Failed to reschedule");
+  return data;
 }
 
 async function autoScheduleApi(clientId: string) {
@@ -200,6 +238,37 @@ async function publishPostApi(clientId: string, postId: string) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? "Failed to publish post");
   return data;
+}
+
+async function fetchBlogConnection(clientId: string): Promise<{ connection: BlogConnection | null }> {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/blog/site-connection`);
+  if (!res.ok) throw new Error("Failed to load website blog connection");
+  return res.json();
+}
+
+async function saveBlogConnectionApi(clientId: string, input: { siteName: string; siteUrl: string; endpointUrl: string }) {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/blog/site-connection`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Failed to save website connection");
+  return data as { connection: BlogConnection; secret: string };
+}
+
+async function testBlogConnectionApi(clientId: string) {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/blog/site-connection/test`, { method: "POST" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) throw new Error(data.error ?? `Connection test failed${data.status ? ` (${data.status})` : ""}`);
+  return data;
+}
+
+async function publishBlogToSiteApi(clientId: string, postId: string) {
+  const res = await fetch(`${BASE}/api/clients/${clientId}/blog/${postId}/publish-to-site`, { method: "POST" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Blog publish failed");
+  return data as { publishedUrl?: string };
 }
 
 function artworkBaseImageUrl(post: any): string | null {
@@ -298,6 +367,21 @@ function scheduledReadinessLabel(post: any, publishingReadiness?: PublishingRead
   return "Blocked: no publishing destination connected";
 }
 
+function queueReadinessLabel(post: any, publishingReadiness?: PublishingReadiness): { label: string; className: string } {
+  if (post.status === "failed") return { label: "Failed last publish", className: "bg-red-50 text-red-700 border-red-200" };
+  if (post.status === "scheduled") return { label: "Scheduled", className: "bg-primary/10 text-primary border-primary/20" };
+  if (!hasRequiredMedia(post)) return { label: "Missing image/video", className: "bg-amber-50 text-amber-800 border-amber-200" };
+  const platform = post.platform ?? "instagram";
+  const directConnected = publishingReadiness?.directConnectedPlatforms?.includes(platform) ?? false;
+  if (!directConnected && !publishingReadiness?.workflowConfigured && !publishingReadiness?.canExportManual) {
+    return { label: "Missing destination", className: "bg-amber-50 text-amber-800 border-amber-200" };
+  }
+  if (!directConnected && !publishingReadiness?.workflowConfigured && publishingReadiness?.canExportManual) {
+    return { label: "Ready for manual export", className: "bg-blue-50 text-blue-700 border-blue-200" };
+  }
+  return { label: "Ready", className: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+}
+
 function platformPostId(post: any): string {
   return String(asRecord(asRecord(post.contentSchema).publish).platformPostId || "");
 }
@@ -348,6 +432,13 @@ export default function PostingQueue() {
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(
     () => typeof window !== "undefined" && window.localStorage.getItem("posting-mock-banner-dismissed") === "1"
   );
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
+  const [editScheduleDate, setEditScheduleDate] = useState("");
+  const [editScheduleTime, setEditScheduleTime] = useState("");
+  const [blogSiteName, setBlogSiteName] = useState("");
+  const [blogSiteUrl, setBlogSiteUrl] = useState("");
+  const [blogEndpointUrl, setBlogEndpointUrl] = useState("");
+  const [lastBlogSecret, setLastBlogSecret] = useState("");
 
   const dismissBanner = () => {
     setBannerDismissed(true);
@@ -370,13 +461,27 @@ export default function PostingQueue() {
     queryFn: () => fetchMetaStatus(clientId!),
     enabled: !!clientId,
   });
+  const { data: blogConnectionData } = useQuery({
+    queryKey: ["blog-site-connection", clientId],
+    queryFn: () => fetchBlogConnection(clientId!),
+    enabled: !!clientId,
+  });
   const invalidate = () => {
     if (!clientId) return;
     queryClient.invalidateQueries({ queryKey: getListPostsQueryKey(clientId) });
     queryClient.invalidateQueries({ queryKey: ["enhanced-dashboard", clientId] });
     queryClient.invalidateQueries({ queryKey: ["publishing-readiness", clientId] });
     queryClient.invalidateQueries({ queryKey: ["meta-status", clientId] });
+    queryClient.invalidateQueries({ queryKey: ["blog-site-connection", clientId] });
   };
+
+  useEffect(() => {
+    const connection = blogConnectionData?.connection;
+    if (!connection) return;
+    setBlogSiteName(connection.siteName);
+    setBlogSiteUrl(connection.siteUrl);
+    setBlogEndpointUrl(connection.endpointUrl);
+  }, [blogConnectionData?.connection]);
 
   useEffect(() => {
     if (!search) return;
@@ -485,6 +590,41 @@ export default function PostingQueue() {
     }),
   });
 
+  const rescheduleMutation = useMutation({
+    mutationFn: ({ postId, scheduledAt }: { postId: string; scheduledAt: string }) =>
+      rescheduleApi(clientId!, postId, scheduledAt),
+    onSuccess: () => {
+      invalidate();
+      setEditingScheduleId(null);
+      toast({ title: "Schedule updated" });
+    },
+    onError: () => toast({ title: "Failed to update schedule", variant: "destructive" }),
+  });
+
+  const openEditSchedule = (post: any) => {
+    setEditingScheduleId(post.id);
+    if (post.scheduledAt) {
+      const d = new Date(post.scheduledAt);
+      setEditScheduleDate(d.toISOString().slice(0, 10));
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(d.getMinutes()).padStart(2, "0");
+      setEditScheduleTime(`${hh}:${mm}`);
+    } else {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      setEditScheduleDate(tomorrow.toISOString().slice(0, 10));
+      setEditScheduleTime("09:00");
+    }
+  };
+
+  const saveReschedule = (postId: string) => {
+    if (!editScheduleDate) return;
+    const [hours, minutes] = (editScheduleTime || "09:00").split(":").map(Number);
+    const dt = new Date(`${editScheduleDate}T00:00:00`);
+    dt.setHours(hours ?? 9, minutes ?? 0, 0, 0);
+    rescheduleMutation.mutate({ postId, scheduledAt: dt.toISOString() });
+  };
+
   const connectMetaMutation = useMutation({
     mutationFn: () => startMetaConnectApi(clientId!),
     onSuccess: (redirectUrl) => {
@@ -511,6 +651,31 @@ export default function PostingQueue() {
         variant: "destructive",
       });
     },
+  });
+
+  const saveBlogConnectionMutation = useMutation({
+    mutationFn: () => saveBlogConnectionApi(clientId!, { siteName: blogSiteName, siteUrl: blogSiteUrl, endpointUrl: blogEndpointUrl }),
+    onSuccess: (data) => {
+      setLastBlogSecret(data.secret);
+      invalidate();
+      toast({ title: "Website blog connection saved", description: "Copy the new secret into your receiver. It is shown only once." });
+    },
+    onError: (err) => toast({ title: "Website connection failed", description: err instanceof Error ? err.message : "Could not save website connection.", variant: "destructive" }),
+  });
+
+  const testBlogConnectionMutation = useMutation({
+    mutationFn: () => testBlogConnectionApi(clientId!),
+    onSuccess: () => toast({ title: "Website receiver responded" }),
+    onError: (err) => toast({ title: "Connection test failed", description: err instanceof Error ? err.message : "Receiver did not respond.", variant: "destructive" }),
+  });
+
+  const publishBlogMutation = useMutation({
+    mutationFn: (postId: string) => publishBlogToSiteApi(clientId!, postId),
+    onSuccess: (data) => {
+      invalidate();
+      toast({ title: "Blog published to website", description: data.publishedUrl });
+    },
+    onError: (err) => toast({ title: "Website blog publish failed", description: err instanceof Error ? err.message : "Connect website to publish blog.", variant: "destructive" }),
   });
 
   const queuePosts = (posts as any[]).filter((post) => {
@@ -646,6 +811,45 @@ export default function PostingQueue() {
             </button>
           </div>
         )}
+
+        <Card className="border-amber-200/70 bg-amber-50/30">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-sm font-semibold">Website Blog Connection</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Approved blog drafts can publish to a website receiver with HMAC signing.
+                </p>
+              </div>
+              <Badge variant="outline" className={cn("w-fit text-[10px]", blogConnectionData?.connection ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-800 border-amber-200")}>
+                {blogConnectionData?.connection ? "Connected" : "Not connected"}
+              </Badge>
+            </div>
+            <div className="grid gap-2 md:grid-cols-3">
+              <Input className="h-8 text-xs" placeholder="Site name" value={blogSiteName} onChange={(e) => setBlogSiteName(e.target.value)} />
+              <Input className="h-8 text-xs" placeholder="https://client-site.com" value={blogSiteUrl} onChange={(e) => setBlogSiteUrl(e.target.value)} />
+              <Input className="h-8 text-xs" placeholder="Blog receiver endpoint" value={blogEndpointUrl} onChange={(e) => setBlogEndpointUrl(e.target.value)} />
+            </div>
+            {lastBlogSecret && (
+              <div className="rounded-md border border-amber-200 bg-white p-2 text-xs">
+                <span className="font-medium text-amber-900">New secret, shown once:</span>{" "}
+                <code className="font-mono text-amber-900">{lastBlogSecret}</code>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" className="h-7 text-xs" onClick={() => saveBlogConnectionMutation.mutate()} disabled={saveBlogConnectionMutation.isPending || !blogSiteUrl || !blogEndpointUrl}>
+                {saveBlogConnectionMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}
+                Generate secret & save
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => testBlogConnectionMutation.mutate()} disabled={testBlogConnectionMutation.isPending || !blogConnectionData?.connection}>
+                {testBlogConnectionMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}
+                Test connection
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-xs" disabled>Receiver examples in docs</Button>
+            </div>
+          </CardContent>
+        </Card>
+
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Publish Queue</h1>
@@ -673,7 +877,7 @@ export default function PostingQueue() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All posts</SelectItem>
-                <SelectItem value="approved">Ready</SelectItem>
+                <SelectItem value="approved">Ready to post</SelectItem>
                 <SelectItem value="export_ready">Export ready</SelectItem>
                 <SelectItem value="scheduled">Scheduled</SelectItem>
                 <SelectItem value="failed">Failed</SelectItem>
@@ -830,6 +1034,7 @@ export default function PostingQueue() {
               const canAct = ["approved", "export_ready", "scheduled", "failed"].includes(post.status);
               const platform = post.platform ?? "instagram";
               const scheduledReadiness = scheduledReadinessLabel(post, publishingReadiness);
+              const queueReadiness = queueReadinessLabel(post, publishingReadiness);
               const canPublishToMeta =
                 canAct &&
                 isMetaPlatform(platform) &&
@@ -876,10 +1081,31 @@ export default function PostingQueue() {
                         )}>
                           {postStatusLabel(post)}
                         </Badge>
+                        <Badge variant="outline" className={cn("text-xs", queueReadiness.className)}>
+                          {queueReadiness.label}
+                        </Badge>
                       </div>
                       <p className="text-sm font-medium truncate">{post.topic}</p>
                       <p className="text-xs text-muted-foreground truncate">{post.caption?.slice(0, 110)}{post.caption?.length > 110 ? "..." : ""}</p>
                       {post.hashtags && <p className="text-[11px] text-muted-foreground/80 truncate">{post.hashtags}</p>}
+                      <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                        {post.campaignId && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                            <Flag className="w-2.5 h-2.5" />
+                            {post.topic?.split(" ").slice(0, 3).join(" ") ?? "Campaign"}
+                          </span>
+                        )}
+                        {typeof post.qualityScore === "number" && (
+                          <Badge variant="outline" className={cn(
+                            "text-[10px] px-1.5 h-4",
+                            post.qualityScore >= 80 ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                            post.qualityScore >= 50 ? "bg-amber-50 text-amber-700 border-amber-200" :
+                            "bg-red-50 text-red-700 border-red-200"
+                          )}>
+                            AI quality: {post.qualityScore}
+                          </Badge>
+                        )}
+                      </div>
                       <PostTimeline post={post} />
                       {scheduledReadiness && (
                         <p className={cn(
@@ -887,6 +1113,11 @@ export default function PostingQueue() {
                           scheduledReadiness.startsWith("Auto") ? "text-emerald-700" : "text-amber-700"
                         )}>
                           {scheduledReadiness}
+                        </p>
+                      )}
+                      {!hasRequiredMedia(post) && (
+                        <p className="text-xs text-amber-700 mt-0.5">
+                          Add final artwork, image, or video in Review before posting.
                         </p>
                       )}
                       {hasPublishedProof && platformPostId(post) && (
@@ -900,16 +1131,59 @@ export default function PostingQueue() {
                       )}
                     </div>
 
-                    <div className="text-right shrink-0 hidden sm:block">
-                      <div className={cn(
-                        "flex items-center gap-1 text-xs",
-                        schedule.urgent && !isPublished ? "text-amber-600 font-medium" : "text-muted-foreground"
-                      )}>
-                        <Clock className="w-3 h-3" />
-                        {hasPublishedProof
-                          ? format(new Date(post.publishedAt), "MMM d, h:mm a")
-                          : schedule.label}
-                      </div>
+                    <div className="shrink-0 hidden sm:block min-w-[140px] text-right">
+                      {editingScheduleId === post.id ? (
+                        <div className="flex flex-col gap-1 items-end">
+                          <Input
+                            type="date"
+                            value={editScheduleDate}
+                            onChange={(e) => setEditScheduleDate(e.target.value)}
+                            className="h-7 text-xs w-36"
+                          />
+                          <Input
+                            type="time"
+                            value={editScheduleTime}
+                            onChange={(e) => setEditScheduleTime(e.target.value)}
+                            className="h-7 text-xs w-36"
+                          />
+                          <div className="flex gap-1 mt-0.5">
+                            <button
+                              className="text-[10px] text-primary font-medium hover:underline"
+                              onClick={() => saveReschedule(post.id)}
+                              disabled={rescheduleMutation.isPending}
+                            >
+                              {rescheduleMutation.isPending ? "Saving…" : "Save"}
+                            </button>
+                            <button
+                              className="text-[10px] text-muted-foreground hover:underline"
+                              onClick={() => setEditingScheduleId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className={cn(
+                            "flex items-center justify-end gap-1 text-xs",
+                            schedule.urgent && !isPublished ? "text-amber-600 font-medium" : "text-muted-foreground"
+                          )}>
+                            <Clock className="w-3 h-3" />
+                            {hasPublishedProof
+                              ? format(new Date(post.publishedAt), "MMM d, h:mm a")
+                              : schedule.label}
+                          </div>
+                          {canAct && !hasPublishedProof && (
+                            <button
+                              className="text-[10px] text-muted-foreground/70 hover:text-primary transition-colors mt-0.5 flex items-center gap-0.5 ml-auto"
+                              onClick={() => openEditSchedule(post)}
+                            >
+                              <CalendarClock className="w-2.5 h-2.5" />
+                              Edit schedule
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex gap-1.5 shrink-0 flex-wrap justify-end max-w-[220px]">
@@ -950,6 +1224,10 @@ export default function PostingQueue() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              <DropdownMenuItem onSelect={() => openEditSchedule(post)}>
+                                <CalendarClock className="w-3.5 h-3.5 mr-2" />
+                                Edit Schedule
+                              </DropdownMenuItem>
                               <DropdownMenuItem onSelect={() => setArtworkPost(post)}>
                                 <PenLine className="w-3.5 h-3.5 mr-2" />
                                 Edit Artwork
@@ -964,6 +1242,15 @@ export default function PostingQueue() {
                                 <Workflow className="w-3.5 h-3.5 mr-2" />
                                 {hasWorkflow ? "Send to workflow" : "Setup workflow first"}
                               </DropdownMenuItem>
+                              {post.postType === "blog" && (
+                                <DropdownMenuItem
+                                  disabled={!blogConnectionData?.connection || publishBlogMutation.isPending}
+                                  onSelect={() => publishBlogMutation.mutate(post.id)}
+                                >
+                                  <FileJson className="w-3.5 h-3.5 mr-2" />
+                                  {blogConnectionData?.connection ? "Publish to Website" : "Connect website to publish blog"}
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuItem
                                 disabled={metaFullyConnected || connectMetaMutation.isPending}
                                 onSelect={() => {

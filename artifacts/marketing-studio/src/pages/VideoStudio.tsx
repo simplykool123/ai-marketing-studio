@@ -97,10 +97,12 @@ export default function VideoStudio() {
   const { clientId } = useParams<{ clientId: string }>();
   const [location] = useLocation();
   const { toast } = useToast();
-  const initialIdea = new URLSearchParams(location.split("?")[1] ?? "").get("idea") ?? "";
+  const _vsQs = new URLSearchParams(location.split("?")[1] ?? "");
+  const initialIdea     = _vsQs.get("idea") ?? _vsQs.get("topic") ?? _vsQs.get("prompt") ?? "";
+  const initialPlatform = _vsQs.get("platform") ?? "instagram_reels";
 
   const [topic, setTopic] = useState(initialIdea);
-  const [platform, setPlatform] = useState("instagram_reels");
+  const [platform, setPlatform] = useState(initialPlatform);
   const [duration, setDuration] = useState("30s");
   const [qualityMode, setQualityMode] = useState("balanced");
   const [loading, setLoading] = useState(false);
@@ -182,7 +184,7 @@ export default function VideoStudio() {
       const data = await res.json().catch(() => ({})) as VideoGenerationJob;
       if (!res.ok) {
         const message = data.error === "FAL_KEY is not configured"
-          ? "fal.ai is not configured. Add FAL_KEY on the API server to test video generation."
+          ? "Video generation not connected. Add KLING_API_KEY/ELEVENLABS_API_KEY for the next provider path, or FAL_KEY for the current test renderer. Reel scripts still work."
           : data.error ?? "Video generation failed.";
         throw new Error(message);
       }
@@ -248,7 +250,7 @@ export default function VideoStudio() {
     const data = await res.json().catch(() => ({})) as VideoGenerationJob;
     if (!res.ok) {
       const message = data.error === "FAL_KEY is not configured"
-        ? "fal.ai is not configured. Add FAL_KEY on the API server to test video generation."
+        ? "Video generation not connected. Reel scripts still work."
         : data.error ?? "Could not check video status.";
       setVideoError(message);
       setVideoJob((current) => current ? { ...current, status: "failed", error: message } : current);
@@ -353,7 +355,8 @@ export default function VideoStudio() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
-            <p>Video generation may take 1-3 minutes and may use credits.</p>
+            <p>Video generation not connected unless provider keys are configured. Reel script generation still works.</p>
+            <p>Kling and ElevenLabs are scaffolded in Settings → AI Keys; provider video may use credits when enabled.</p>
             <p>Generated provider URLs may expire until you save the video to Review.</p>
           </div>
           <div className="space-y-1.5">

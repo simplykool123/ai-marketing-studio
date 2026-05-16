@@ -20,3 +20,4 @@ export * from "./campaign_outputs";
 export * from "./video_concepts";
 export * from "./skill_configs";
 export * from "./quality_checks";
+export * from "./blog_site_connections";

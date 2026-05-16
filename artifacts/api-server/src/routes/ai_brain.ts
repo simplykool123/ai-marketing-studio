@@ -81,6 +81,7 @@ Today's date: ${today}
 - rationale must clearly say why the idea was suggested: based on storyline, based on brand DNA, based on past post gap, based on performance memory, or based on rejection memory
 - Vary formats: case study, behind-the-scenes, educational post, social proof, product spotlight, seasonal hook, thought leadership
 - Use Content Growth Rules from memory when useful: CTAs, website links, WhatsApp, hashtags, SEO/location/service keywords, and avoid phrases should guide ideas without making posts feel spammy.
+- Shape captions by platform when suggesting angles: Instagram hook/value/CTA/hashtags; LinkedIn professional hook/useful insight/soft CTA/fewer hashtags; Facebook friendly CTA/link/WhatsApp if useful; X short hook/concise CTA; Blog intro SEO keyword focus.
 - confidence_score (0–100): your honest assessment of how well this idea fits the brand right now
 - Do NOT hallucinate trends or statistics
 - Do NOT suggest meme or joke content unless brand voice explicitly allows it

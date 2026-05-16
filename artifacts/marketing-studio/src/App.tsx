@@ -36,6 +36,7 @@ import Reports from "@/pages/Reports";
 import TeamAccess from "@/pages/TeamAccess";
 import InviteAccept from "@/pages/InviteAccept";
 import TrendIntelligence from "@/pages/TrendIntelligence";
+import CreativeStudio from "@/pages/CreativeStudio";
 
 const queryClient = new QueryClient();
 
@@ -192,6 +193,9 @@ function Router() {
       </Route>
       <Route path="/clients/:clientId/campaigns/generate">
         {() => <ProtectedClientRoute><CampaignGenerator /></ProtectedClientRoute>}
+      </Route>
+      <Route path="/clients/:clientId/creative-studio">
+        {() => <ProtectedClientRoute><CreativeStudio /></ProtectedClientRoute>}
       </Route>
       <Route path="/clients/:clientId/blog">
         {() => <ProtectedClientRoute><BlogStudio /></ProtectedClientRoute>}

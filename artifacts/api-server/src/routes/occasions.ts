@@ -212,6 +212,8 @@ ${planText}
 - Match each draft's platform and contentType exactly.
 - Keep it respectful, useful, and brand-safe.
 - Include a caption, hashtags, imagePrompt, creativeDirection, and festiveAngle for every draft.
+- Apply Content Growth Rules when useful but do not make the caption spammy.
+- Caption structure by platform: Instagram needs hook, short value body, CTA, hashtags; LinkedIn needs professional hook, useful insight, soft CTA, fewer hashtags; Facebook needs friendly caption with CTA/link/WhatsApp if useful; X needs short hook and concise CTA; Blog intro needs SEO keyword focus and readable meta-style angle.
 - Include a headline and subline for image/artwork drafts.
 - Image prompts must describe a background only: no text, no logo, no typography.
 - Do not schedule or publish anything.

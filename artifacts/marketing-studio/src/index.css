@@ -74,26 +74,26 @@
   --elevate-1: rgba(0,0,0, .02);
   --elevate-2: rgba(0,0,0, .06);
 
-  /* Pure white canvas */
-  --background: 0 0% 100%;
+  /* Warm white canvas */
+  --background: 42 44% 98%;
   --foreground: 220 13% 18%;
 
-  --border: 220 13% 91%;
-  --input: 220 13% 91%;
-  --ring: 215 28% 55%;
+  --border: 35 24% 89%;
+  --input: 35 24% 89%;
+  --ring: 250 55% 58%;
 
   /* Cards: white with a very soft shadow */
   --card: 0 0% 100%;
   --card-foreground: 220 13% 18%;
-  --card-border: 220 13% 91%;
+  --card-border: 35 24% 90%;
 
   /* Sidebar: barely-there warm grey */
-  --sidebar: 220 14% 97%;
+  --sidebar: 42 40% 97%;
   --sidebar-foreground: 220 13% 22%;
   --sidebar-border: 220 13% 91%;
-  --sidebar-primary: 215 28% 48%;
+  --sidebar-primary: 250 52% 52%;
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 220 13% 93%;
+  --sidebar-accent: 42 36% 93%;
   --sidebar-accent-foreground: 220 13% 22%;
   --sidebar-ring: 215 28% 48%;
 
@@ -102,31 +102,31 @@
   --popover-foreground: 220 13% 18%;
   --popover-border: 220 13% 91%;
 
-  /* Primary: muted slate-blue — professional, calm */
-  --primary: 215 28% 48%;
+  /* Primary: premium indigo */
+  --primary: 250 52% 52%;
   --primary-foreground: 0 0% 100%;
 
   /* Secondary: lightest grey */
-  --secondary: 220 14% 96%;
+  --secondary: 42 38% 95%;
   --secondary-foreground: 220 13% 22%;
 
   /* Muted */
-  --muted: 220 14% 96%;
+  --muted: 42 34% 95%;
   --muted-foreground: 220 9% 52%;
 
-  /* Accent: soft pastel sky */
-  --accent: 210 40% 94%;
-  --accent-foreground: 215 28% 38%;
+  /* Accent: warm amber CTA highlight */
+  --accent: 42 92% 90%;
+  --accent-foreground: 36 82% 32%;
 
   /* Destructive */
   --destructive: 0 72% 58%;
   --destructive-foreground: 0 0% 100%;
 
   /* Charts — pastel palette */
-  --chart-1: 215 55% 60%;
-  --chart-2: 165 45% 55%;
-  --chart-3: 35 80% 65%;
-  --chart-4: 280 40% 65%;
+  --chart-1: 250 55% 60%;
+  --chart-2: 155 48% 45%;
+  --chart-3: 38 88% 58%;
+  --chart-4: 280 42% 62%;
   --chart-5: 340 55% 65%;
 
   --app-font-sans: 'Inter', sans-serif;
@@ -136,9 +136,9 @@
 
   --shadow-2xs: 0px 1px 2px rgba(0,0,0,.04);
   --shadow-xs:  0px 1px 3px rgba(0,0,0,.05);
-  --shadow-sm:  0px 1px 3px rgba(0,0,0,.05), 0px 1px 2px rgba(0,0,0,.03);
-  --shadow:     0px 2px 4px rgba(0,0,0,.06), 0px 1px 2px rgba(0,0,0,.03);
-  --shadow-md:  0px 4px 8px rgba(0,0,0,.07), 0px 2px 4px rgba(0,0,0,.04);
+  --shadow-sm:  0px 1px 3px rgba(55,45,20,.055), 0px 1px 2px rgba(55,45,20,.035);
+  --shadow:     0px 2px 5px rgba(55,45,20,.07), 0px 1px 2px rgba(55,45,20,.035);
+  --shadow-md:  0px 8px 18px rgba(55,45,20,.075), 0px 2px 5px rgba(55,45,20,.045);
   --shadow-lg:  0px 8px 16px rgba(0,0,0,.08), 0px 4px 6px rgba(0,0,0,.04);
   --shadow-xl:  0px 12px 24px rgba(0,0,0,.09), 0px 6px 10px rgba(0,0,0,.04);
   --shadow-2xl: 0px 20px 40px rgba(0,0,0,.10);
@@ -236,7 +236,7 @@
   }
   .no-default-hover-elevate {}
   .agency-surface {
-    @apply rounded-xl border border-card-border/80 bg-card/95 shadow-sm ring-1 ring-black/[0.015];
+    @apply rounded-lg border border-card-border/80 bg-card/95 shadow-sm ring-1 ring-black/[0.015];
   }
   .agency-section-title {
     @apply text-xs font-semibold uppercase tracking-wide text-muted-foreground;

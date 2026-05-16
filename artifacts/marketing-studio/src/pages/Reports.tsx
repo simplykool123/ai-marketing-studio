@@ -26,6 +26,12 @@ type ClientReport = {
     totalImpressions: number;
     engagementRate: number | null;
     bestPerformingPlatform: string | null;
+    draftsGenerated?: number;
+    approvedDrafts?: number;
+    rejectedDrafts?: number;
+    campaignCount?: number;
+    platformMix?: Record<string, number>;
+    formatMix?: Record<string, number>;
   };
   publishedPosts: Array<{
     id: string;
@@ -330,17 +336,34 @@ export default function Reports() {
             <CardContent>
               <div className="grid gap-3 md:grid-cols-5 print-grid">
                 {[
+                  ["AI created", (report.summary.draftsGenerated ?? 0).toLocaleString()],
+                  ["Approved", (report.summary.approvedDrafts ?? 0).toLocaleString()],
+                  ["Rejected", (report.summary.rejectedDrafts ?? 0).toLocaleString()],
                   ["Posts published", report.summary.postsPublished.toLocaleString()],
                   ["Scheduled posts", report.summary.scheduledPosts.toLocaleString()],
-                  ["Reach", metricText(report.summary.totalReach)],
-                  ["Engagement rate", engagementText(report.summary.engagementRate)],
-                  ["Best platform", report.summary.bestPerformingPlatform ?? "Still building"],
+                  ["Campaigns", (report.summary.campaignCount ?? 0).toLocaleString()],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-lg border p-4">
                     <p className="text-xs text-muted-foreground print-muted">{label}</p>
                     <p className="mt-2 text-2xl font-semibold capitalize">{value}</p>
                   </div>
                 ))}
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div className="rounded-lg border p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide mb-2">Format mix</p>
+                  <BulletList
+                    items={Object.entries(report.summary.formatMix ?? {}).map(([formatName, count]) => `${formatName}: ${count}`)}
+                    empty="No generated formats in this period yet."
+                  />
+                </div>
+                <div className="rounded-lg border p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide mb-2">Platform mix</p>
+                  <BulletList
+                    items={Object.entries(report.summary.platformMix ?? {}).map(([platformName, count]) => `${platformName}: ${count}`)}
+                    empty="No platform mix yet."
+                  />
+                </div>
               </div>
             </CardContent>
           </Card>

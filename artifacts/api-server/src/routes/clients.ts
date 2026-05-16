@@ -23,6 +23,8 @@ import {
   requireClientRole,
   type AuthRequest,
 } from "../middleware/auth.js";
+import { safeErrorMessage } from "../lib/ai-provider.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 
@@ -83,24 +85,46 @@ router.post("/clients", async (req: AuthRequest, res) => {
   try {
     const body = CreateClientBody.parse(req.body);
     const color = body.color ?? COLORS[Math.floor(Math.random() * COLORS.length)];
-    const [client] = await db
-      .insert(clientsTable)
-      .values({
-        name: body.name,
-        color,
-        avatarInitials: getInitials(body.name),
-      })
-      .returning();
+    const [client] = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(clientsTable)
+        .values({
+          name: body.name,
+          color,
+          avatarInitials: getInitials(body.name),
+        })
+        .returning();
 
-    await db.insert(clientUsersTable).values({
-      clientId: client!.id,
-      userId: req.userId!,
-      role: "owner",
+      if (!created) throw new Error("Client insert returned no row");
+
+      await tx.insert(clientUsersTable).values({
+        clientId: created.id,
+        userId: req.userId!,
+        role: "owner",
+      });
+
+      return [created];
     });
 
     res.status(201).json(client);
   } catch (err) {
-    res.status(400).json({ error: "Failed to create client" });
+    if (err && typeof err === "object" && "issues" in err && Array.isArray((err as { issues?: unknown[] }).issues)) {
+      const issues = (err as { issues: Array<{ path?: Array<string | number>; message?: string }> }).issues;
+      res.status(400).json({
+        error: "Invalid client details.",
+        details: issues.map((issue) => ({
+          field: issue.path?.join(".") || "body",
+          message: issue.message ?? "Invalid value",
+        })),
+      });
+      return;
+    }
+
+    logger.error({ error: safeErrorMessage(err), userIdPresent: req.userId ? "yes" : "no" }, "Client create failed");
+    res.status(400).json({
+      error: "Failed to create client.",
+      details: "Check that your user profile exists and the client name is valid.",
+    });
   }
 });
 

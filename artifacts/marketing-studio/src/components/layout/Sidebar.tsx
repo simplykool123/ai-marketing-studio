@@ -5,7 +5,6 @@ import {
   Home,
   LayoutDashboard,
   Dna,
-  Calendar as CalendarIcon,
   Menu,
   X,
   ImageIcon,
@@ -16,8 +15,6 @@ import {
   ChevronRight,
   BrainCircuit,
   Newspaper,
-  Mail,
-  Share2,
   ListOrdered,
   Zap,
   BookOpen,
@@ -29,7 +26,11 @@ import {
   BarChart3,
   Users,
   TrendingUp,
-  HelpCircle,
+  Wand2,
+  Brain,
+  CalendarDays,
+  Share2,
+  Calendar as CalendarIcon,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useState, useEffect, useRef } from "react";
@@ -37,7 +38,6 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -52,12 +52,12 @@ async function fetchDashboardPendingCount(clientId: string): Promise<number> {
   }
 }
 
-type NavItem = { href: string; label: string; icon: React.ElementType; badge?: number; help?: string };
+type NavItem = { href: string; label: string; icon: React.ElementType; badge?: number };
 type NavSection = { label: string; items: NavItem[] };
 
 export function Sidebar({ clientId }: { clientId?: string }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const { toast } = useToast();
@@ -84,56 +84,57 @@ export function Sidebar({ clientId }: { clientId?: string }) {
     prevCountRef.current = pendingCount;
   }, [pendingCount, clientId]);
 
-  const primaryItems: NavItem[] = clientId ? [
+  // Core flow — always visible
+  const coreItems: NavItem[] = clientId ? [
     { href: `/clients/${clientId}`, label: "Dashboard", icon: LayoutDashboard },
-    { href: `/clients/${clientId}/brand-dna`, label: "Brand Setup", icon: Dna, help: "Define voice, audience, colors, assets, and growth rules. Next: research trends or generate a campaign." },
-    { href: `/clients/${clientId}/campaigns/generate`, label: "Campaign Planner", icon: Flag, help: "Turn strategy into draft posts, images, blogs, and videos. Next: Review." },
-    { href: `/clients/${clientId}/marketing-calendar`, label: "Marketing Calendar", icon: CalendarIcon, help: "Create occasion-based drafts. Next: Review and schedule." },
-    { href: `/clients/${clientId}/drafts?tab=pending`, label: "Review", icon: CheckSquare, badge: pendingCount > 0 ? pendingCount : undefined, help: "Rewrite, quality-check, edit artwork, then approve drafts into the queue." },
-    { href: `/clients/${clientId}/assets`, label: "Assets", icon: ImageIcon, help: "Store generated, uploaded, and imported visuals. Use these in Image Studio and Review." },
-    { href: `/clients/${clientId}/queue`, label: "Publish Queue", icon: ListOrdered, help: "Approved posts wait here for export, scheduling, posting, or failure fixes." },
-    { href: `/clients/${clientId}/memory`, label: "AI Memory", icon: Database, help: "Long-term client learning: what works, what to avoid, trends, and content rules." },
-    { href: `/clients/${clientId}/reports`, label: "Reports", icon: BarChart3, help: "Client-ready summary of posted work, performance, gaps, and next steps." },
-    { href: `/clients/${clientId}/team`, label: "Team Access", icon: Users, help: "Invite people and manage workspace roles." },
+    { href: `/clients/${clientId}/creative-studio`, label: "Creative Studio", icon: Wand2 },
+    { href: `/clients/${clientId}/drafts?tab=pending`, label: "Review", icon: CheckSquare, badge: pendingCount > 0 ? pendingCount : undefined },
+    { href: `/clients/${clientId}/queue`, label: "Publish Queue", icon: ListOrdered },
+    { href: `/clients/${clientId}/memory`, label: "AI Memory", icon: Database },
+    { href: `/clients/${clientId}/reports`, label: "Reports", icon: BarChart3 },
   ] : [];
 
-  const advancedSections: NavSection[] = clientId ? [
+  // Advanced tools hidden by default
+  const moreSections: NavSection[] = clientId ? [
     {
       label: "Plan",
       items: [
-        { href: `/clients/${clientId}/brain`, label: "AI Ideas", icon: BrainCircuit, help: "Get next-post ideas from Brand DNA, Memory, Storylines, and trend insights. Next: create drafts." },
-        { href: `/clients/${clientId}/research`, label: "Trend Intelligence", icon: TrendingUp, help: "Research current signals and brand-safe trend ideas." },
-        { href: `/clients/${clientId}/storylines`, label: "Storylines", icon: BookOpen, help: "Create a campaign arc that keeps posts connected over weeks. Next: Campaign Planner." },
-        { href: `/clients/${clientId}/calendar`, label: "Draft Calendar", icon: CalendarIcon, help: "Calendar view of saved drafts." },
+        { href: `/clients/${clientId}/brain`, label: "AI Ideas", icon: Brain },
+        { href: `/clients/${clientId}/research`, label: "Trend Intelligence", icon: TrendingUp },
+        { href: `/clients/${clientId}/campaigns/generate`, label: "Campaign Planner", icon: Flag },
+        { href: `/clients/${clientId}/storylines`, label: "Storylines", icon: BookOpen },
+        { href: `/clients/${clientId}/marketing-calendar`, label: "Occasions", icon: CalendarDays },
+        { href: `/clients/${clientId}/calendar`, label: "Draft Calendar", icon: CalendarIcon },
       ],
     },
     {
       label: "Create",
       items: [
-        { href: `/clients/${clientId}/blog`, label: "Blog", icon: Newspaper },
-        { href: `/clients/${clientId}/image-studio`, label: "Image", icon: Palette },
-        { href: `/clients/${clientId}/video-studio`, label: "Video", icon: Video },
+        { href: `/clients/${clientId}/image-studio`, label: "Image Studio", icon: Palette },
+        { href: `/clients/${clientId}/blog`, label: "Blog Studio", icon: Newspaper },
+        { href: `/clients/${clientId}/video-studio`, label: "Video Studio", icon: Video },
         { href: `/clients/${clientId}/bulk-generate`, label: "Bulk Generate", icon: Zap },
-        { href: `/clients/${clientId}/newsletters`, label: "Newsletters", icon: Mail },
       ],
     },
     {
-      label: "Review",
+      label: "Manage",
       items: [
-        { href: `/clients/${clientId}/drafts?tab=drafts`, label: "All Drafts", icon: FileText },
+        { href: `/clients/${clientId}/brand-dna`, label: "Brand Setup", icon: Dna },
+        { href: `/clients/${clientId}/assets`, label: "Assets", icon: ImageIcon },
         { href: `/clients/${clientId}/social-accounts`, label: "Social Accounts", icon: Share2 },
+        { href: `/clients/${clientId}/team`, label: "Team", icon: Users },
       ],
     },
   ] : [];
 
   function NavLink({ item }: { item: NavItem }) {
     const Icon = item.icon;
-    const isActive = location === item.href;
+    const isActive = location === item.href || location.startsWith(item.href + "?") ||
+      (item.href.includes("/creative-studio") && location === item.href);
     return (
       <Link
         href={item.href}
         onClick={() => setIsOpen(false)}
-        title={item.help ?? item.label}
         className={cn(
           "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
           isActive
@@ -143,18 +144,6 @@ export function Sidebar({ clientId }: { clientId?: string }) {
       >
         <Icon className="w-4 h-4 shrink-0" />
         <span className="flex-1">{item.label}</span>
-        {item.help && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full opacity-70 hover:opacity-100" onClick={(event) => event.preventDefault()}>
-                <HelpCircle className="h-3.5 w-3.5" />
-              </span>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="max-w-64 bg-slate-950 text-white">
-              {item.help}
-            </TooltipContent>
-          </Tooltip>
-        )}
         {item.badge !== undefined && item.badge > 0 && (
           <Badge variant="destructive" className="h-5 min-w-5 px-1.5 text-[10px] rounded-full">
             {item.badge}
@@ -167,10 +156,10 @@ export function Sidebar({ clientId }: { clientId?: string }) {
   const SidebarContent = () => (
     <div className="flex flex-col h-full bg-sidebar border-r border-sidebar-border text-sidebar-foreground w-64 overflow-y-auto">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 pb-2">
+      <div className="flex items-center justify-between p-4 pb-3">
         <Link href="/" className="flex items-center gap-2 font-bold text-xl text-primary">
           <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center">
-            <ImageIcon className="w-4 h-4 text-primary-foreground" />
+            <BrainCircuit className="w-4 h-4 text-primary-foreground" />
           </div>
           <span>AI Studio</span>
         </Link>
@@ -181,8 +170,8 @@ export function Sidebar({ clientId }: { clientId?: string }) {
 
       {/* Client chip */}
       {client && (
-        <div className="mx-4 mb-3 p-3 rounded-lg bg-sidebar-accent flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 border border-sidebar-border">
+        <div className="mx-4 mb-3 p-2.5 rounded-lg bg-sidebar-accent flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-md overflow-hidden shrink-0 border border-sidebar-border">
             {(client as { logoUrl?: string }).logoUrl ? (
               <img
                 src={(client as { logoUrl?: string }).logoUrl}
@@ -191,7 +180,7 @@ export function Sidebar({ clientId }: { clientId?: string }) {
               />
             ) : (
               <div
-                className="w-full h-full flex items-center justify-center font-bold text-white text-sm"
+                className="w-full h-full flex items-center justify-center font-bold text-white text-xs"
                 style={{ backgroundColor: client.color || "hsl(var(--primary))" }}
               >
                 {client.avatarInitials}
@@ -200,7 +189,7 @@ export function Sidebar({ clientId }: { clientId?: string }) {
           </div>
           <div className="overflow-hidden">
             <div className="font-semibold truncate text-sm">{client.name}</div>
-            <div className="text-xs text-muted-foreground">Active Client</div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Active Client</div>
           </div>
         </div>
       )}
@@ -210,7 +199,7 @@ export function Sidebar({ clientId }: { clientId?: string }) {
         <Link
           href="/"
           className={cn(
-            "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors mb-2",
+            "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors mb-1",
             location === "/"
               ? "bg-primary text-primary-foreground"
               : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
@@ -220,39 +209,30 @@ export function Sidebar({ clientId }: { clientId?: string }) {
           All Clients
         </Link>
 
-        {/* Primary nav */}
-        {primaryItems.map((item) => (
+        {/* Core flow */}
+        {coreItems.map((item) => (
           <NavLink key={item.href} item={item} />
         ))}
 
-        {/* Settings always visible */}
-        {clientId && (
-          <NavLink item={{ href: `/clients/${clientId}/settings`, label: "Posting Rules", icon: Settings, help: "Set cadence, schedule rules, and publishing preferences." }} />
-        )}
-
-        {/* Advanced / Coming Later */}
+        {/* More Tools */}
         {clientId && (
           <div className="pt-2">
             <button
-              onClick={() => setAdvancedOpen((v) => !v)}
+              onClick={() => setMoreOpen((v) => !v)}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-[10px] uppercase tracking-widest text-muted-foreground/70 font-semibold hover:text-muted-foreground transition-colors rounded-md"
             >
-              {advancedOpen ? (
-                <ChevronDown className="w-3 h-3" />
-              ) : (
-                <ChevronRight className="w-3 h-3" />
-              )}
+              {moreOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
               More Tools
             </button>
-            {advancedOpen && (
+            {moreOpen && (
               <div className="space-y-0.5 mt-1">
-                {advancedSections.map((section) => (
+                {moreSections.map((section) => (
                   <div key={section.label} className="pt-2 first:pt-0">
                     <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                       {section.label}
                     </div>
                     {section.items.map((item) => (
-                      <NavLink key={`${section.label}-${item.href}`} item={item} />
+                      <NavLink key={item.href} item={item} />
                     ))}
                   </div>
                 ))}
@@ -264,6 +244,9 @@ export function Sidebar({ clientId }: { clientId?: string }) {
 
       {/* Footer */}
       <div className="mt-auto pt-3 border-t border-sidebar-border space-y-0.5 px-3 pb-3">
+        {clientId && (
+          <NavLink item={{ href: `/clients/${clientId}/settings`, label: "Posting Rules", icon: Settings }} />
+        )}
         <Link
           href="/settings"
           className={cn(
@@ -303,7 +286,7 @@ export function Sidebar({ clientId }: { clientId?: string }) {
       <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-background border-b border-border flex items-center justify-between px-4 z-40">
         <div className="flex items-center gap-2 font-semibold text-base">
           <div className="w-6 h-6 rounded-md bg-primary flex items-center justify-center">
-            <ImageIcon className="w-3.5 h-3.5 text-primary-foreground" />
+            <BrainCircuit className="w-3.5 h-3.5 text-primary-foreground" />
           </div>
           AI Studio
         </div>

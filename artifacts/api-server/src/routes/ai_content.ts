@@ -1,5 +1,4 @@
 import { Router } from "express";
-import OpenAI from "openai";
 import { db } from "@workspace/db";
 import { postsTable, campaignsTable, userSettingsTable, imagesTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -8,11 +7,11 @@ import { EDIT_CONTENT_ROLES, requireClientRole, type AuthRequest } from "../midd
 import {
   generateTextWithProvider,
   resolveProviderAndModel,
-  resolveApiKey,
   safeErrorMessage,
 } from "../lib/ai-provider.js";
 import { logger } from "../lib/logger.js";
 import { persistRemoteImageUrl } from "../lib/durable-image-storage.js";
+import { generateImageWithProvider } from "../lib/image-provider.js";
 
 const router = Router();
 
@@ -40,22 +39,18 @@ async function triggerBackgroundImageGen(
 ): Promise<void> {
   for (const post of posts) {
     try {
-      const { key } = await resolveApiKey("openai", userId);
-      const openai = new OpenAI({ apiKey: key });
       const prompt = post.imagePrompt?.trim()
         ? post.imagePrompt
         : await buildImagePrompt(clientId, post.caption ?? "");
-
-      const result = await openai.images.generate({
-        model: "dall-e-3",
+      const result = await generateImageWithProvider({
         prompt,
-        n: 1,
+        userId,
+        provider: "auto",
+        aspectRatio: "1:1",
         size: "1024x1024",
-        quality: "standard",
-        response_format: "url",
       });
 
-      const providerImageUrl = result.data?.[0]?.url ?? "";
+      const providerImageUrl = result.providerUrl;
       if (!providerImageUrl) throw new Error("DALL-E returned no image URL");
       const { durableUrl: imageUrl } = await persistRemoteImageUrl(providerImageUrl, clientId, "campaign-post");
 
@@ -69,7 +64,7 @@ async function triggerBackgroundImageGen(
         postId: post.id,
         url: imageUrl,
         originalImageUrl: imageUrl,
-        provider: "openai",
+        provider: result.provider,
         status: "selected",
         type: "generated",
         prompt,
@@ -248,19 +243,15 @@ router.post("/clients/:clientId/posts/:postId/generate-image", requireClientRole
     const imagePrompt = post.imagePrompt?.trim()
       ? post.imagePrompt
       : await buildImagePrompt(clientId, post.caption ?? "");
-    const { key: openaiKey } = await resolveApiKey("openai", req.userId);
-    const openai = new OpenAI({ apiKey: openaiKey });
-
-    const result = await openai.images.generate({
-      model: "dall-e-3",
+    const result = await generateImageWithProvider({
       prompt: imagePrompt,
-      n: 1,
+      userId: req.userId,
+      provider: req.body?.imageProvider ?? "auto",
+      aspectRatio: "1:1",
       size: "1024x1024",
-      quality: "standard",
-      response_format: "url",
     });
 
-    const providerImageUrl = result.data?.[0]?.url ?? "";
+    const providerImageUrl = result.providerUrl;
     if (!providerImageUrl) throw new Error("DALL-E returned no image URL");
     const { durableUrl: imageUrl } = await persistRemoteImageUrl(providerImageUrl, clientId, "post-regenerate");
 
@@ -281,7 +272,7 @@ router.post("/clients/:clientId/posts/:postId/generate-image", requireClientRole
       postId,
       url: imageUrl,
       originalImageUrl: imageUrl,
-      provider: "openai",
+      provider: result.provider,
       status: "selected",
       type: "generated",
       prompt: imagePrompt,
@@ -296,7 +287,7 @@ router.post("/clients/:clientId/posts/:postId/generate-image", requireClientRole
       .set({ generationStatus: "failed", updatedAt: new Date() })
       .where(and(eq(postsTable.id, req.params.postId), eq(postsTable.clientId, req.params.clientId)))
       .catch(() => {});
-    res.status(500).json({ error: "Failed to generate image" });
+    res.status(500).json({ error: "Failed to generate image. Add key in Settings → AI Keys." });
   }
 });
 
