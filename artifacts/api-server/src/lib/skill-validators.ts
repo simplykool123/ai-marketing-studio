@@ -165,6 +165,15 @@ const VALIDATORS: Record<string, Validator> = {
     }
     return null;
   },
+  ai_brain_ideas: (o) => {
+    if (!isArray(o.ideas, 1)) return "ideas[] must contain at least one idea";
+    for (const idea of o.ideas as Array<Record<string, unknown>>) {
+      if (!isNonEmptyString(idea.title)) return "ideas[].title missing";
+      if (!isNonEmptyString(idea.idea)) return "ideas[].idea missing";
+      if (!Array.isArray(idea.platforms)) return "ideas[].platforms must be an array";
+    }
+    return null;
+  },
   // Legacy / earlier-phase skills — keep light validators so they still benefit
   // from the repair retry without rejecting their existing outputs.
   platform_rewrite: (o) => (isNonEmptyString(o.caption) ? null : "caption missing"),

@@ -4,11 +4,12 @@ import { aiIdeasTable, postsTable, userSettingsTable } from "@workspace/db/schem
 import { eq, and, notInArray, desc } from "drizzle-orm";
 import { buildClientMemoryPacket, formatClientMemoryPacket, writeClientMemory } from "../lib/client-memory-packet.js";
 import {
-  generateTextWithFallback,
   resolveProviderAndModel,
   toAiErrorResponse,
   safeErrorMessage,
 } from "../lib/ai-provider.js";
+import { generateJsonWithFallback, JsonParseError } from "../lib/ai-json.js";
+import { validatorForSkill } from "../lib/skill-validators.js";
 import {
   EDIT_CONTENT_ROLES,
   requireClientRole,
@@ -170,17 +171,23 @@ router.post(
         ? buildStrategicPrompt(context, avoidSection, today)
         : buildStandardPrompt(context, avoidSection, today);
 
-      const { text: responseText, usedProvider, usedModel, fallbackUsed } =
-        await generateTextWithFallback(provider, model, prompt, 3000, req.userId);
+      const { object, usedProvider, usedModel, fallbackUsed, repairUsed } =
+        await generateJsonWithFallback({
+          provider,
+          model,
+          prompt,
+          maxTokens: 3000,
+          userId: req.userId,
+          schemaName: "ai_brain_ideas",
+          validate: validatorForSkill("ai_brain_ideas"),
+        });
 
       logger.info(
-        { chosenProvider: usedProvider, chosenModel: usedModel, fallbackUsed, requestedProvider: provider, mode },
+        { chosenProvider: usedProvider, chosenModel: usedModel, fallbackUsed, repairUsed, requestedProvider: provider, mode },
         "AI Brain: generation complete"
       );
 
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("Invalid AI response format — no JSON found");
-      const parsed = JSON.parse(jsonMatch[0]) as {
+      const parsed = object as unknown as {
         ideas: Array<{
           title: string;
           idea: string;
@@ -227,8 +234,13 @@ router.post(
         )
         .returning();
 
-      res.json({ ideas: inserted, meta: { mode, provider: usedProvider, fallbackUsed } });
+      res.json({ ideas: inserted, meta: { mode, provider: usedProvider, fallbackUsed, repairUsed } });
     } catch (err) {
+      if (err instanceof JsonParseError) {
+        logger.error({ error: err.message, sample: err.rawSample }, "AI Brain JSON failure");
+        res.status(422).json({ error: "AI could not produce valid idea suggestions. Please retry." });
+        return;
+      }
       const { status, message } = toAiErrorResponse(
         err,
         "Failed to generate ideas. Check that your AI provider key is configured in Settings."
