@@ -98,7 +98,7 @@ router.get("/clients/:clientId/dashboard", async (req: AuthRequest, res) => {
           .where(
             and(
               eq(postsTable.clientId, clientId),
-              inArray(postsTable.status, ["approved", "export_ready", "scheduled"]),
+              inArray(postsTable.status, ["approved", "export_ready", "ready_to_post", "scheduled", "exported"]),
               gte(postsTable.scheduledAt, now)
             )
           )
@@ -110,7 +110,7 @@ router.get("/clients/:clientId/dashboard", async (req: AuthRequest, res) => {
           .where(
             and(
               eq(postsTable.clientId, clientId),
-              inArray(postsTable.status, ["posted", "published"]),
+              inArray(postsTable.status, ["posted", "posted_manually", "published", "published_via_api"]),
               isNotNull(postsTable.publishedAt)
             )
           )
@@ -148,7 +148,7 @@ router.get("/clients/:clientId/dashboard", async (req: AuthRequest, res) => {
 
     const pendingApprovals = allPosts.filter(p => p.status === "in_review");
     const needsAttentionCount = allPosts.filter(p => p.status === "failed").length;
-    const publishedPosts = allPosts.filter(p => (p.status === "posted" || p.status === "published") && p.publishedAt);
+    const publishedPosts = allPosts.filter(p => ["posted", "posted_manually", "published", "published_via_api"].includes(p.status) && p.publishedAt);
     const campaignDraftCount = allPosts.filter(p => p.status === "draft" && p.campaignId).length;
     const artworkReadyCount = allPosts.filter((post) => {
       const schema = post.contentSchema && typeof post.contentSchema === "object" && !Array.isArray(post.contentSchema)
@@ -167,7 +167,7 @@ router.get("/clients/:clientId/dashboard", async (req: AuthRequest, res) => {
     res.json({
       totalPosts: allPosts.length,
       draftCount: statusCounts["draft"] ?? 0,
-      approvedCount: (statusCounts["approved"] ?? 0) + (statusCounts["export_ready"] ?? 0),
+      approvedCount: (statusCounts["approved"] ?? 0) + (statusCounts["export_ready"] ?? 0) + (statusCounts["ready_to_post"] ?? 0) + (statusCounts["exported"] ?? 0),
       scheduledCount: statusCounts["scheduled"] ?? 0,
       publishedCount: publishedPosts.length,
       campaignDraftCount,

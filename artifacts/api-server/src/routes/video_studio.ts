@@ -22,10 +22,11 @@ import { postsTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { buildClientMemoryPacket, formatClientMemoryPacket } from "../lib/client-memory-packet.js";
 import {
-  generateTextWithFallback,
   toAiErrorResponse,
   safeErrorMessage,
 } from "../lib/ai-provider.js";
+import { generateJsonWithFallback, JsonParseError } from "../lib/ai-json.js";
+import { validatorForSkill } from "../lib/skill-validators.js";
 import { resolveTextProviderForMode, VIDEO_PROVIDERS, type QualityMode } from "../lib/provider-router.js";
 import { EDIT_CONTENT_ROLES, requireClientRole, type AuthRequest } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
@@ -488,18 +489,22 @@ router.post(
 
       const prompt = buildVideoPrompt(context, { topic, platform, duration, style });
 
-      const { text: raw, usedProvider, fallbackUsed } = await generateTextWithFallback(
-        provider, model, prompt, 3000, req.userId
-      );
+      const { object, usedProvider, fallbackUsed, repairUsed } = await generateJsonWithFallback({
+        provider,
+        model,
+        prompt,
+        maxTokens: 3000,
+        userId: req.userId,
+        schemaName: "video_script",
+        validate: validatorForSkill("video_script"),
+      });
 
       logger.info(
-        { chosenProvider: usedProvider, requestedProvider: provider, label, fallbackUsed, clientId },
+        { chosenProvider: usedProvider, requestedProvider: provider, label, fallbackUsed, repairUsed, clientId },
         "Video Studio: AI complete"
       );
 
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("AI returned no JSON");
-      const gen = JSON.parse(jsonMatch[0]) as GeneratedVideoConcept;
+      const gen = object as unknown as GeneratedVideoConcept;
 
       const voiceoverScript = gen.voiceoverFull ?? (gen.scenes ?? []).map(s => s.voiceover).join(" ");
 
@@ -527,6 +532,7 @@ router.post(
             requestedProvider: provider,
             model,
             fallbackUsed,
+            repairUsed,
             qualityMode,
             requestedPlatform: platform ?? null,
             requestedDuration: duration ?? null,
@@ -540,9 +546,14 @@ router.post(
         concept: postToVideoConcept(post),
         generated: gen,
         videoProviders: VIDEO_PROVIDERS,
-        meta: { provider: usedProvider, fallbackUsed },
+        meta: { provider: usedProvider, fallbackUsed, repairUsed },
       });
     } catch (err) {
+      if (err instanceof JsonParseError) {
+        logger.error({ error: err.message, sample: err.rawSample, clientId }, "Video Studio JSON failure");
+        res.status(422).json({ error: "AI could not produce a valid video script. Please retry." });
+        return;
+      }
       const { status, message } = toAiErrorResponse(
         err, "Failed to generate video concept. Check your AI provider key in Settings."
       );

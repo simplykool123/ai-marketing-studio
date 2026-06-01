@@ -352,6 +352,91 @@ router.post("/settings/test-ai-provider", requireAuth, async (req: AuthRequest, 
   }
 });
 
+// POST /settings/test-image-provider — verify an image provider key works
+router.post("/settings/test-image-provider", requireAuth, async (req: AuthRequest, res): Promise<void> => {
+  const routeUsed = "settings.test-image-provider";
+  try {
+    const { provider } = req.body as { provider?: string };
+    if (!provider) { res.status(400).json({ error: "provider is required" }); return; }
+
+    const status = await getProviderKeyStatus(req.userId);
+    const providerStatus = status[provider];
+    if (!providerStatus?.keyExists) {
+      res.json({
+        success: false,
+        provider,
+        keyFound: false,
+        routeUsed,
+        error: `No API key configured for ${provider}. Add one in Settings → AI Keys.`,
+      });
+      return;
+    }
+
+    const keySource = providerStatus.source;
+    const keyHint = providerStatus.keyHint;
+
+    const resolved = await resolveApiKey(provider, req.userId).catch(() => null);
+    if (!resolved?.key) {
+      res.json({ success: false, provider, keyFound: false, keySource, keyHint, routeUsed, error: "Key resolved to empty string." });
+      return;
+    }
+    const resolvedKey = resolved.key;
+
+    let testUrl: string | null = null;
+    let errorReason: string | undefined;
+
+    try {
+      if (provider === "openai") {
+        const { default: OpenAI } = await import("openai");
+        const openai = new OpenAI({ apiKey: resolvedKey });
+        const result = await openai.images.generate({
+          model: "dall-e-3",
+          prompt: "A simple blue circle on white background, minimal test image",
+          n: 1,
+          size: "1024x1024",
+          quality: "standard",
+          response_format: "url",
+        });
+        testUrl = result.data?.[0]?.url ?? null;
+      } else if (provider === "replicate") {
+        const create = await fetch("https://api.replicate.com/v1/models/black-forest-labs/flux-1.1-pro/predictions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${resolvedKey}`, "Content-Type": "application/json", Prefer: "wait" },
+          body: JSON.stringify({ input: { prompt: "A simple blue circle on white background, minimal test image", aspect_ratio: "1:1", output_format: "png" } }),
+        });
+        if (!create.ok) throw new Error(`Replicate returned HTTP ${create.status}`);
+        const created = await create.json() as Record<string, unknown>;
+        const out = created.output;
+        testUrl = Array.isArray(out) ? String(out[0] ?? "") : typeof out === "string" ? out : null;
+      } else if (provider === "ideogram") {
+        const ideRes = await fetch("https://api.ideogram.ai/generate", {
+          method: "POST",
+          headers: { "Api-Key": resolvedKey, "Content-Type": "application/json" },
+          body: JSON.stringify({ image_request: { model: "ideogram-v3", prompt: "A simple blue circle on white background, minimal test image", aspect_ratio: "1x1" } }),
+        });
+        if (!ideRes.ok) throw new Error(`Ideogram returned HTTP ${ideRes.status}`);
+        const ideData = await ideRes.json() as Record<string, unknown>;
+        const imgs = Array.isArray(ideData.data) ? ideData.data : [];
+        testUrl = typeof (imgs[0] as Record<string, unknown>)?.url === "string" ? (imgs[0] as Record<string, unknown>).url as string : null;
+      } else {
+        throw new Error(`Image test not supported for provider: ${provider}`);
+      }
+    } catch (err) {
+      errorReason = aiErrorCategory(err);
+      logger.warn({ provider, keySource, keyHint, error: safeErrorMessage(err), routeUsed }, "Image provider test failed");
+      res.json({ success: false, provider, keyFound: true, keySource, keyHint, routeUsed, error: errorReason ?? safeErrorMessage(err) });
+      return;
+    }
+
+    const success = Boolean(testUrl);
+    logger.info({ provider, keySource, keyHint, success, routeUsed }, "Image provider test completed");
+    res.json({ success, provider, keyFound: true, keySource, keyHint, routeUsed, testImageUrl: success ? testUrl : null });
+  } catch (err) {
+    logger.error({ error: safeErrorMessage(err), routeUsed }, "Image provider test error");
+    res.json({ success: false, provider: req.body?.provider ?? "", keyFound: false, routeUsed, error: safeErrorMessage(err) });
+  }
+});
+
 // GET /settings
 router.get("/settings", requireAuth, async (req: AuthRequest, res): Promise<void> => {
   try {

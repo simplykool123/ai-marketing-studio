@@ -8,6 +8,7 @@ import { getProviderKeyStatus, toAiErrorResponse, safeErrorMessage } from "../li
 import { resolveTextProviderForMode } from "../lib/provider-router.js";
 import { EDIT_CONTENT_ROLES, requireClientRole, type AuthRequest } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
+import { PHASE_50_SKILLS } from "../lib/phase50-skills.js";
 
 const router = Router();
 
@@ -514,6 +515,7 @@ const INITIAL_GLOBAL_SKILLS = [
   INSTAGRAM_CAROUSEL_BUILDER_SKILL,
   SEO_BLOG_WRITER_SKILL,
   SHORT_VIDEO_REEL_SCRIPT_SKILL,
+  ...PHASE_50_SKILLS,
 ];
 
 async function ensureInitialGlobalSkill(skillId: string) {
@@ -523,6 +525,12 @@ async function ensureInitialGlobalSkill(skillId: string) {
     .insert(skillConfigsTable)
     .values(skill)
     .onConflictDoNothing();
+}
+
+// Phase 50: exported wrapper so omnichannel/festival/whatsapp/growth routes
+// can lazy-seed the skill before calling executeSkill.
+export async function ensureInitialGlobalSkillExternally(skillId: string): Promise<void> {
+  return ensureInitialGlobalSkill(skillId);
 }
 
 async function ensureInitialGlobalSkills() {

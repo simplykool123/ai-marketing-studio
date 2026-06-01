@@ -19,6 +19,7 @@ const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 type BrandWebsiteAnalysis = {
+  brandName: string;
   brandTone: string;
   targetAudience: string;
   productsServices: string;
@@ -26,12 +27,28 @@ type BrandWebsiteAnalysis = {
   contentPillars: string;
   colorStyleHints: string;
   keywords: string;
+  seoKeywords: string;
+  defaultHashtags: string;
+  primaryCTA: string;
+  secondaryCTA: string;
+  preferredPlatforms: string;
+  serviceAreas: string;
   visualStyle: string;
   imageStyle: string;
   fontStyle: string;
   designNotes: string;
   imageStyleNotes: string;
   confidenceNotes: string;
+};
+
+type DirectContactData = {
+  phone: string;
+  email: string;
+  whatsappNumber: string;
+  whatsappLink: string;
+  address: string;
+  city: string;
+  country: string;
 };
 
 type WebsiteImageCandidate = {
@@ -916,8 +933,62 @@ async function crawlWebsite(startUrl: URL): Promise<WebsiteExtraction> {
   };
 }
 
+function extractDirectContacts(pages: WebsitePageSnapshot[]): DirectContactData {
+  const allHtml = pages.map((p) => p.html).join("\n");
+
+  let phone = "";
+  const telMatch = allHtml.match(/href=["']tel:([+\d\s\-().]{6,20})["']/i);
+  if (telMatch) phone = telMatch[1].trim();
+
+  let email = "";
+  const emailMatch = allHtml.match(/href=["']mailto:([^\s"'>@]{1,64}@[^\s"'>]{1,64}\.[a-z]{2,8})["']/i);
+  if (emailMatch) {
+    const found = emailMatch[1].toLowerCase().trim();
+    if (!/privacy|noreply|no-reply|donotreply|unsubscribe/i.test(found)) email = found;
+  }
+
+  let whatsappNumber = "";
+  let whatsappLink = "";
+  const waMatch = allHtml.match(/href=["'](https?:\/\/wa\.me\/(\d+)[^"']*)["']/i);
+  if (waMatch) {
+    whatsappLink = `https://wa.me/${waMatch[2]}`;
+    whatsappNumber = `+${waMatch[2]}`;
+  }
+
+  let address = "";
+  let city = "";
+  let country = "";
+  for (const match of allHtml.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const parsed: unknown = JSON.parse(match[1] ?? "");
+      const entries = Array.isArray(parsed) ? parsed : [parsed];
+      for (const entry of entries) {
+        if (typeof entry !== "object" || !entry) continue;
+        const e = entry as Record<string, unknown>;
+        const addrRaw = e["address"];
+        if (!addrRaw || typeof addrRaw !== "object") continue;
+        const addr = addrRaw as Record<string, unknown>;
+        const parts = [addr["streetAddress"], addr["addressLocality"], addr["addressRegion"], addr["postalCode"]]
+          .filter((v): v is string => typeof v === "string" && v.length > 0);
+        if (parts.length) {
+          address = parts.join(", ");
+          city = typeof addr["addressLocality"] === "string" ? addr["addressLocality"] : "";
+          country = typeof addr["addressCountry"] === "string" ? addr["addressCountry"] : "";
+          break;
+        }
+      }
+      if (address) break;
+    } catch {
+      // malformed JSON-LD — skip
+    }
+  }
+
+  return { phone, email, whatsappNumber, whatsappLink, address, city, country };
+}
+
 function emptyAnalysis(): BrandWebsiteAnalysis {
   return {
+    brandName: "",
     brandTone: "",
     targetAudience: "",
     productsServices: "",
@@ -925,6 +996,12 @@ function emptyAnalysis(): BrandWebsiteAnalysis {
     contentPillars: "",
     colorStyleHints: "",
     keywords: "",
+    seoKeywords: "",
+    defaultHashtags: "",
+    primaryCTA: "",
+    secondaryCTA: "",
+    preferredPlatforms: "",
+    serviceAreas: "",
     visualStyle: "",
     imageStyle: "",
     fontStyle: "",
@@ -959,6 +1036,7 @@ function buildExtractionFallbackAnalysis(extraction: WebsiteExtraction, url: URL
     .join(", ");
 
   return {
+    brandName: title,
     brandTone: "Use the website copy as directional tone; AI extraction was unavailable.",
     targetAudience: metaLine || "Not clear from the page",
     productsServices: title,
@@ -966,6 +1044,12 @@ function buildExtractionFallbackAnalysis(extraction: WebsiteExtraction, url: URL
     contentPillars: "Product/service highlights, brand story, customer education, seasonal campaigns",
     colorStyleHints: palette || "Not clear from the page",
     keywords: text.match(/\b[A-Za-z][A-Za-z -]{3,24}\b/g)?.slice(0, 12).join(", ") || "Not clear from the page",
+    seoKeywords: "",
+    defaultHashtags: "",
+    primaryCTA: "",
+    secondaryCTA: "",
+    preferredPlatforms: "",
+    serviceAreas: "",
     visualStyle: [palette ? `Palette: ${palette}` : "", imageNotes ? `Images: ${imageNotes}` : ""].filter(Boolean).join(" | ") || "Not clear from the page",
     imageStyle: imageNotes || "Not clear from the page",
     fontStyle: extraction.fontFamilies.join(", ") || "Not clear from the page",
@@ -983,6 +1067,7 @@ function buildManualFallbackAnalysis(params: {
   const palette = params.colors.slice(0, 3).map((color) => color.hex).join(", ");
   const firstLine = firstMeaningfulLine(params.text);
   return {
+    brandName: "",
     brandTone: firstLine ? "Derived from pasted website text." : "Not clear from the page",
     targetAudience: firstLine || "Not clear from the page",
     productsServices: firstLine || "Not clear from the page",
@@ -990,6 +1075,12 @@ function buildManualFallbackAnalysis(params: {
     contentPillars: "Product/service highlights, brand story, customer education, seasonal campaigns",
     colorStyleHints: palette || "Not clear from the page",
     keywords: params.text.match(/\b[A-Za-z][A-Za-z -]{3,24}\b/g)?.slice(0, 12).join(", ") || "Not clear from the page",
+    seoKeywords: "",
+    defaultHashtags: "",
+    primaryCTA: "",
+    secondaryCTA: "",
+    preferredPlatforms: "",
+    serviceAreas: "",
     visualStyle: palette ? `Visible screenshot palette: ${palette}` : "Not clear from the page",
     imageStyle: params.colors.length ? "Use uploaded homepage screenshot as the visual reference." : "Not clear from the page",
     fontStyle: "Not clear from the page",
@@ -1178,13 +1269,20 @@ router.post("/clients/:clientId/brand-dna/analyze-website", requireClientRole(ED
 
 Return ONLY valid JSON with this shape:
 {
+  "brandName": "the brand or business name",
   "brandTone": "short tone description",
   "targetAudience": "who the brand appears to serve",
   "productsServices": "main products or services",
   "usp": "differentiator or promise",
   "contentPillars": "comma-separated content pillar suggestions",
   "colorStyleHints": "visual/color/style hints detectable from copy",
-  "keywords": "comma-separated keyword ideas",
+  "keywords": "comma-separated general keyword ideas",
+  "seoKeywords": "comma-separated SEO keyword phrases (2-4 words each, as found or inferred from page headings and copy)",
+  "defaultHashtags": "comma-separated hashtag suggestions without # symbol",
+  "primaryCTA": "the main call-to-action phrase used on the site (e.g. 'Book a Free Consultation')",
+  "secondaryCTA": "a secondary call-to-action if present (e.g. 'View Our Portfolio')",
+  "preferredPlatforms": "comma-separated social platforms mentioned or implied (e.g. Instagram, Facebook)",
+  "serviceAreas": "geographic service areas if mentioned (cities, regions, or 'Not clear from the page')",
   "visualStyle": "overall visual identity in plain language",
   "imageStyle": "image/art direction notes from image alt text and page copy",
   "fontStyle": "font style notes from detected fonts and headings",
@@ -1193,7 +1291,10 @@ Return ONLY valid JSON with this shape:
   "confidenceNotes": "what is inferred vs clearly stated"
 }
 
-If something is not detectable, say "Not clear from the page" rather than inventing.
+CRITICAL RULES:
+- Do NOT include phone numbers, email addresses, or WhatsApp numbers in any field — those are extracted separately from HTML links and must never be invented.
+- If something is not detectable, use "Not clear from the page" rather than inventing.
+- Never fabricate contact details, URLs, or specific claims not present in the text.
 
 Website URL: ${url.toString()}
 Pages analyzed: ${extraction.pages.map((page) => page.url).join(", ")}
@@ -1247,11 +1348,13 @@ ${websiteText}`;
     if (!analysis.colorStyleHints && palette.length) analysis.colorStyleHints = palette.join(", ");
     if (!analysis.fontStyle && extraction.fontFamilies.length) analysis.fontStyle = extraction.fontFamilies.join(", ");
     if (!analysis.imageStyleNotes && analysis.imageStyle) analysis.imageStyleNotes = analysis.imageStyle;
+    const contactData = extractDirectContacts(extraction.pages);
     logger.info({ clientId: req.params.clientId, stage: "final_response_success", url: normalizedUrl, warnings: extraction.warnings.length }, "Brand importer step");
     res.json({
       websiteUrl: url.toString(),
       finalUrl: extraction.pages[0]?.url ?? url.toString(),
       analysis,
+      contactData,
       pagesAnalyzed: extraction.pages.map((page) => ({ url: page.url, title: page.title })),
       logoCandidates: extraction.logoCandidates,
       imageCandidates: extraction.imageCandidates,

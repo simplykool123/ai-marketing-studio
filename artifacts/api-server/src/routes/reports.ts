@@ -213,14 +213,14 @@ router.get("/clients/:clientId/reports/summary", async (req: AuthRequest, res): 
     ]);
 
     const publishedInPeriod = posts.filter((post) =>
-      ["posted", "published"].includes(post.status) && within(post.publishedAt, start, end)
+      ["posted", "posted_manually", "published", "published_via_api"].includes(post.status) && within(post.publishedAt, start, end)
     );
     const scheduledInPeriod = posts.filter((post) =>
-      inArrayStatus(post.status, ["approved", "export_ready", "scheduled"]) && within(post.scheduledAt, start, end)
+      inArrayStatus(post.status, ["approved", "export_ready", "ready_to_post", "scheduled", "exported"]) && within(post.scheduledAt, start, end)
     );
     const metrics = combineMetrics(publishedInPeriod);
     const createdInPeriod = posts.filter((post) => within(post.createdAt, start, end));
-    const approvedInPeriod = posts.filter((post) => inArrayStatus(post.status, ["approved", "export_ready", "scheduled", "posted", "published"]) && within(post.updatedAt, start, end));
+    const approvedInPeriod = posts.filter((post) => inArrayStatus(post.status, ["approved", "export_ready", "ready_to_post", "scheduled", "exported", "posted", "posted_manually", "published", "published_via_api"]) && within(post.updatedAt, start, end));
     const rejectedInPeriod = posts.filter((post) => post.status === "rejected" && within(post.updatedAt, start, end));
     const campaignCount = new Set(createdInPeriod.map((post) => post.campaignId).filter(Boolean)).size;
     const whatWorked = memoryList(memories, ["what worked", "best hooks", "historical top topics", "worked", "winning"]);

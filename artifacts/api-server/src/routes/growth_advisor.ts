@@ -4,11 +4,12 @@ import { db } from "@workspace/db";
 import { postsTable, campaignsTable, userSettingsTable } from "@workspace/db/schema";
 import { buildClientMemoryPacket, formatClientMemoryPacket } from "../lib/client-memory-packet.js";
 import {
-  generateTextWithFallback,
   resolveProviderAndModel,
   toAiErrorResponse,
   safeErrorMessage,
 } from "../lib/ai-provider.js";
+import { generateJsonWithFallback, JsonParseError } from "../lib/ai-json.js";
+import { validatorForSkill } from "../lib/skill-validators.js";
 import { EDIT_CONTENT_ROLES, requireClientRole, type AuthRequest } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 
@@ -259,6 +260,76 @@ function buildGrowthAdvisorPrompt(params: {
 // Route
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Suggest brand profile fields (SEO, hashtags, CTA, local keywords)
+// ---------------------------------------------------------------------------
+
+router.post(
+  "/clients/:clientId/growth-advisor/suggest-brand-fields",
+  requireClientRole(EDIT_CONTENT_ROLES),
+  async (req: AuthRequest, res): Promise<void> => {
+    const { clientId } = req.params;
+    const userId = req.userId;
+
+    try {
+      const [memoryPacket, settings] = await Promise.all([
+        buildClientMemoryPacket(clientId),
+        db
+          .select()
+          .from(userSettingsTable)
+          .where(userId ? eq(userSettingsTable.userId, userId) : eq(userSettingsTable.userId, ""))
+          .limit(1)
+          .then((rows) => rows[0] ?? null),
+      ]);
+
+      const memoryFormatted = formatClientMemoryPacket(memoryPacket);
+
+      const prompt = [
+        "You are a digital marketing expert. Based on this brand's context, suggest specific values for the following brand profile fields.",
+        "Return ONLY real, on-brand suggestions — never invent phone numbers, websites, or addresses.",
+        "If the brand context lacks enough info to suggest a field, return an empty string for that field.",
+        "",
+        "## Brand Context",
+        memoryFormatted,
+        "",
+        "Return ONLY this JSON (no markdown, no explanation):",
+        `{
+  "seoKeywords": "comma-separated SEO keywords specific to this brand's products/services (5-10 keywords)",
+  "preferredHashtags": "#hashtag1 #hashtag2 #hashtag3 (6-10 relevant hashtags, no spaces)",
+  "defaultCta": "primary call-to-action phrase (short, brand-specific)",
+  "localKeywords": "city/region and service-area keywords relevant to this brand"
+}`,
+      ].join("\n");
+
+      const { provider, model } = await resolveProviderAndModel(settings, userId);
+      const { object: parsed } = await generateJsonWithFallback({
+        provider,
+        model,
+        prompt,
+        maxTokens: 400,
+        userId,
+        schemaName: "suggest_brand_fields",
+        validate: validatorForSkill("suggest_brand_fields"),
+      });
+
+      res.json({
+        seoKeywords: typeof parsed.seoKeywords === "string" ? parsed.seoKeywords : "",
+        preferredHashtags: typeof parsed.preferredHashtags === "string" ? parsed.preferredHashtags : "",
+        defaultCta: typeof parsed.defaultCta === "string" ? parsed.defaultCta : "",
+        localKeywords: typeof parsed.localKeywords === "string" ? parsed.localKeywords : "",
+      });
+    } catch (err) {
+      if (err instanceof JsonParseError) {
+        logger.error({ err: err.message, clientId, sample: err.rawSample }, "suggest-brand-fields JSON failure");
+        res.status(422).json({ error: "AI could not produce valid brand-field suggestions. Please retry." });
+        return;
+      }
+      logger.error({ err, clientId }, "suggest-brand-fields error");
+      res.status(500).json({ error: safeErrorMessage(err) });
+    }
+  }
+);
+
 router.post(
   "/clients/:clientId/growth-advisor/brief",
   requireClientRole(EDIT_CONTENT_ROLES),
@@ -291,7 +362,7 @@ router.post(
           .where(
             and(
               eq(postsTable.clientId, clientId),
-              inArray(postsTable.status, ["approved", "export_ready", "scheduled", "posted", "published"])
+              inArray(postsTable.status, ["approved", "export_ready", "ready_to_post", "scheduled", "exported", "posted", "posted_manually", "published", "published_via_api"])
             )
           )
           .orderBy(desc(postsTable.updatedAt))
@@ -356,44 +427,17 @@ router.post(
       });
 
       const { provider, model } = await resolveProviderAndModel(settings, userId);
-      const { text, usedProvider, usedModel, fallbackUsed } = await generateTextWithFallback(
-        provider, model, prompt, 2500, userId
-      );
+      const { object, usedProvider, usedModel, fallbackUsed, repairUsed } = await generateJsonWithFallback({
+        provider,
+        model,
+        prompt,
+        maxTokens: 2500,
+        userId,
+        schemaName: "growth_boost",
+        validate: validatorForSkill("growth_boost"),
+      });
 
-      // Parse AI output
-      let brief: GrowthBrief;
-      try {
-        const cleaned = text
-          .trim()
-          .replace(/^```(?:json)?\s*/i, "")
-          .replace(/\s*```$/i, "")
-          .trim();
-        const candidate = cleaned.startsWith("{") ? cleaned : cleaned.match(/\{[\s\S]*\}/)?.[0];
-        if (!candidate) throw new Error("No JSON in AI output");
-        brief = JSON.parse(candidate) as GrowthBrief;
-      } catch {
-        // If AI JSON fails, build a minimal fallback from detected gaps
-        brief = {
-          summary: "AI analysis could not be parsed. Review the content gaps below for immediate actions.",
-          growthOpportunities: contentGaps.slice(0, 3).map(gap => ({
-            title: gap.gap,
-            whyItMatters: gap.suggestion,
-            recommendedPlatforms: ["instagram"],
-            contentAngle: gap.suggestion,
-            suggestedFormats: ["post"],
-            reachPotential: gap.impact as "high" | "medium" | "low",
-            confidence: 60,
-          })),
-          contentGaps,
-          avoid: [],
-          recommendedNextCampaign: {
-            topic: "Educational content series",
-            goal: "awareness",
-            platforms: ["instagram", "linkedin"],
-            reason: "Based on detected content gaps, educational content is the highest-priority improvement.",
-          },
-        };
-      }
+      const brief = object as unknown as GrowthBrief;
 
       // Ensure content gaps from detection are merged in
       if (contentGaps.length > 0 && (!brief.contentGaps || brief.contentGaps.length === 0)) {
@@ -420,6 +464,7 @@ router.post(
           provider: usedProvider,
           model: usedModel,
           fallbackUsed,
+          repairUsed,
           analyzedPosts: approvedPosts.length,
           rejectedPosts: rejectedPosts.length,
           detectedGaps: contentGaps.length,
@@ -427,6 +472,11 @@ router.post(
         },
       });
     } catch (err) {
+      if (err instanceof JsonParseError) {
+        logger.error({ err: err.message, clientId, sample: err.rawSample }, "growth-advisor JSON failure");
+        res.status(422).json({ error: "AI could not produce a valid growth brief. Please retry." });
+        return;
+      }
       const category = (err as any)?.category;
       if (category) {
         res.status(503).json(toAiErrorResponse(err, "AI provider unavailable"));

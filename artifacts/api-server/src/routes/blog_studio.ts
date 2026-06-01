@@ -54,6 +54,77 @@ interface GeneratedBlog {
   sections: BlogSection[];
   estimatedReadTime: string;
   targetKeywords: string[];
+  excerpt?: string;
+  answerEngineSummary?: string;
+  comparisonTable?: Array<Record<string, string>>;
+  localServiceAngles?: string[];
+  internalLinkSuggestions?: string[];
+  imagePrompt?: string;
+  cta?: string;
+  schemaFaqJson?: Record<string, unknown>;
+}
+
+function asRecord(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
+}
+
+function slugify(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 90) || `blog-${Date.now()}`;
+}
+
+function stringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
+  if (typeof value === "string" && value.trim()) return value.split(/\n|,/).map((item) => item.trim()).filter(Boolean);
+  return [];
+}
+
+function normalizeBlogOutput(raw: unknown, keyword: string, wordCount: number): GeneratedBlog {
+  const data = asRecord(raw);
+  const sections = Array.isArray(data.sections)
+    ? data.sections.map((section) => {
+        const row = asRecord(section);
+        return { heading: String(row.heading || row.title || ""), content: String(row.content || row.body || "") };
+      }).filter((section) => section.heading || section.content)
+    : [];
+  const faq = Array.isArray(data.faq)
+    ? data.faq.map((item) => {
+        const row = asRecord(item);
+        return { q: String(row.q || row.question || ""), a: String(row.a || row.answer || "") };
+      }).filter((item) => item.q && item.a)
+    : [];
+  const title = String(data.seoTitle || data.title || keyword);
+  const fullDraft = String(data.fullDraft || data.body || sections.map((section) => `## ${section.heading}\n${section.content}`).join("\n\n") || "");
+  const metaDescription = String(data.metaDescription || data.excerpt || fullDraft.slice(0, 155));
+  return {
+    researchSummary: String(data.researchSummary || data.answerEngineSummary || `Answer-focused draft for ${keyword}.`),
+    seoTitle: title,
+    metaDescription,
+    slug: String(data.slug || slugify(title)),
+    outline: stringList(data.outline).length ? stringList(data.outline) : sections.map((section) => section.heading).filter(Boolean),
+    faq,
+    schemaType: String(data.schemaType || "Article + FAQPage"),
+    schemaSuggestion: String(data.schemaSuggestion || ""),
+    fullDraft,
+    sections,
+    estimatedReadTime: String(data.estimatedReadTime || `${Math.max(3, Math.round(wordCount / 240))} min read`),
+    targetKeywords: stringList(data.targetKeywords || data.keywordFocus || data.keywords),
+    excerpt: String(data.excerpt || metaDescription).slice(0, 320),
+    answerEngineSummary: String(data.answerEngineSummary || data.researchSummary || "").slice(0, 600),
+    comparisonTable: Array.isArray(data.comparisonTable) ? data.comparisonTable.map(asRecord) : [],
+    localServiceAngles: stringList(data.localServiceAngles),
+    internalLinkSuggestions: stringList(data.internalLinkSuggestions),
+    imagePrompt: String(data.imagePrompt || `Editorial hero image for ${keyword}, realistic, brand-safe, no text overlays.`),
+    cta: String(data.cta || data.callToAction || ""),
+    schemaFaqJson: {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: faq.map((item) => ({
+        "@type": "Question",
+        name: item.q,
+        acceptedAnswer: { "@type": "Answer", text: item.a },
+      })),
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -97,11 +168,39 @@ router.post(
           tone:           tone ?? null,
           targetAudience: targetAudience ?? null,
           wordCount:      wordCount ?? 1200,
+          answerEngineBrief: {
+            goal: "Create a publish-ready answer-engine blog draft for Google snippets, AI answers, and buyer questions.",
+            requiredFields: [
+              "seoTitle",
+              "slug",
+              "metaDescription",
+              "excerpt",
+              "researchSummary",
+              "answerEngineSummary",
+              "outline",
+              "sections with H2/H3-friendly headings",
+              "faq with direct answers",
+              "schemaFaqJson",
+              "comparisonTable when useful",
+              "localServiceAngles when location/service memory exists",
+              "internalLinkSuggestions",
+              "imagePrompt",
+              "cta",
+              "fullDraft",
+            ],
+            writingRules: [
+              "Lead with a direct answer before expanding.",
+              "Use concise H2/H3-style section headings.",
+              "Include FAQ answers that can stand alone in AI/search results.",
+              "Use client memory for service area, website, WhatsApp, phone, and default CTA when present.",
+              "Do not invent certifications, prices, awards, guarantees, or unpublished case studies.",
+            ],
+          },
         },
         userId: req.userId,
       });
 
-      const gen = result.output as unknown as GeneratedBlog;
+      const gen = normalizeBlogOutput(result.output, keyword, wordCount ?? 1200);
       const quality = evaluateQuality({ skill: result.skill, output: result.output });
 
       logger.info(

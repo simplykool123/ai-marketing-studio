@@ -40,7 +40,7 @@ function publishMetadata(post: typeof postsTable.$inferSelect, result: {
 
 function canDirectPublishPost(post: typeof postsTable.$inferSelect, platform: string): string | null {
   if (post.publishedAt) return "This post is already published.";
-  if (!["approved", "export_ready", "scheduled", "failed"].includes(post.status)) {
+  if (!["approved", "export_ready", "ready_to_post", "scheduled", "failed"].includes(post.status)) {
     return `Cannot publish a post with status '${post.status}'. Approve it first.`;
   }
   if (!["instagram", "facebook", "linkedin", "twitter"].includes(platform)) {
@@ -127,7 +127,7 @@ router.post("/clients/:clientId/posts/:postId/publish", requireClientRole(APPROV
     const [updated] = await db
       .update(postsTable)
       .set({
-        status: "posted",
+        status: "published_via_api",
         publishedAt: result.publishedAt,
         publishedUrl: result.publishedUrl,
         contentSchema: publishMetadata(post, result),

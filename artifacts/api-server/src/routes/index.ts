@@ -36,6 +36,12 @@ import teamRouter from "./team.js";
 import notificationsRouter from "./notifications.js";
 import trendsRouter from "./trends.js";
 import growthAdvisorRouter from "./growth_advisor.js";
+import aiVisibilityRouter from "./ai-visibility.js";
+import formatMatrixRouter from "./format_matrix.js";
+import omnichannelRouter from "./omnichannel.js";
+import gbpRouter from "./gbp.js";
+import videoRenderRouter, { renderWorkerWebhookRouter } from "./video_render.js";
+import driveArchiveRouter from "./drive_archive.js";
 import { requireAuth, requireClientAccess } from "../middleware/auth.js";
 
 const router: IRouter = Router();
@@ -43,6 +49,7 @@ const router: IRouter = Router();
 router.use(authRouter);
 router.use(oauthRouter);
 router.use(healthRouter);
+router.use(renderWorkerWebhookRouter); // public — auth via shared secret header
 
 router.use(requireAuth);
 router.use(teamRouter);
@@ -81,5 +88,11 @@ router.use(storageArchiveRouter);
 router.use(notificationsRouter);
 router.use(trendsRouter);
 router.use(growthAdvisorRouter);
+router.use(aiVisibilityRouter);
+router.use(formatMatrixRouter);
+router.use(omnichannelRouter);
+router.use(gbpRouter);
+router.use(videoRenderRouter);
+router.use(driveArchiveRouter);
 
 export default router;

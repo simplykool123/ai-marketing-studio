@@ -126,7 +126,7 @@ router.post("/clients/:clientId/posts/auto-schedule", requireClientRole(APPROVE_
       .where(
         and(
           eq(postsTable.clientId, clientId),
-          inArray(postsTable.status, ["approved", "export_ready"]),
+          inArray(postsTable.status, ["approved", "export_ready", "ready_to_post"]),
           isNull(postsTable.scheduledAt)
         )
       );

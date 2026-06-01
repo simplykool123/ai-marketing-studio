@@ -686,4 +686,59 @@ router.post(
   }
 );
 
+// Phase 50 — Trend Radar (skill-driven extended trend output).
+import { executeSkill, SkillEngineError } from "../lib/skill-engine.js";
+import { ensureInitialGlobalSkillExternally } from "./skills.js";
+
+router.post(
+  "/clients/:clientId/trends/radar",
+  requireClientRole(EDIT_CONTENT_ROLES),
+  async (req: AuthRequest, res): Promise<void> => {
+    try {
+      const body = req.body as {
+        industry?: string;
+        country?: string;
+        city?: string;
+        platforms?: string[];
+        topicHint?: string;
+        newsContext?: string;
+      };
+      if (!body.industry?.trim()) {
+        res.status(400).json({ error: "industry is required" });
+        return;
+      }
+      const skillId = "trend_radar_researcher";
+      await ensureInitialGlobalSkillExternally(skillId);
+      const skillResult = await executeSkill({
+        clientId: req.params.clientId,
+        skillId,
+        input: {
+          industry: body.industry,
+          country: body.country ?? "",
+          city: body.city ?? "",
+          platforms: body.platforms ?? ["instagram", "linkedin", "youtube", "blog"],
+          topicHint: body.topicHint ?? "",
+          newsContext: body.newsContext ?? "",
+        },
+        userId: req.userId,
+      });
+      const trends = Array.isArray(skillResult.output.trends) ? skillResult.output.trends : [];
+      res.json({
+        trends,
+        meta: skillResult.metadata,
+        audioDisclaimer:
+          "Audio suggestions are advisory. Verify inside Instagram/YouTube before posting.",
+      });
+    } catch (err) {
+      if (err instanceof SkillEngineError) {
+        res.status(err.status).json({ error: err.message });
+        return;
+      }
+      const { status, message } = toAiErrorResponse(err, "Trend Radar failed");
+      logger.error({ error: safeErrorMessage(err) }, "Trend Radar failed");
+      res.status(status).json({ error: message });
+    }
+  }
+);
+
 export default router;

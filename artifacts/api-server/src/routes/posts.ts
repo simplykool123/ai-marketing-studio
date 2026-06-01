@@ -127,6 +127,80 @@ function safeJson<T>(raw: string): T | null {
   }
 }
 
+function asRecord(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
+}
+
+function stringValue(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return "";
+}
+
+function numberValue(value: unknown, fallback: number): number {
+  const raw = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+}
+
+function buildVideoRenderSpec(post: typeof postsTable.$inferSelect, override?: unknown) {
+  const schema = asRecord(post.contentSchema);
+  const reel = asRecord(schema.reelStoryboard);
+  const existing = asRecord(schema.videoRenderSpec);
+  const incoming = asRecord(override);
+  const sourceScenes = Array.isArray(incoming.scenes)
+    ? incoming.scenes
+    : Array.isArray(existing.scenes)
+      ? existing.scenes
+      : Array.isArray(reel.scenes)
+        ? reel.scenes
+        : Array.isArray(schema.scenes)
+          ? schema.scenes
+          : [];
+
+  const scenes = sourceScenes.map((item, index) => {
+    const scene = asRecord(item);
+    return {
+      id: stringValue(scene.id) || `scene-${index + 1}`,
+      order: index + 1,
+      durationSeconds: numberValue(scene.durationSeconds ?? scene.duration ?? scene.seconds, 4),
+      timestamp: stringValue(scene.timestamp),
+      visualDirection: stringValue(scene.visualDirection, scene.visual, scene.shot),
+      backgroundUrl: stringValue(scene.backgroundUrl, scene.imageUrl, scene.videoUrl),
+      onScreenText: stringValue(scene.onScreenText, scene.text, scene.subtitle),
+      voiceoverLine: stringValue(scene.voiceoverLine, scene.voiceover, scene.narration),
+      subtitle: stringValue(scene.subtitle, scene.onScreenText, scene.text),
+      transition: stringValue(scene.transition),
+      motionDirection: stringValue(scene.motionDirection, scene.motion),
+    };
+  });
+
+  return {
+    version: 1,
+    renderer: "timeline-lite",
+    canvas: {
+      width: numberValue(asRecord(incoming.canvas).width, 1080),
+      height: numberValue(asRecord(incoming.canvas).height, 1920),
+      aspectRatio: stringValue(asRecord(incoming.canvas).aspectRatio) || "9:16",
+    },
+    durationSeconds: numberValue(incoming.durationSeconds ?? existing.durationSeconds ?? reel.duration ?? schema.duration, 30),
+    title: stringValue(incoming.title, existing.title, reel.reelTitle, schema.reelTitle, post.title, post.topic),
+    thumbnailPrompt: stringValue(incoming.thumbnailPrompt, existing.thumbnailPrompt, schema.thumbnailPrompt, reel.thumbnailPrompt, post.imagePrompt),
+    thumbnailUrl: stringValue(incoming.thumbnailUrl, existing.thumbnailUrl, schema.thumbnailUrl, schema.finalArtworkUrl, schema.selectedImageUrl, post.selectedImageUrl),
+    logo: {
+      enabled: incoming.logoEnabled ?? asRecord(existing.logo).enabled ?? true,
+      url: stringValue(incoming.logoUrl, asRecord(existing.logo).url, schema.logoUrl),
+      position: stringValue(incoming.logoPosition, asRecord(existing.logo).position) || "top-right",
+    },
+    musicMood: stringValue(incoming.musicMood, existing.musicMood, reel.suggestedMusicMood, schema.audioSuggestion),
+    ttsProvider: stringValue(incoming.ttsProvider, existing.ttsProvider) || "none",
+    voiceoverScript: stringValue(incoming.voiceoverScript, existing.voiceoverScript, reel.fullScript, schema.storyboard, post.longFormBody),
+    ctaEndCard: stringValue(incoming.ctaEndCard, existing.ctaEndCard, reel.cta, schema.cta),
+    scenes,
+  };
+}
+
 function buildPreflightFixPrompt(input: {
   context: string;
   post: typeof postsTable.$inferSelect;
@@ -262,7 +336,7 @@ router.get("/clients/:clientId/posts/export", async (req, res) => {
       .where(
         and(
           eq(postsTable.clientId, req.params.clientId),
-          inArray(postsTable.status, ["approved", "export_ready", "scheduled"])
+          inArray(postsTable.status, ["approved", "export_ready", "ready_to_post", "scheduled", "exported"])
         )
       )
       .orderBy(postsTable.scheduledAt);
@@ -291,7 +365,7 @@ router.get("/clients/:clientId/export/approved", async (req, res) => {
       .where(
         and(
           eq(postsTable.clientId, req.params.clientId),
-          inArray(postsTable.status, ["approved", "export_ready", "scheduled"])
+          inArray(postsTable.status, ["approved", "export_ready", "ready_to_post", "scheduled", "exported"])
         )
       )
       .orderBy(postsTable.scheduledAt);
@@ -557,12 +631,18 @@ router.patch("/clients/:clientId/posts/:postId/status", requireClientRole(APPROV
       "draft",
       "in_review",
       "approved",
-      "export_ready",
       "scheduled",
-      "posted",
-      "published",
+      "ready_to_post",
+      "ready_for_whatsapp",
+      "exported",
+      "posted_manually",
+      "published_via_api",
       "failed",
       "rejected",
+      // legacy values still accepted so old rows can be updated in place
+      "export_ready",
+      "posted",
+      "published",
     ];
     if (!status || !validStatuses.includes(status)) {
       res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` });
@@ -592,19 +672,40 @@ router.patch("/clients/:clientId/posts/:postId/status", requireClientRole(APPROV
 });
 
 function skillLearningSuffix(post: Post): string {
-  if (!post.skillId) return "";
-  const metadata = (post.generationMetadata ?? {}) as {
-    skillVersion?: string;
-    provider?: string;
-    model?: string;
-    qualityBadge?: string;
-    qualityScore?: number;
-  };
-  return [
-    `AI skill: ${post.skillId}${metadata.skillVersion ? ` v${metadata.skillVersion}` : ""}.`,
-    metadata.qualityBadge ? `Quality badge: ${metadata.qualityBadge}.` : null,
-    typeof metadata.qualityScore === "number" ? `Quality score: ${Math.round(metadata.qualityScore * 100)}%.` : null,
-  ].filter(Boolean).join(" ");
+  const parts: string[] = [];
+  if (post.skillId) {
+    const metadata = (post.generationMetadata ?? {}) as {
+      skillVersion?: string;
+      provider?: string;
+      model?: string;
+      qualityBadge?: string;
+      qualityScore?: number;
+    };
+    parts.push(
+      `AI skill: ${post.skillId}${metadata.skillVersion ? ` v${metadata.skillVersion}` : ""}.`,
+      metadata.qualityBadge ? `Quality badge: ${metadata.qualityBadge}.` : "",
+      typeof metadata.qualityScore === "number" ? `Quality score: ${Math.round(metadata.qualityScore * 100)}%.` : "",
+    );
+  }
+  // Phase 45: short structural summary for carousel / reel writeback
+  const schema = (post.contentSchema ?? {}) as Record<string, any>;
+  if (post.contentType === "carousel") {
+    const carousel = (schema.carousel ?? {}) as Record<string, any>;
+    const slides = Array.isArray(carousel.slides) ? carousel.slides.length : Array.isArray(schema.carouselSlides) ? schema.carouselSlides.length : 0;
+    const hookSlide = Array.isArray(carousel.slides) ? carousel.slides[0] : null;
+    const hook = hookSlide?.headline || hookSlide?.bodyCopy;
+    if (slides) parts.push(`Carousel structure: ${slides} slides${hook ? `, hook: "${String(hook).slice(0, 80)}"` : ""}.`);
+    if (carousel.cta || schema.cta) parts.push(`CTA worked: ${String(carousel.cta || schema.cta).slice(0, 100)}.`);
+  }
+  if (post.contentType === "reel_storyboard") {
+    const reel = (schema.reelStoryboard ?? {}) as Record<string, any>;
+    const hook = reel.hookFirstTwoSeconds || schema.hook;
+    const scenes = Array.isArray(reel.scenes) ? reel.scenes.length : Array.isArray(schema.scenes) ? schema.scenes.length : 0;
+    if (hook) parts.push(`Reel hook style: "${String(hook).slice(0, 100)}".`);
+    if (scenes) parts.push(`Reel structure: ${scenes} scenes, duration ${reel.duration ?? "?"}s.`);
+    if (reel.cta || schema.cta) parts.push(`Reel CTA worked: ${String(reel.cta || schema.cta).slice(0, 100)}.`);
+  }
+  return parts.filter(Boolean).join(" ");
 }
 
 router.delete("/clients/:clientId/posts/:postId", requireClientRole(EDIT_CONTENT_ROLES), async (req, res) => {
@@ -620,6 +721,79 @@ router.delete("/clients/:clientId/posts/:postId", requireClientRole(EDIT_CONTENT
     res.status(204).end();
   } catch (err) {
     res.status(500).json({ error: "Failed to delete post" });
+  }
+});
+
+router.post("/clients/:clientId/posts/:postId/video-render-spec", requireClientRole(EDIT_CONTENT_ROLES), async (req, res): Promise<void> => {
+  try {
+    const { clientId, postId } = req.params;
+    const [post] = await db
+      .select()
+      .from(postsTable)
+      .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
+      .limit(1);
+
+    if (!post) {
+      res.status(404).json({ error: "Post not found" });
+      return;
+    }
+
+    const schema = asRecord(post.contentSchema);
+    const renderSpec = buildVideoRenderSpec(post, req.body?.renderSpec ?? req.body);
+    const nextSchema = {
+      ...schema,
+      videoRenderSpec: renderSpec,
+      videoRenderStatus: "planned",
+      videoRenderWorker: {
+        connected: false,
+        message: "Storyboard ready - video render worker not connected yet.",
+      },
+    };
+
+    const [updated] = await db
+      .update(postsTable)
+      .set({ contentSchema: nextSchema, contentSchemaVersion: 1, updatedAt: new Date() })
+      .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
+      .returning();
+
+    res.json({
+      post: updated,
+      renderSpec,
+      renderStatus: "planned",
+      rendererConnected: false,
+      message: "Storyboard ready - video render worker not connected yet.",
+    });
+  } catch (err) {
+    logger.error({ error: safeErrorMessage(err) }, "Save video render spec failed");
+    res.status(500).json({ error: "Failed to save video render spec" });
+  }
+});
+
+router.post("/clients/:clientId/posts/:postId/video-render", requireClientRole(EDIT_CONTENT_ROLES), async (req, res): Promise<void> => {
+  try {
+    const { clientId, postId } = req.params;
+    const [post] = await db
+      .select()
+      .from(postsTable)
+      .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
+      .limit(1);
+
+    if (!post) {
+      res.status(404).json({ error: "Post not found" });
+      return;
+    }
+
+    const schema = asRecord(post.contentSchema);
+    const renderSpec = asRecord(schema.videoRenderSpec);
+    res.status(501).json({
+      error: "Video render worker is not connected yet.",
+      rendererConnected: false,
+      renderSpecSaved: Object.keys(renderSpec).length > 0,
+      message: "Use Save renderSpec for now. Connect a Remotion/FFmpeg sidecar before enabling MP4 export.",
+    });
+  } catch (err) {
+    logger.error({ error: safeErrorMessage(err) }, "Video render request failed");
+    res.status(500).json({ error: "Failed to start video render" });
   }
 });
 
@@ -719,7 +893,7 @@ router.post("/clients/:clientId/posts/bulk-approve", requireClientRole(APPROVE_C
       const [post] = await db
         .update(postsTable)
         .set({
-          status: parsedDate ? "scheduled" : "export_ready",
+          status: parsedDate ? "scheduled" : "ready_to_post",
           ...(parsedDate ? { scheduledAt: parsedDate } : {}),
           ...(platform ? { platform } : {}),
           updatedAt: new Date(),
@@ -756,7 +930,7 @@ router.post("/clients/:clientId/posts/:postId/approve", requireClientRole(APPROV
     const body = ApprovePostBody.parse(req.body);
     const scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null;
     const updates: Record<string, unknown> = {
-      status: scheduledAt ? "scheduled" : "export_ready",
+      status: scheduledAt ? "scheduled" : "ready_to_post",
       ...(scheduledAt ? { scheduledAt } : {}),
       ...(body.platform ? { platform: body.platform } : {}),
       updatedAt: new Date(),
@@ -795,7 +969,7 @@ router.post("/clients/:clientId/posts/:postId/mock-post", requireClientRole(APPR
 
     const [updated] = await db
       .update(postsTable)
-      .set({ status: "posted", updatedAt: new Date() })
+      .set({ status: "posted_manually", updatedAt: new Date() })
       .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
       .returning();
 
@@ -806,7 +980,7 @@ router.post("/clients/:clientId/posts/:postId/mock-post", requireClientRole(APPR
       status: "success",
       provider: "mock",
       payload: { caption: post.caption, platform: post.platform ?? "instagram" },
-      responseBody: JSON.stringify({ success: true, mockId: `mock_${Date.now()}`, message: "Post published successfully (mock)" }),
+      responseBody: JSON.stringify({ success: true, mockId: `mock_${Date.now()}`, message: "Post marked as posted (mock)" }),
     });
 
     await writeClientMemory(clientId, "Performance Memory / Mock posted", `User mock posted ${post.platform ?? "social"} post "${post.topic}". Treat this as a final accepted content direction.`);
@@ -857,7 +1031,7 @@ router.post("/clients/:clientId/webhook/export", requireClientRole(APPROVE_CONTE
       posts = await db
         .select()
         .from(postsTable)
-        .where(and(eq(postsTable.clientId, clientId), inArray(postsTable.status, ["approved", "export_ready"])));
+        .where(and(eq(postsTable.clientId, clientId), inArray(postsTable.status, ["approved", "export_ready", "ready_to_post"])));
     }
 
     const payload = buildPublishPackage(client.name, posts);

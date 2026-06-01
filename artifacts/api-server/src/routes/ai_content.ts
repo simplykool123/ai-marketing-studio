@@ -31,6 +31,10 @@ function extractJson(text: string): unknown {
   return JSON.parse(match[0]);
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
 // Background: generate a DALL-E 3 image for each post, save to posts + images table
 async function triggerBackgroundImageGen(
   posts: Array<{ id: string; caption: string | null; imagePrompt: string | null }>,
@@ -54,9 +58,16 @@ async function triggerBackgroundImageGen(
       if (!providerImageUrl) throw new Error("DALL-E returned no image URL");
       const { durableUrl: imageUrl } = await persistRemoteImageUrl(providerImageUrl, clientId, "campaign-post");
 
+      const [existingPost] = await db
+        .select({ contentSchema: postsTable.contentSchema })
+        .from(postsTable)
+        .where(and(eq(postsTable.id, post.id), eq(postsTable.clientId, clientId)))
+        .limit(1);
+      const nextSchema = { ...asRecord(existingPost?.contentSchema), finalArtworkUrl: imageUrl, imageUrl };
+
       await db
         .update(postsTable)
-        .set({ selectedImageUrl: imageUrl, generationStatus: "ready", imagePrompt: prompt, updatedAt: new Date() })
+        .set({ selectedImageUrl: imageUrl, generationStatus: "ready", imagePrompt: prompt, contentSchema: nextSchema, contentSchemaVersion: 1, updatedAt: new Date() })
         .where(and(eq(postsTable.id, post.id), eq(postsTable.clientId, clientId)));
 
       await db.insert(imagesTable).values({
@@ -254,12 +265,15 @@ router.post("/clients/:clientId/posts/:postId/generate-image", requireClientRole
     const providerImageUrl = result.providerUrl;
     if (!providerImageUrl) throw new Error("DALL-E returned no image URL");
     const { durableUrl: imageUrl } = await persistRemoteImageUrl(providerImageUrl, clientId, "post-regenerate");
+    const nextSchema = { ...asRecord(post.contentSchema), finalArtworkUrl: imageUrl, imageUrl };
 
     const [updated] = await db
       .update(postsTable)
       .set({
         selectedImageUrl: imageUrl,
         imagePrompt,
+        contentSchema: nextSchema,
+        contentSchemaVersion: 1,
         generationStatus: "ready",
         updatedAt: new Date(),
       })

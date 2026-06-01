@@ -251,7 +251,7 @@ async function publishedPosts(clientId: string) {
     .from(postsTable)
     .where(and(
       eq(postsTable.clientId, clientId),
-      inArray(postsTable.status, ["posted", "published"]),
+      inArray(postsTable.status, ["posted", "posted_manually", "published", "published_via_api"]),
       isNotNull(postsTable.publishedAt)
     ))
     .limit(50);

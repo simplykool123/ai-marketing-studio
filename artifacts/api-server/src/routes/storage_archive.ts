@@ -104,7 +104,7 @@ router.post(
         return;
       }
 
-      if (!["posted", "published"].includes(post.status) || !post.publishedAt) {
+      if (!["posted", "posted_manually", "published", "published_via_api"].includes(post.status) || !post.publishedAt) {
         res.status(400).json({ error: "Only published posts with a publishedAt timestamp can be archived." });
         return;
       }

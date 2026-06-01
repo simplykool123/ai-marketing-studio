@@ -379,4 +379,91 @@ router.post(
   }
 );
 
+// ──────────────────────────────────────────────────────────────────────────
+// Phase 50 — AI Brain campaign-shaped ideas.
+// Returns ideas with full campaign metadata (channel mix, formats, AI
+// visibility / local value, festival/trend relevance, content package).
+// Reuses the omnichannel_campaign_builder skill in "plan only" mode.
+// ──────────────────────────────────────────────────────────────────────────
+import { executeSkill } from "../lib/skill-engine.js";
+import { ensureInitialGlobalSkillExternally } from "./skills.js";
+import { DEFAULT_OMNICHANNEL_PACK } from "../lib/format-matrix.js";
+
+router.post(
+  "/clients/:clientId/brain/campaign-ideas",
+  requireClientRole(EDIT_CONTENT_ROLES),
+  async (req: AuthRequest, res): Promise<void> => {
+    try {
+      const body = req.body as { focus?: string; count?: number };
+      const focus = body.focus?.trim();
+      const count = Math.min(Math.max(body.count ?? 4, 1), 8);
+      const skillId = "omnichannel_campaign_builder";
+      await ensureInitialGlobalSkillExternally(skillId);
+
+      // We loop the omnichannel skill in "plan-only" mode N times. Each call
+      // returns one campaign + items; we treat the campaign block as the idea
+      // card and surface item count as the package suggestion.
+      const ideas: Array<{
+        title: string;
+        goal: string;
+        audience: string;
+        channelMix: string[];
+        formats: string[];
+        aiVisibilityValue: string;
+        localValue: string;
+        suggestedCta: string;
+        requiredAssets: string[];
+        estimatedEffort: "low" | "medium" | "high";
+        urgency: "low" | "medium" | "high";
+        contentPackage: { contentType: string; topic: string }[];
+        festivalRelevance?: string;
+        trendRelevance?: string;
+      }> = [];
+
+      for (let i = 0; i < count; i++) {
+        try {
+          const result = await executeSkill({
+            clientId: req.params.clientId,
+            skillId,
+            input: {
+              topic: focus ? `${focus} — idea ${i + 1}` : `Campaign idea ${i + 1} for this client`,
+              goal: "awareness",
+              audience: "",
+              platforms: ["instagram", "linkedin", "blog", "whatsapp", "google_business"],
+              formats: DEFAULT_OMNICHANNEL_PACK,
+              cta: "",
+              suggestedSchedule: "next 14 days",
+            },
+            userId: req.userId,
+          });
+          const campaign = (result.output.campaign ?? {}) as Record<string, unknown>;
+          const items = Array.isArray(result.output.items) ? (result.output.items as Array<{ contentType?: string; topic?: string }>) : [];
+          ideas.push({
+            title: String(campaign.title ?? `Campaign idea ${i + 1}`),
+            goal: String(campaign.goal ?? "awareness"),
+            audience: String(campaign.audience ?? ""),
+            channelMix: Array.isArray(campaign.channelMix) ? campaign.channelMix.map(String) : [],
+            formats: items.map((x) => String(x.contentType ?? "")).filter(Boolean),
+            aiVisibilityValue: String(campaign.aiVisibilityValue ?? ""),
+            localValue: String(campaign.localValue ?? ""),
+            suggestedCta: "",
+            requiredAssets: items.filter((x) => x.contentType?.includes("image") || x.contentType?.includes("carousel")).map(() => "image").slice(0, 3),
+            estimatedEffort: items.length > 8 ? "high" : items.length > 4 ? "medium" : "low",
+            urgency: "medium",
+            contentPackage: items.map((x) => ({ contentType: String(x.contentType ?? ""), topic: String(x.topic ?? "") })),
+          });
+        } catch (err) {
+          logger.warn({ error: safeErrorMessage(err) }, "AI Brain campaign idea iteration failed");
+        }
+      }
+
+      res.json({ ideas, count: ideas.length });
+    } catch (err) {
+      const { status, message } = toAiErrorResponse(err, "AI Brain campaign ideas failed");
+      logger.error({ error: safeErrorMessage(err) }, "AI Brain campaign ideas failed");
+      res.status(status).json({ error: message });
+    }
+  }
+);
+
 export default router;
