@@ -371,7 +371,7 @@ export async function runScheduledPublish(options: ScheduledPublishRunOptions = 
       await db
         .update(postsTable)
         .set({
-          status: "posted",
+          status: "published_via_api",
           publishedAt: publishResult.publishedAt,
           publishedUrl: publishResult.publishedUrl,
           contentSchema: publishMetadata(post, publishResult),

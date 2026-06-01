@@ -2,8 +2,9 @@ import { db } from "@workspace/db";
 import { skillConfigsTable, type SkillConfig } from "@workspace/db/schema";
 import { and, eq } from "drizzle-orm";
 import { buildClientMemoryPacket, formatClientMemoryPacket, type ClientMemoryPacket } from "./client-memory-packet.js";
-import { generateTextWithFallback } from "./ai-provider.js";
 import { resolveTextProviderForMode, type QualityMode } from "./provider-router.js";
+import { generateJsonWithFallback, JsonParseError } from "./ai-json.js";
+import { validatorForSkill } from "./skill-validators.js";
 
 type SkillConfigBody = {
   prompt_template?: string;
@@ -23,6 +24,8 @@ export type SkillExecutionMetadata = {
   provider: string;
   model: string;
   fallbackUsed: boolean;
+  repairUsed: boolean;
+  generatedAt: string;
   route: "skill_engine.execute";
 };
 
@@ -61,29 +64,50 @@ function valueForPath(input: Record<string, unknown>, path: string): string {
 
 export function parseSkillJsonOutput(raw: string): Record<string, unknown> {
   const trimmed = raw.trim();
-  const withoutFence = trimmed
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
 
-  const candidate = withoutFence.startsWith("{")
-    ? withoutFence
-    : withoutFence.match(/\{[\s\S]*\}/)?.[0];
+  // Try, in order: a single ```json fenced block, any ``` fenced block, the
+  // first { … } that JSON.parse accepts. The model sometimes wraps the JSON
+  // in prose; we don't want one stray sentence to fail an entire campaign.
+  const fencedJson = trimmed.match(/```json\s*([\s\S]*?)\s*```/i);
+  const fencedAny = trimmed.match(/```\s*([\s\S]*?)\s*```/);
+  const stripFence = fencedJson?.[1] ?? fencedAny?.[1] ?? trimmed;
 
-  if (!candidate) {
-    throw new SkillEngineError("Skill output was not valid JSON.", 422);
-  }
+  const candidates: string[] = [];
+  if (stripFence.trim().startsWith("{")) candidates.push(stripFence.trim());
 
-  try {
-    const parsed = JSON.parse(candidate) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new SkillEngineError("Skill output JSON must be an object.", 422);
+  // Walk through every { ... } block that's a balanced JSON object — start
+  // at the first '{' and try increasingly long substrings until JSON.parse
+  // succeeds. This handles "Here's the JSON:\n\n{...}\n\nLet me know if you
+  // want adjustments." which is what Claude / GPT sometimes return.
+  const firstBrace = stripFence.indexOf("{");
+  if (firstBrace >= 0) {
+    let depth = 0;
+    for (let i = firstBrace; i < stripFence.length; i++) {
+      const ch = stripFence[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          candidates.push(stripFence.slice(firstBrace, i + 1));
+          break;
+        }
+      }
     }
-    return parsed as Record<string, unknown>;
-  } catch (err) {
-    if (err instanceof SkillEngineError) throw err;
-    throw new SkillEngineError("Skill output was not valid JSON.", 422);
   }
+  // Fallback: greedy match.
+  const greedy = stripFence.match(/\{[\s\S]*\}/)?.[0];
+  if (greedy) candidates.push(greedy);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch { /* try the next candidate */ }
+  }
+
+  throw new SkillEngineError("Skill output was not valid JSON.", 422);
 }
 
 export async function loadSkill(skillId: string): Promise<SkillConfig> {
@@ -152,25 +176,35 @@ export async function executeSkill({
   const maxTokens = config.provider_routing?.max_tokens ?? 2500;
   const { provider, model } = await resolveTextProviderForMode(qualityMode, userId);
 
-  const { text, usedProvider, usedModel, fallbackUsed } = await generateTextWithFallback(
-    provider,
-    model,
-    prompt,
-    maxTokens,
-    userId
-  );
-
-  return {
-    skill,
-    output: parseSkillJsonOutput(text),
-    metadata: {
-      skillId,
-      provider: usedProvider,
-      model: usedModel,
-      fallbackUsed,
-      route: "skill_engine.execute",
-    },
-  };
+  try {
+    const result = await generateJsonWithFallback({
+      provider,
+      model,
+      prompt,
+      maxTokens,
+      userId,
+      schemaName: skillId,
+      validate: validatorForSkill(skillId),
+    });
+    return {
+      skill,
+      output: result.object,
+      metadata: {
+        skillId,
+        provider: result.usedProvider,
+        model: result.usedModel,
+        fallbackUsed: result.fallbackUsed,
+        repairUsed: result.repairUsed,
+        generatedAt: new Date().toISOString(),
+        route: "skill_engine.execute",
+      },
+    };
+  } catch (err) {
+    if (err instanceof JsonParseError) {
+      throw new SkillEngineError(`Skill ${skillId} did not return valid JSON: ${err.message}`, 422);
+    }
+    throw err;
+  }
 }
 
 export function getSkillSaveDestination(skill: SkillConfig) {

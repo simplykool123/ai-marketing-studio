@@ -434,7 +434,13 @@ paths:
           required: false
           schema:
             type: string
-            enum: [draft, in_review, approved, export_ready, scheduled, posted, published, failed]
+            enum: [draft, in_review, approved, scheduled, ready_to_post, ready_for_whatsapp, exported, posted_manually, published_via_api, failed, rejected, export_ready, posted, published]
+        - name: campaignId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: Posts
@@ -1593,7 +1599,7 @@ components:
           type: string
         status:
           type: string
-          enum: [draft, in_review, approved, export_ready, scheduled, posted, published, failed, rejected]
+          enum: [draft, in_review, approved, scheduled, ready_to_post, ready_for_whatsapp, exported, posted_manually, published_via_api, failed, rejected, export_ready, posted, published]
         scheduledAt:
           type: string
         platform:
@@ -1659,9 +1665,13 @@ components:
           type: string
         selectedImageUrl:
           type: string
+        originalImageUrl:
+          type: string
+        brandedImageUrl:
+          type: string
         status:
           type: string
-          enum: [draft, in_review, approved, export_ready, scheduled, posted, published, failed, rejected]
+          enum: [draft, in_review, approved, scheduled, ready_to_post, ready_for_whatsapp, exported, posted_manually, published_via_api, failed, rejected, export_ready, posted, published]
         scheduledAt:
           type: string
         platform:
@@ -1676,6 +1686,13 @@ components:
           type: string
         longFormBody:
           type: string
+        contentSchema:
+          type: object
+          additionalProperties: true
+          description: Free-form JSON blob with rich draft metadata (sections, slides, scenes, artwork URLs, schema markup, etc.).
+        contentSchemaVersion:
+          type: integer
+          minimum: 0
 
     BulkApproveBody:
       type: object
@@ -1845,6 +1862,10 @@ components:
           type: string
           enum: [selected, rejected, pending]
         prompt:
+          type: string
+        originalImageUrl:
+          type: string
+        brandedImageUrl:
           type: string
       required: [url, provider, status]
 

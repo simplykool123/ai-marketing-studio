@@ -157,7 +157,7 @@ export async function generateImageWithProvider(params: GenerateImageParams): Pr
   const attempts: ImageProviderResult["attempts"] = [];
   const providers = await providerOrder(params.provider, params.userId);
   if (!providers.length) {
-    throw new Error("No image provider connected. Add key in Settings -> AI Keys or copy the image prompt and generate manually.");
+    throw new Error("No image provider connected. Add OpenAI, Replicate, or Ideogram key in Settings → AI Keys.");
   }
   for (const provider of providers) {
     try {

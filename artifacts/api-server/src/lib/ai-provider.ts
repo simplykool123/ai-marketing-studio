@@ -96,35 +96,29 @@ export async function resolveApiKey(provider: string, userId?: string): Promise<
   if (candidates.length > 0) return candidates[0]!;
 
   throw new AiConfigError(
-    `No API key configured for ${provider}. Add one in Settings → AI Keys or set the .env variable.`
+    `No API key configured for ${provider}. Add one in Settings → AI Keys.`
   );
 }
 
 async function resolveApiKeyCandidates(provider: string, userId?: string): Promise<ResolvedApiKey[]> {
-  const candidates: ResolvedApiKey[] = [];
+  // Phase 51 policy: API keys MUST come from Settings (database). No .env
+  // fallback. If a user has not added a key for this provider, the generation
+  // path fails fast with AiConfigError so the UI shows the missing-key state.
+  if (!userId) return [];
 
-  if (userId) {
-    const [row] = await db
-      .select({ encryptedKey: userApiKeysTable.encryptedKey, keyHint: userApiKeysTable.keyHint })
-      .from(userApiKeysTable)
-      .where(and(eq(userApiKeysTable.userId, userId), eq(userApiKeysTable.provider, provider)))
-      .limit(1);
-    if (row) {
-      try {
-        return [{ key: decrypt(row.encryptedKey), source: "database", keyHint: row.keyHint }];
-      } catch {
-        // Decryption failure falls through to .env
-      }
-    }
+  const [row] = await db
+    .select({ encryptedKey: userApiKeysTable.encryptedKey, keyHint: userApiKeysTable.keyHint })
+    .from(userApiKeysTable)
+    .where(and(eq(userApiKeysTable.userId, userId), eq(userApiKeysTable.provider, provider)))
+    .limit(1);
+  if (!row) return [];
+
+  try {
+    return [{ key: decrypt(row.encryptedKey), source: "database", keyHint: row.keyHint }];
+  } catch {
+    // Decryption failure — treat as missing rather than crashing the request.
+    return [];
   }
-
-  const envKey = envKeyForProvider(provider);
-
-  if (envKey && !candidates.some((candidate) => candidate.key === envKey)) {
-    candidates.push({ key: envKey, source: "env", keyHint: keyHintFromPlaintext(envKey) });
-  }
-
-  return candidates;
 }
 
 // ---------------------------------------------------------------------------
@@ -273,10 +267,8 @@ export async function getProviderKeyStatus(userId?: string): Promise<Record<stri
     if (dbProviders.has(p)) {
       result[p] = { keyExists: true, source: "database", keyHint: dbProviders.get(p) };
     } else {
-      const envKey = envKeyForProvider(p);
-      result[p] = envKey
-        ? { keyExists: true, source: "env", keyHint: keyHintFromPlaintext(envKey) }
-        : { keyExists: false, source: "none" };
+      // Phase 51: no .env fallback. Provider is "none" until added in Settings.
+      result[p] = { keyExists: false, source: "none" };
     }
   }
 
@@ -431,7 +423,7 @@ function providerFailureReason(err: unknown): string {
   return "unavailable";
 }
 
-function recordProviderFailure(provider: string, model: string, err: unknown): ProviderAttempt {
+export function recordProviderFailure(provider: string, model: string, err: unknown): ProviderAttempt {
   const category = aiErrorCategory(err);
   const attempt = {
     provider,
@@ -450,7 +442,7 @@ function recordProviderFailure(provider: string, model: string, err: unknown): P
   return attempt;
 }
 
-function recordProviderSuccess(provider: string, model: string): void {
+export function recordProviderSuccess(provider: string, model: string): void {
   providerHealth.set(provider, {
     ...(providerHealth.get(provider) ?? { provider }),
     provider,

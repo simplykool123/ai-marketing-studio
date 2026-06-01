@@ -33,8 +33,57 @@ export async function writeClientMemory(clientId: string, key: string, value: st
   const cleanKey = key.trim();
   const cleanValue = value.trim();
   if (!cleanKey || !cleanValue) return;
+  // Phase 50: dedupe — if an identical (key,value) row already exists for this
+  // client, just bump its updatedAt instead of writing another one. Avoids
+  // memory spam on bulk-approve / repeat actions.
+  const [existing] = await db
+    .select({ id: contentMemoryTable.id })
+    .from(contentMemoryTable)
+    .where(
+      and(
+        eq(contentMemoryTable.clientId, clientId),
+        eq(contentMemoryTable.key, cleanKey),
+        eq(contentMemoryTable.value, cleanValue),
+      ),
+    )
+    .limit(1);
+  if (existing) {
+    // Memory already captured this exact learning — no-op to avoid spam.
+    return;
+  }
   await db.insert(contentMemoryTable).values({ clientId, key: cleanKey, value: cleanValue });
 }
+
+// Phase 50: structured learning helper. Encapsulates the standard memory keys
+// the approval/rejection/export flows write to, so the format is uniform and
+// the readers can look up "best hooks", "rejected styles", etc.
+export type LearningKind =
+  | "approved_pattern"
+  | "rejected_pattern"
+  | "best_hook"
+  | "best_format"
+  | "campaign_outcome"
+  | "ai_visibility_angle"
+  | "local_value_angle"
+  | "festival_outcome";
+
+export async function recordLearning(input: {
+  clientId: string;
+  kind: LearningKind;
+  contentType?: string | null;
+  platform?: string | null;
+  topic?: string | null;
+  summary: string;
+}): Promise<void> {
+  const key = `Learning / ${input.kind}${input.contentType ? ` / ${input.contentType}` : ""}`;
+  const tagBits = [
+    input.platform ? `platform=${input.platform}` : null,
+    input.topic ? `topic=${input.topic.slice(0, 80)}` : null,
+  ].filter(Boolean).join(" · ");
+  const value = tagBits ? `${input.summary} (${tagBits})` : input.summary;
+  await writeClientMemory(input.clientId, key, value);
+}
+
 
 export async function buildClientMemoryPacket(clientId: string) {
   const [client] = await db
@@ -60,7 +109,7 @@ export async function buildClientMemoryPacket(clientId: string) {
     db
       .select()
       .from(postsTable)
-      .where(and(eq(postsTable.clientId, clientId), inArray(postsTable.status, ["approved", "export_ready", "scheduled", "posted", "published"])))
+      .where(and(eq(postsTable.clientId, clientId), inArray(postsTable.status, ["approved", "export_ready", "ready_to_post", "scheduled", "exported", "posted", "posted_manually", "published", "published_via_api"])))
       .orderBy(desc(postsTable.updatedAt))
       .limit(10),
     db.select().from(aiIdeasTable).where(eq(aiIdeasTable.clientId, clientId)).orderBy(desc(aiIdeasTable.createdAt)).limit(50),

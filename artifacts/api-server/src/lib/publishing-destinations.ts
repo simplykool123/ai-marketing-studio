@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { clientsTable, postingLogsTable, postsTable, socialAccountsTable } from "@workspace/db/schema";
 import type { Post } from "@workspace/db/schema";
 import { isEncryptionConfigured } from "./crypto.js";
+import { canonicalStatus, isPostedFamily } from "./post-status.js";
 
 export type PublishingDestinationType =
   | "manual"
@@ -54,7 +55,8 @@ function finalArtworkUrlFor(post: Post): string {
 }
 
 export function exportableStatus(post: Post): string {
-  return post.publishedAt ? "published" : post.status;
+  if (post.publishedAt && isPostedFamily(post.status)) return canonicalStatus(post.status);
+  return canonicalStatus(post.status);
 }
 
 export function buildPublishPayloadPost(clientName: string, post: Post): PublishPackagePost {
@@ -225,7 +227,7 @@ export async function buildPublishPayload(postId: string): Promise<PublishPackag
 export async function markPublished(postId: string, clientId: string, publishedAt = new Date()) {
   const [updated] = await db
     .update(postsTable)
-    .set({ status: "posted", publishedAt, publishError: null, updatedAt: publishedAt })
+    .set({ status: "posted_manually", publishedAt, publishError: null, updatedAt: publishedAt })
     .where(and(eq(postsTable.id, postId), eq(postsTable.clientId, clientId)))
     .returning();
 

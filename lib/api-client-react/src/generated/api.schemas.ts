@@ -129,12 +129,17 @@ export const PostStatus = {
   draft: "draft",
   in_review: "in_review",
   approved: "approved",
-  export_ready: "export_ready",
   scheduled: "scheduled",
-  posted: "posted",
-  published: "published",
+  ready_to_post: "ready_to_post",
+  ready_for_whatsapp: "ready_for_whatsapp",
+  exported: "exported",
+  posted_manually: "posted_manually",
+  published_via_api: "published_via_api",
   failed: "failed",
   rejected: "rejected",
+  export_ready: "export_ready",
+  posted: "posted",
+  published: "published",
 } as const;
 
 export type PostPlatform = (typeof PostPlatform)[keyof typeof PostPlatform];
@@ -170,23 +175,10 @@ export interface Post {
   id: string;
   clientId: string;
   campaignId?: string;
-  sourceAiIdeaId?: string;
-  contentType?: string;
-  contentSchema?: unknown;
-  contentSchemaVersion?: number;
-  skillId?: string;
-  storylineId?: string;
-  qualityScore?: number;
-  qualityReport?: unknown;
-  generationMetadata?: unknown;
-  editHistory?: unknown;
-  memoryRefs?: string[];
   topic: string;
   caption: string;
   hashtags?: string;
   selectedImageUrl?: string;
-  originalImageUrl?: string;
-  brandedImageUrl?: string;
   status: PostStatus;
   scheduledAt?: string;
   platform?: PostPlatform;
@@ -229,21 +221,8 @@ export interface CreatePostBody {
   caption: string;
   hashtags?: string;
   selectedImageUrl?: string;
-  originalImageUrl?: string;
-  brandedImageUrl?: string;
   platform?: CreatePostBodyPlatform;
   campaignId?: string;
-  sourceAiIdeaId?: string;
-  contentType?: string;
-  contentSchema?: unknown;
-  contentSchemaVersion?: number;
-  skillId?: string;
-  storylineId?: string;
-  qualityScore?: number;
-  qualityReport?: unknown;
-  generationMetadata?: unknown;
-  editHistory?: unknown;
-  memoryRefs?: string[];
   postType?: CreatePostBodyPostType;
   title?: string;
   longFormBody?: string;
@@ -256,12 +235,17 @@ export const UpdatePostBodyStatus = {
   draft: "draft",
   in_review: "in_review",
   approved: "approved",
-  export_ready: "export_ready",
   scheduled: "scheduled",
-  posted: "posted",
-  published: "published",
+  ready_to_post: "ready_to_post",
+  ready_for_whatsapp: "ready_for_whatsapp",
+  exported: "exported",
+  posted_manually: "posted_manually",
+  published_via_api: "published_via_api",
   failed: "failed",
   rejected: "rejected",
+  export_ready: "export_ready",
+  posted: "posted",
+  published: "published",
 } as const;
 
 export type UpdatePostBodyPlatform =
@@ -286,6 +270,11 @@ export const UpdatePostBodyPostType = {
   newsletter: "newsletter",
 } as const;
 
+/**
+ * Free-form JSON blob with rich draft metadata (sections, slides, scenes, artwork URLs, schema markup, etc.).
+ */
+export type UpdatePostBodyContentSchema = { [key: string]: unknown };
+
 export interface UpdatePostBody {
   topic?: string;
   caption?: string;
@@ -297,20 +286,13 @@ export interface UpdatePostBody {
   scheduledAt?: string;
   platform?: UpdatePostBodyPlatform;
   campaignId?: string;
-  sourceAiIdeaId?: string;
-  contentType?: string;
-  contentSchema?: unknown;
-  contentSchemaVersion?: number;
-  skillId?: string;
-  storylineId?: string;
-  qualityScore?: number;
-  qualityReport?: unknown;
-  generationMetadata?: unknown;
-  editHistory?: unknown;
-  memoryRefs?: string[];
   postType?: UpdatePostBodyPostType;
   title?: string;
   longFormBody?: string;
+  /** Free-form JSON blob with rich draft metadata (sections, slides, scenes, artwork URLs, schema markup, etc.). */
+  contentSchema?: UpdatePostBodyContentSchema;
+  /** @minimum 0 */
+  contentSchemaVersion?: number;
 }
 
 export type BulkApproveBodyPlatform =
@@ -426,8 +408,6 @@ export interface Image {
   clientId: string;
   postId: string;
   url: string;
-  originalImageUrl?: string;
-  brandedImageUrl?: string;
   provider: ImageProvider;
   status: ImageStatus;
   prompt?: string;
@@ -453,11 +433,11 @@ export const SaveImageBodyStatus = {
 
 export interface SaveImageBody {
   url: string;
-  originalImageUrl?: string;
-  brandedImageUrl?: string;
   provider: SaveImageBodyProvider;
   status: SaveImageBodyStatus;
   prompt?: string;
+  originalImageUrl?: string;
+  brandedImageUrl?: string;
 }
 
 export interface MemoryEntry {
@@ -821,11 +801,17 @@ export const ListPostsStatus = {
   draft: "draft",
   in_review: "in_review",
   approved: "approved",
-  export_ready: "export_ready",
   scheduled: "scheduled",
+  ready_to_post: "ready_to_post",
+  ready_for_whatsapp: "ready_for_whatsapp",
+  exported: "exported",
+  posted_manually: "posted_manually",
+  published_via_api: "published_via_api",
+  failed: "failed",
+  rejected: "rejected",
+  export_ready: "export_ready",
   posted: "posted",
   published: "published",
-  failed: "failed",
 } as const;
 
 export type RefreshTokenBody = {
