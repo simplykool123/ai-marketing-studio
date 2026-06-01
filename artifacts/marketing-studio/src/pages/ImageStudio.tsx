@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useLocation, useParams } from "wouter";
+import { Link, useParams } from "wouter";
 import {
   Image as ImageIcon,
   Sparkles,
@@ -54,7 +54,55 @@ type StudioResult = {
   style?: string;
   postId?: string;
   provider?: string;
+  sizeLabel?: string;
 };
+
+type CreativeConcept = {
+  title: string;
+  visualDirection: string;
+  layoutIdea: string;
+  mainHeadline: string;
+  subtitle: string;
+  cta: string;
+  logoPlacement: string;
+  colorDirection: string;
+  fontStyle: string;
+  backgroundStyle: string;
+  imagePrompt: string;
+  negativePrompt: string;
+  providerRecommendation: "openai" | "ideogram" | "imagen" | "flux";
+  whyThisWorks: string;
+};
+
+type SizePresetId =
+  | "instagram_square"
+  | "instagram_portrait"
+  | "instagram_story"
+  | "linkedin_feed"
+  | "linkedin_square"
+  | "facebook_feed"
+  | "youtube_thumbnail"
+  | "blog_hero";
+
+type SizePreset = {
+  label: string;
+  width: number;
+  height: number;
+  aspectRatio: "1:1" | "4:5" | "9:16" | "16:9";
+};
+
+const SIZE_PRESET_LABELS: Record<SizePresetId, SizePreset> = {
+  instagram_square: { label: "Instagram Square", width: 1080, height: 1080, aspectRatio: "1:1" },
+  instagram_portrait: { label: "Instagram Portrait", width: 1080, height: 1350, aspectRatio: "4:5" },
+  instagram_story: { label: "Instagram Story/Reel", width: 1080, height: 1920, aspectRatio: "9:16" },
+  linkedin_feed: { label: "LinkedIn Feed", width: 1200, height: 627, aspectRatio: "16:9" },
+  linkedin_square: { label: "LinkedIn Square", width: 1080, height: 1080, aspectRatio: "1:1" },
+  facebook_feed: { label: "Facebook Feed", width: 1200, height: 630, aspectRatio: "16:9" },
+  youtube_thumbnail: { label: "YouTube Thumbnail", width: 1280, height: 720, aspectRatio: "16:9" },
+  blog_hero: { label: "Blog Hero", width: 1600, height: 900, aspectRatio: "16:9" },
+};
+
+const ALL_SIZE_PRESETS = Object.keys(SIZE_PRESET_LABELS) as SizePresetId[];
 
 const IMAGE_PROVIDER_OPTIONS = [
   { value: "auto", label: "Auto best", bestFor: "Flux → Ideogram → DALL-E fallback." },
@@ -62,6 +110,21 @@ const IMAGE_PROVIDER_OPTIONS = [
   { value: "ideogram", label: "Ideogram", bestFor: "Text-on-image, offer posts, banners, posters, and CTA graphics." },
   { value: "openai", label: "DALL-E", bestFor: "Reliable fallback and general-purpose social images." },
 ];
+
+const PROVIDER_MODES = [
+  { value: "best_quality", label: "Best Quality", note: "Prefers instruction following and polished output." },
+  { value: "fast", label: "Fast", note: "Favors the fastest configured provider." },
+  { value: "cheap", label: "Cheap", note: "Favors Flux/Replicate when available." },
+];
+
+function defaultSizeForPlatform(platform: string): SizePresetId {
+  if (platform.includes("story") || platform.includes("reel")) return "instagram_story";
+  if (platform === "linkedin") return "linkedin_feed";
+  if (platform === "facebook") return "facebook_feed";
+  if (platform === "youtube") return "youtube_thumbnail";
+  if (platform === "blog") return "blog_hero";
+  return "instagram_square";
+}
 
 async function fetchBrandAssets(clientId: string): Promise<BrandAsset[]> {
   const res = await fetch(`${BASE}/api/clients/${clientId}/brand-assets`);
@@ -71,13 +134,13 @@ async function fetchBrandAssets(clientId: string): Promise<BrandAsset[]> {
 
 export default function ImageStudio() {
   const { clientId } = useParams<{ clientId: string }>();
-  const [location] = useLocation();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const _qs = new URLSearchParams(location.split("?")[1] ?? "");
+  const _qs = new URLSearchParams(window.location.search);
   const initialIdea     = _qs.get("idea") ?? _qs.get("topic") ?? _qs.get("prompt") ?? "";
   const initialPlatform = _qs.get("platform") ?? "instagram";
   const incomingImageUrl = _qs.get("imageUrl") ?? "";
+  const postId = _qs.get("postId") ?? "";
 
   const [roughIdea, setRoughIdea] = useState(initialIdea);
   const [editInstruction, setEditInstruction] = useState("");
@@ -86,7 +149,15 @@ export default function ImageStudio() {
   const [platform, setPlatform] = useState(initialPlatform);
   const [aspectRatio, setAspectRatio] = useState<"1:1" | "4:5" | "16:9" | "9:16">("1:1");
   const [imageProvider, setImageProvider] = useState("auto");
+  const [providerMode, setProviderMode] = useState("best_quality");
   const [prepared, setPrepared] = useState<PreparedImagePrompt | null>(null);
+  const [creativeConcepts, setCreativeConcepts] = useState<CreativeConcept[]>([]);
+  const [selectedConceptIndex, setSelectedConceptIndex] = useState(0);
+  const [aiVisibilityPrompts, setAiVisibilityPrompts] = useState<string[]>([]);
+  const [sizePresets, setSizePresets] = useState<Record<string, SizePreset>>(SIZE_PRESET_LABELS);
+  const [selectedSizeIds, setSelectedSizeIds] = useState<Set<SizePresetId>>(() => new Set([defaultSizeForPlatform(initialPlatform)]));
+  const [logoFound, setLogoFound] = useState(false);
+  const [useLogo, setUseLogo] = useState(false);
   const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(null);
   const [brandAssets, setBrandAssets] = useState<BrandAsset[]>([]);
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
@@ -104,9 +175,130 @@ export default function ImageStudio() {
   const selectedResult = results.find((result) => result.id === selectedResultId) ?? results[0] ?? null;
   const selectedAssetArray = Array.from(selectedAssetIds);
   const selectedProviderOption = IMAGE_PROVIDER_OPTIONS.find((option) => option.value === imageProvider) ?? IMAGE_PROVIDER_OPTIONS[0];
+  const selectedConcept = creativeConcepts[selectedConceptIndex] ?? null;
   const workingPrompt = prepared
     ? `${prepared.finalPrompt}\n\nAvoid: ${prepared.negativePrompt}\nComposition: ${prepared.compositionNotes}\nText guidance: ${prepared.textRecommendation}`
     : roughIdea;
+
+  async function generateCreativeConcepts() {
+    if (!postId) {
+      toast({ title: "Open from a draft first", description: "Use the Creative button in Review for draft-specific concepts.", variant: "destructive" });
+      return;
+    }
+    setLoadingAction("prompt");
+    try {
+      const res = await fetch(`${BASE}/api/clients/${clientId}/creative/concepts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Could not generate creative concepts");
+      setCreativeConcepts(data.concepts ?? []);
+      setSelectedConceptIndex(0);
+      setAiVisibilityPrompts(data.aiVisibilityPromptDirections ?? []);
+      setLogoFound(!!data.logo?.found);
+      setUseLogo(!!data.logo?.found);
+      setSizePresets(data.sizePresets ?? SIZE_PRESET_LABELS);
+      const draftPlatform = data.post?.platform ?? platform;
+      setPlatform(draftPlatform);
+      setSelectedSizeIds(new Set([defaultSizeForPlatform(draftPlatform)]));
+      if (data.post?.topic) setTopic(data.post.topic);
+      if (data.post?.caption) setCaption(data.post.caption);
+      toast({ title: "Creative concepts ready", description: "Choose a concept and size, then generate the artwork." });
+    } catch (err) {
+      toast({
+        title: "Creative Director failed",
+        description: err instanceof Error ? err.message : "Could not generate concepts.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function improveAiVisibilityPrompt(prompt: string) {
+    setRoughIdea(prompt);
+    setPrepared(null);
+    await improvePromptFromIdea(prompt);
+  }
+
+  async function improvePromptFromIdea(idea: string) {
+    if (!idea.trim()) {
+      toast({ title: "Enter a rough image idea first", variant: "destructive" });
+      return;
+    }
+    setLoadingAction("prompt");
+    try {
+      const res = await fetch(`${BASE}/api/clients/${clientId}/image-studio/prepare-prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idea, platform, aspectRatio, assetIds: selectedAssetArray }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Could not improve prompt");
+      setPrepared(data.prepared);
+      setAspectRatio(data.prepared?.suggestedAspectRatio ?? aspectRatio);
+      toast({ title: "Prompt improved", description: "Brand DNA has been folded into the prompt." });
+    } catch (err) {
+      toast({
+        title: "Prompt improvement failed",
+        description: err instanceof Error ? err.message : "Could not improve prompt.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
+  async function generateCreativeImage() {
+    if (!selectedConcept || !postId) {
+      toast({ title: "Select a creative concept first", variant: "destructive" });
+      return;
+    }
+    const sizePresetIds = Array.from(selectedSizeIds);
+    if (!sizePresetIds.length) {
+      toast({ title: "Select at least one platform size", variant: "destructive" });
+      return;
+    }
+    setLoadingAction("generate");
+    try {
+      const res = await fetch(`${BASE}/api/clients/${clientId}/creative/generate-image`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postId,
+          concept: selectedConcept,
+          prompt: selectedConcept.imagePrompt,
+          sizePresetIds,
+          providerMode,
+          useLogo,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Image generation failed");
+      const newResults: StudioResult[] = (data.outputs ?? []).map((output: any) => ({
+        id: `${output.sizePresetId}-${crypto.randomUUID()}`,
+        imageUrl: output.imageUrl,
+        prompt: selectedConcept.imagePrompt,
+        style: output.logoComposited ? "logo composited" : "generated",
+        postId,
+        provider: output.provider,
+        sizeLabel: `${output.label} ${output.width}x${output.height}`,
+      }));
+      setResults((current) => [...newResults, ...current]);
+      if (newResults[0]) setSelectedResultId(newResults[0].id);
+      toast({ title: "Artwork attached to draft", description: "Saved to Supabase and visible in Review after refresh." });
+    } catch (err) {
+      toast({
+        title: "Creative image failed",
+        description: err instanceof Error ? err.message : "Try another provider mode or add an image key in Settings.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingAction(null);
+    }
+  }
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -130,31 +322,7 @@ export default function ImageStudio() {
   }
 
   async function improvePrompt() {
-    if (!roughIdea.trim()) {
-      toast({ title: "Enter a rough image idea first", variant: "destructive" });
-      return;
-    }
-    setLoadingAction("prompt");
-    try {
-      const res = await fetch(`${BASE}/api/clients/${clientId}/image-studio/prepare-prompt`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idea: roughIdea, platform, aspectRatio, assetIds: selectedAssetArray }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "Could not improve prompt");
-      setPrepared(data.prepared);
-      setAspectRatio(data.prepared?.suggestedAspectRatio ?? aspectRatio);
-      toast({ title: "Prompt improved", description: "Review the direction, then generate or edit." });
-    } catch (err) {
-      toast({
-        title: "Prompt improvement failed",
-        description: err instanceof Error ? err.message : "Could not improve prompt.",
-        variant: "destructive",
-      });
-    } finally {
-      setLoadingAction(null);
-    }
+    await improvePromptFromIdea(roughIdea);
   }
 
   async function generateImage() {
@@ -339,6 +507,124 @@ export default function ImageStudio() {
           <Button variant="outline">Open Assets</Button>
         </Link>
       </div>
+
+      {postId && (
+        <Card className="border-primary/20 bg-primary/[0.03]">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
+              Creative Director for this draft
+            </CardTitle>
+            <CardDescription>
+              Generate 3 concepts, choose platform sizes, then create artwork that saves permanently and attaches back to Review.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={generateCreativeConcepts} disabled={loadingAction !== null} className="gap-2">
+                {loadingAction === "prompt" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+                Generate Creative Concepts
+              </Button>
+              <Badge variant={logoFound ? "default" : "outline"}>{logoFound ? "Logo found" : "No logo found"}</Badge>
+              {logoFound && (
+                <label className="flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm">
+                  <Checkbox checked={useLogo} onCheckedChange={(checked) => setUseLogo(checked === true)} />
+                  Use Logo
+                </label>
+              )}
+              <Select value={providerMode} onValueChange={setProviderMode}>
+                <SelectTrigger className="w-[180px] bg-background"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {PROVIDER_MODES.map((mode) => (
+                    <SelectItem key={mode.value} value={mode.value}>{mode.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {aiVisibilityPrompts.length > 0 && (
+              <div className="space-y-2 rounded-md border bg-background p-3">
+                <p className="text-sm font-medium">AI Visibility prompt directions</p>
+                <div className="grid gap-2">
+                  {aiVisibilityPrompts.map((prompt, index) => (
+                    <div key={`${prompt}-${index}`} className="rounded-md border p-2 text-sm">
+                      <p className="line-clamp-3 text-muted-foreground">{prompt}</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" onClick={() => { setRoughIdea(prompt); setPrepared(null); }}>Use this prompt</Button>
+                        <Button size="sm" variant="outline" onClick={() => improveAiVisibilityPrompt(prompt)} disabled={loadingAction !== null}>
+                          Improve prompt with Brand DNA
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {creativeConcepts.length > 0 && (
+              <div className="grid gap-4 lg:grid-cols-[1fr_0.9fr]">
+                <div className="grid gap-3 md:grid-cols-3">
+                  {creativeConcepts.map((concept, index) => {
+                    const selected = selectedConceptIndex === index;
+                    return (
+                      <button
+                        key={`${concept.title}-${index}`}
+                        type="button"
+                        onClick={() => setSelectedConceptIndex(index)}
+                        className={cn("rounded-md border bg-background p-3 text-left transition-colors hover:border-primary", selected && "border-primary ring-2 ring-primary/20")}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-medium">{concept.title}</p>
+                          <Badge variant="outline">{concept.providerRecommendation}</Badge>
+                        </div>
+                        <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{concept.visualDirection}</p>
+                        <p className="mt-2 text-xs"><span className="font-medium">Headline:</span> {concept.mainHeadline || "No text"}</p>
+                        <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{concept.whyThisWorks}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="space-y-3 rounded-md border bg-background p-3">
+                  <div>
+                    <p className="text-sm font-medium">Platform sizes</p>
+                    <p className="text-xs text-muted-foreground">Only selected sizes generate.</p>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {(Object.entries(sizePresets) as [SizePresetId, SizePreset][]).map(([id, preset]) => (
+                      <label key={id} className="flex items-start gap-2 rounded-md border p-2 text-sm">
+                        <Checkbox
+                          checked={selectedSizeIds.has(id)}
+                          onCheckedChange={(checked) => {
+                            setSelectedSizeIds((current) => {
+                              const next = new Set(current);
+                              if (checked === true) next.add(id);
+                              else next.delete(id);
+                              return next;
+                            });
+                          }}
+                        />
+                        <span>
+                          <span className="block font-medium">{preset.label}</span>
+                          <span className="text-xs text-muted-foreground">{preset.width}x{preset.height}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {PROVIDER_MODES.find((mode) => mode.value === providerMode)?.note}
+                    {useLogo ? " Logo will be composited after generation." : " Logo is not sent unless supported or composited."}
+                  </p>
+                  <Button onClick={generateCreativeImage} disabled={loadingAction !== null || !selectedConcept || selectedSizeIds.size === 0} className="w-full gap-2">
+                    {loadingAction === "generate" ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    Generate Image and Attach to Draft
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
         <div className="space-y-5">
@@ -565,7 +851,9 @@ export default function ImageStudio() {
                         onClick={() => setSelectedResultId(result.id)}
                       >
                         <img src={result.imageUrl} alt="" className="aspect-square w-full object-cover" />
-                        <span className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-[10px] text-white">{[result.provider, result.style ?? "generated"].filter(Boolean).join(" · ")}</span>
+                        <span className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-[10px] text-white">
+                          {[result.provider, result.sizeLabel, result.style ?? "generated"].filter(Boolean).join(" · ")}
+                        </span>
                         {selected && <CheckCircle2 className="absolute right-2 top-2 h-5 w-5 rounded-full bg-white text-primary" />}
                       </button>
                     );

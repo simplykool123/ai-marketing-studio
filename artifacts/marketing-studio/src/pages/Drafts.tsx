@@ -18,6 +18,8 @@ import {
 import { useQueryClient, useMutation, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
+import { Phase50RendererSwitch } from "@/components/Phase50Renderers";
+import { FormatBadge, PublishModeHint } from "@/components/FormatHelpers";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -53,9 +55,11 @@ import {
   XCircle,
   Sparkles,
   Info,
+  Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
+import { postStatusLabel as sharedPostStatusLabel } from "@/lib/post-status";
 import ArtworkEditorDialog from "@/components/artwork/ArtworkEditorDialog";
 import type { ArtworkLayers } from "@/components/artwork/types";
 
@@ -137,12 +141,22 @@ type QualityReviewReport = {
 type GrowthRules = {
   websiteLink?: string;
   whatsappNumber?: string;
+  whatsappLink?: string;
+  phone?: string;
+  email?: string;
+  businessAddress?: string;
+  city?: string;
+  country?: string;
+  serviceAreas?: string;
   defaultCta?: string;
+  secondaryCta?: string;
   preferredHashtags?: string;
   seoKeywords?: string;
   locationServiceKeywords?: string;
   avoidPhrases?: string;
   platformCtaRules?: string;
+  preferredPlatforms?: string;
+  imageStyleNotes?: string;
 };
 
 type PreflightCheck = {
@@ -222,13 +236,19 @@ const REJECT_CATEGORIES = [
 const MAX_IMAGE_GENERATIONS = 3;
 
 function hasPublishedProof(post: Post): boolean {
-  return (post.status === "posted" || post.status === "published") && !!post.publishedAt;
+  return ["posted", "published", "posted_manually", "published_via_api"].includes(post.status) && !!post.publishedAt;
 }
 
 function displayStatus(post: Post): string {
-  if (hasPublishedProof(post)) return "published";
-  if ((post.status === "posted" || post.status === "published") && !post.publishedAt) return "not posted yet";
-  if (post.status === "export_ready") return "ready to post";
+  if (hasPublishedProof(post)) {
+    if (post.status === "published_via_api") return "published via API";
+    if (post.status === "posted_manually") return "posted manually";
+    if (post.status === "posted") return "posted manually";
+    return "published via API";
+  }
+  if (["posted", "published", "posted_manually", "published_via_api"].includes(post.status) && !post.publishedAt) return "not posted yet";
+  if (post.status === "export_ready" || post.status === "ready_to_post") return "ready to post";
+  if (post.status === "exported") return "exported";
   if (post.status === "failed" && /no active .*account connected|no .*account connected/i.test(post.publishError ?? "")) {
     return "failed - no social account";
   }
@@ -251,9 +271,9 @@ function postImageUrl(post: Post): string | null {
   return (
     schema.finalArtworkUrl ||
     post.selectedImageUrl ||
-    schema.backgroundImageUrl ||
-    post.originalImageUrl ||
     schema.imageUrl ||
+    post.originalImageUrl ||
+    schema.backgroundImageUrl ||
     post.brandedImageUrl ||
     schema.artworkUrl ||
     schema.generatedImageUrl ||
@@ -390,9 +410,9 @@ function buildPreflightChecks(post: Post, rules?: GrowthRules | null): Preflight
     {
       key: "link",
       label: "Website/WhatsApp usage",
-      status: !rules?.websiteLink && !rules?.whatsappNumber ? "info" : hasLink || hasWhatsapp ? "pass" : "info",
+      status: !rules?.websiteLink && !rules?.whatsappNumber ? "warn" : hasLink || hasWhatsapp ? "pass" : "info",
       detail: !rules?.websiteLink && !rules?.whatsappNumber
-        ? "No website or WhatsApp rule saved."
+        ? "Missing in Brand Profile. Add website or WhatsApp to improve business-readiness."
         : hasLink || hasWhatsapp
           ? "Saved contact path is included."
           : "Not included; okay if this post is awareness or value-led.",
@@ -408,9 +428,9 @@ function buildPreflightChecks(post: Post, rules?: GrowthRules | null): Preflight
     {
       key: "seo",
       label: "SEO/location keywords",
-      status: seoKeywords.length === 0 ? "info" : matchingSeoKeywords.length > 0 || contentGroup(post) !== "blog" ? "pass" : "warn",
+      status: seoKeywords.length === 0 ? "warn" : matchingSeoKeywords.length > 0 || contentGroup(post) !== "blog" ? "pass" : "warn",
       detail: seoKeywords.length === 0
-        ? "No SEO or location keywords saved."
+        ? "No SEO keywords in Brand Profile. Add them to improve search visibility."
         : matchingSeoKeywords.length > 0
           ? `Uses: ${matchingSeoKeywords.slice(0, 3).join(", ")}`
           : "Blog/search-focused content should include a saved keyword.",
@@ -484,7 +504,7 @@ function contentGroup(post: Post): ContentFilter {
   const type = `${post.contentType ?? ""} ${post.postType ?? ""} ${post.platform ?? ""}`.toLowerCase();
   if (type.includes("blog")) return "blog";
   if (type.includes("newsletter")) return "newsletter";
-  if (type.includes("video")) return "video";
+  if (type.includes("reel") || type.includes("storyboard") || type.includes("video") || type.includes("short")) return "video";
   if (type.includes("image")) return "image";
   return "social";
 }
@@ -704,7 +724,7 @@ export default function Drafts() {
   const needsReview = allPosts.filter(p => p.status === "draft" || p.status === "in_review");
   const drafts = allPosts.filter(p => p.status === "draft");
   const approved = allPosts.filter(p =>
-    p.status === "approved" || p.status === "export_ready" || p.status === "scheduled" || p.status === "failed"
+    ["approved", "export_ready", "ready_to_post", "scheduled", "exported", "failed"].includes(p.status)
   );
   const history = allPosts.filter(p => p.status === "rejected" || hasPublishedProof(p));
   const matchesContentFilter = (post: Post) => activeContentFilter === "all" || contentGroup(post) === activeContentFilter;
@@ -713,7 +733,7 @@ export default function Drafts() {
   const filteredApproved = approved.filter(matchesContentFilter);
   const filteredHistory = history.filter(matchesContentFilter);
   const readyToApprove = needsReview.filter((post) => post.qualityScore == null || post.qualityScore >= 0.5);
-  const scheduledQueued = allPosts.filter((post) => post.status === "export_ready" || post.status === "scheduled");
+  const scheduledQueued = allPosts.filter((post) => ["export_ready", "ready_to_post", "scheduled", "exported"].includes(post.status));
   const campaignDraftCount = campaignIdFilter
     ? drafts.filter((post) => post.campaignId === campaignIdFilter).length
     : drafts.filter((post) => !!post.campaignId).length;
@@ -741,7 +761,7 @@ export default function Drafts() {
     const nextTab: ReviewTab =
       post.status === "rejected" || hasPublishedProof(post)
         ? "history"
-        : ["approved", "export_ready", "scheduled", "failed"].includes(post.status)
+        : ["approved", "export_ready", "ready_to_post", "scheduled", "exported", "failed"].includes(post.status)
           ? "ready"
           : post.status === "draft"
             ? "drafts"
@@ -1061,6 +1081,36 @@ export default function Drafts() {
     toast({ title: "Image prompt copied", description: "Use it in ChatGPT, Gemini, or your preferred image tool, then upload the result." });
   };
 
+  const handleUploadManualImage = async (postId: string, file: File) => {
+    if (!clientId) return;
+    try {
+      const uploaded = await new Promise<{ url: string }>((resolve, reject) => {
+        uploadPostImage.mutate(
+          { clientId, data: { file } },
+          { onSuccess: resolve, onError: reject }
+        );
+      });
+      await new Promise<void>((resolve, reject) => {
+        updatePost.mutate(
+          {
+            clientId,
+            postId,
+            data: {
+              selectedImageUrl: uploaded.url,
+              contentSchema: { ...asRecord(allPosts.find((post) => post.id === postId)?.contentSchema), finalArtworkUrl: uploaded.url, imageUrl: uploaded.url },
+              contentSchemaVersion: 1,
+            },
+          },
+          { onSuccess: () => resolve(), onError: reject }
+        );
+      });
+      invalidatePosts();
+      toast({ title: "Image attached", description: "Uploaded image is now the draft's visual." });
+    } catch {
+      toast({ title: "Upload failed", description: "Could not attach image to draft.", variant: "destructive" });
+    }
+  };
+
   const handlePublish = (postId: string) => {
     if (!clientId) return;
     setPublishingPostId(postId);
@@ -1354,11 +1404,13 @@ export default function Drafts() {
             onRetrySkill={previewPost?.skillId ? () => handleRetrySkillDraft(previewPost) : undefined}
             onApplyQualityCaption={previewPost ? () => handleApplyQualityCaption(previewPost) : undefined}
             onFixPreflight={canReview(previewPost) ? () => handleFixPreflight(previewPost) : undefined}
+            onUploadManualImage={previewPost ? (file) => handleUploadManualImage(previewPost.id, file) : undefined}
             isReviewingQuality={!!previewPost && reviewingQualityPostId === previewPost.id}
             isRetryingSkill={!!previewPost && retryingSkillPostId === previewPost.id}
             isApplyingQualityCaption={!!previewPost && applyingQualityPostId === previewPost.id}
             isFixingPreflight={!!previewPost && fixingPreflightPostId === previewPost.id}
             growthRules={growthRules}
+            clientId={clientId}
           />
         </div>
       </div>
@@ -2101,12 +2153,14 @@ function PreflightPanel({
   onFix,
   isFixing,
   compact = false,
+  clientId,
 }: {
   post: Post;
   growthRules?: GrowthRules | null;
   onFix?: () => void;
   isFixing?: boolean;
   compact?: boolean;
+  clientId?: string;
 }) {
   const checks = buildPreflightChecks(post, growthRules);
   const warnings = preflightWarnings(checks);
@@ -2132,7 +2186,14 @@ function PreflightPanel({
       {!hasAnyGrowthRules(growthRules) && (
         <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span>Add website, WhatsApp, CTA, hashtags and SEO keywords in Brand Profile to make posts more business-ready.</span>
+          <span>
+            Add website, WhatsApp, CTA, hashtags and SEO keywords to make posts more business-ready.{" "}
+            {clientId && (
+              <a href={`/clients/${clientId}/brand-dna`} className="underline font-medium">
+                Add to Brand Profile →
+              </a>
+            )}
+          </span>
         </div>
       )}
       <div className={cn("grid gap-1.5", compact ? "" : "sm:grid-cols-2")}>
@@ -2204,10 +2265,14 @@ function CaptionOptimizerLight({ post, report }: { post: Post; report: QualityRe
 }
 
 function PostHistoryTimeline({ post }: { post: Post }) {
-  const approvedAt = ["approved", "export_ready", "scheduled", "posted", "published", "failed"].includes(post.status)
+  const approvedAt = ["approved", "export_ready", "ready_to_post", "scheduled", "exported", "posted", "posted_manually", "published", "published_via_api", "failed"].includes(post.status)
     ? post.updatedAt
     : null;
-  const finalLabel = post.status === "failed" ? "Failed" : post.publishedAt ? "Published" : "Not posted yet";
+  const finalLabel = post.status === "failed"
+    ? "Failed"
+    : post.publishedAt
+      ? sharedPostStatusLabel(post.status, { publishedAt: post.publishedAt })
+      : "Not posted yet";
   const finalAt = post.status === "failed" ? post.updatedAt : post.publishedAt;
   const steps = [
     { label: "Created", value: post.createdAt },
@@ -2308,9 +2373,383 @@ function DraftImagePreview({ post, large = false }: { post: Post; large?: boolea
 }
 
 
+function Phase45ArtworkActions({ post, promptType }: { post: Post; promptType: "cover" | "thumbnail" }) {
+  const { clientId } = useParams<{ clientId: string }>();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const schema = asRecord(post.contentSchema);
+  const hasArtwork = promptType === "thumbnail"
+    ? !!(schema.thumbnailUrl || schema.finalArtworkUrl)
+    : !!(schema.coverArtworkUrl || schema.finalArtworkUrl);
+
+  const generate = useMutation({
+    mutationFn: async () => {
+      if (!clientId) throw new Error("No client selected.");
+      const token = localStorage.getItem("ams_token");
+      const res = await fetch(`${BASE}/api/clients/${clientId}/creative/generate-cover-image`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ postId: post.id, promptType }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Image generation failed.");
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["posts", clientId] });
+      queryClient.invalidateQueries({ queryKey: ["post", clientId, post.id] });
+      toast({ title: promptType === "thumbnail" ? "Thumbnail generated" : "Cover image generated" });
+    },
+    onError: (err) => {
+      toast({
+        title: "Image generation failed",
+        description: err instanceof Error ? err.message : "Add an image provider key in Settings → AI Keys.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => generate.mutate()}
+        disabled={generate.isPending}
+      >
+        {generate.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <ImagePlus className="w-3.5 h-3.5 mr-1.5" />}
+        {hasArtwork
+          ? promptType === "thumbnail" ? "Regenerate thumbnail" : "Regenerate cover image"
+          : promptType === "thumbnail" ? "Generate thumbnail image" : "Generate cover image"}
+      </Button>
+    </div>
+  );
+}
+
+type TimelineScene = {
+  id: string;
+  order: number;
+  durationSeconds: number;
+  visualDirection: string;
+  backgroundUrl: string;
+  onScreenText: string;
+  voiceoverLine: string;
+  subtitle: string;
+  transition: string;
+};
+
+function timelineScenesFromPost(post: Post): TimelineScene[] {
+  const schema = asRecord(post.contentSchema);
+  const reel = asRecord(schema.reelStoryboard);
+  const spec = asRecord(schema.videoRenderSpec);
+  const source = Array.isArray(spec.scenes)
+    ? spec.scenes
+    : Array.isArray(reel.scenes)
+      ? reel.scenes
+      : Array.isArray(schema.scenes)
+        ? schema.scenes
+        : [];
+  return source.map((item: any, index: number) => {
+    const row = asRecord(item);
+    return {
+      id: String(row.id || `scene-${index + 1}`),
+      order: index + 1,
+      durationSeconds: Number(row.durationSeconds || row.duration || 4) || 4,
+      visualDirection: String(row.visualDirection || row.visual || ""),
+      backgroundUrl: String(row.backgroundUrl || row.imageUrl || row.videoUrl || ""),
+      onScreenText: String(row.onScreenText || row.text || row.subtitle || ""),
+      voiceoverLine: String(row.voiceoverLine || row.voiceover || ""),
+      subtitle: String(row.subtitle || row.onScreenText || row.text || ""),
+      transition: String(row.transition || ""),
+    };
+  });
+}
+
+function VideoTimelineLiteEditor({ post }: { post: Post }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const schema = asRecord(post.contentSchema);
+  const reel = asRecord(schema.reelStoryboard);
+  const spec = asRecord(schema.videoRenderSpec);
+  const [scenes, setScenes] = useState<TimelineScene[]>(() => timelineScenesFromPost(post));
+  const [musicMood, setMusicMood] = useState(String(spec.musicMood || reel.suggestedMusicMood || schema.audioSuggestion || ""));
+  const [ttsProvider, setTtsProvider] = useState(String(spec.ttsProvider || "none"));
+  const [ctaEndCard, setCtaEndCard] = useState(String(spec.ctaEndCard || reel.cta || schema.cta || ""));
+  const [logoEnabled, setLogoEnabled] = useState(asRecord(spec.logo).enabled !== false);
+  const [logoUrl, setLogoUrl] = useState(String(asRecord(spec.logo).url || schema.logoUrl || ""));
+  const [notice, setNotice] = useState(String(asRecord(schema.videoRenderWorker).message || ""));
+
+  useEffect(() => {
+    setScenes(timelineScenesFromPost(post));
+  }, [post.id, post.contentSchema]);
+
+  function updateScene(index: number, updates: Partial<TimelineScene>) {
+    setScenes((current) => current.map((scene, idx) => idx === index ? { ...scene, ...updates } : scene));
+  }
+
+  function moveScene(index: number, direction: -1 | 1) {
+    setScenes((current) => {
+      const next = [...current];
+      const target = index + direction;
+      if (target < 0 || target >= next.length) return current;
+      [next[index], next[target]] = [next[target]!, next[index]!];
+      return next.map((scene, idx) => ({ ...scene, order: idx + 1 }));
+    });
+  }
+
+  const saveSpec = useMutation({
+    mutationFn: async () => {
+      const token = localStorage.getItem("ams_token");
+      const renderSpec = {
+        title: String(spec.title || reel.reelTitle || post.title || post.topic || ""),
+        durationSeconds: scenes.reduce((sum, scene) => sum + scene.durationSeconds, 0),
+        musicMood,
+        ttsProvider,
+        ctaEndCard,
+        logoEnabled,
+        logoUrl,
+        voiceoverScript: scenes.map((scene) => scene.voiceoverLine).filter(Boolean).join("\n"),
+        scenes,
+      };
+      const res = await fetch(`${BASE}/api/clients/${post.clientId}/posts/${post.id}/video-render-spec`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ renderSpec }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to save renderSpec.");
+      return data as { message?: string };
+    },
+    onSuccess: (data) => {
+      setNotice(data.message || "Storyboard ready - video render worker not connected yet.");
+      queryClient.invalidateQueries({ queryKey: ["posts", post.clientId] });
+      queryClient.invalidateQueries({ queryKey: getListPostsQueryKey(post.clientId, {}) });
+      toast({ title: "Video renderSpec saved", description: "The storyboard timeline will persist with this draft." });
+    },
+    onError: (err) => {
+      toast({ title: "Save failed", description: err instanceof Error ? err.message : "Could not save renderSpec.", variant: "destructive" });
+    },
+  });
+
+  const renderVideo = useMutation({
+    mutationFn: async () => {
+      const token = localStorage.getItem("ams_token");
+      const res = await fetch(`${BASE}/api/clients/${post.clientId}/posts/${post.id}/video-render`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || "Video render worker is not connected yet.");
+      return data;
+    },
+    onError: (err) => {
+      setNotice(err instanceof Error ? err.message : "Video render worker is not connected yet.");
+      toast({ title: "Render worker not connected", description: err instanceof Error ? err.message : "Save the renderSpec and connect a renderer before MP4 export.", variant: "destructive" });
+    },
+  });
+
+  return (
+    <div className="rounded-lg border bg-card p-3 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">Timeline-lite editor</p>
+          <p className="text-xs text-muted-foreground">Scene order, timing, overlays, voiceover, logo, music, and CTA are saved as a renderSpec.</p>
+        </div>
+        <Badge variant="outline">renderSpec</Badge>
+      </div>
+      <div className="space-y-2">
+        {scenes.map((scene, index) => (
+          <div key={scene.id} className="rounded-md border p-2 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold">Scene {index + 1}</p>
+              <div className="flex gap-1">
+                <Button type="button" size="sm" variant="outline" className="h-7 px-2" disabled={index === 0} onClick={() => moveScene(index, -1)}>Up</Button>
+                <Button type="button" size="sm" variant="outline" className="h-7 px-2" disabled={index === scenes.length - 1} onClick={() => moveScene(index, 1)}>Down</Button>
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-[110px_1fr]">
+              <Input type="number" min={1} value={scene.durationSeconds} onChange={(e) => updateScene(index, { durationSeconds: Number(e.target.value) || 1 })} aria-label={`Scene ${index + 1} duration`} />
+              <Input placeholder="Background image/video URL" value={scene.backgroundUrl} onChange={(e) => updateScene(index, { backgroundUrl: e.target.value })} />
+            </div>
+            <Textarea rows={2} placeholder="Visual direction" value={scene.visualDirection} onChange={(e) => updateScene(index, { visualDirection: e.target.value })} />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Textarea rows={2} placeholder="On-screen text" value={scene.onScreenText} onChange={(e) => updateScene(index, { onScreenText: e.target.value })} />
+              <Textarea rows={2} placeholder="Voiceover line" value={scene.voiceoverLine} onChange={(e) => updateScene(index, { voiceoverLine: e.target.value })} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Input placeholder="Music mood" value={musicMood} onChange={(e) => setMusicMood(e.target.value)} />
+        <Select value={ttsProvider} onValueChange={setTtsProvider}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">No TTS provider</SelectItem>
+            <SelectItem value="openai">OpenAI TTS (preference only — not connected)</SelectItem>
+            <SelectItem value="elevenlabs">ElevenLabs (preference only — not connected)</SelectItem>
+            <SelectItem value="google">Google TTS (preference only — not connected)</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Voiceover script ready. TTS provider not connected yet — your preference is stored in the renderSpec for a future renderer. No audio is generated at this stage.
+      </p>
+      <div className="grid gap-2 sm:grid-cols-[120px_1fr]">
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={logoEnabled} onChange={(e) => setLogoEnabled(e.target.checked)} />
+          Logo
+        </label>
+        <Input placeholder="Logo URL" value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} />
+      </div>
+      <Textarea rows={2} placeholder="CTA end card" value={ctaEndCard} onChange={(e) => setCtaEndCard(e.target.value)} />
+      {notice ? <p className="text-xs text-muted-foreground">{notice}</p> : null}
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={() => saveSpec.mutate()} disabled={saveSpec.isPending}>
+          {saveSpec.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : null}
+          Save renderSpec
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => renderVideo.mutate()} disabled={renderVideo.isPending}>
+          Render/export MP4
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function DraftPreviewContent({ post }: { post: Post }) {
   const schema = asRecord(post.contentSchema);
   const type = contentGroup(post);
+
+  // Phase 50 — let the new format renderers handle whatsapp/gbp/newsletter/
+  // banner/local-seo/review-request/faq pack content types. They return
+  // null for everything else, so the existing renderer logic below still
+  // runs for social posts, carousels, reels, blogs, etc.
+  const phase50 = (
+    <Phase50RendererSwitch post={post as unknown as { id: string; contentType?: string | null; topic?: string | null; caption?: string | null; hashtags?: string | null; longFormBody?: string | null; selectedImageUrl?: string | null; contentSchema?: unknown }} />
+  );
+  if (phase50 !== null) {
+    return phase50;
+  }
+
+  // Phase 45: structured carousel from creative.generate-carousel or
+  // creative.generate-campaign-pack. Always render when present, including
+  // for legacy AI Visibility carouselSlides format.
+  const phase45Carousel = asRecord(schema.carousel);
+  const phase45CarouselSlides = Array.isArray(phase45Carousel.slides) ? phase45Carousel.slides : null;
+  const legacyCarouselSlides = Array.isArray(schema.carouselSlides) ? schema.carouselSlides : null;
+  if ((post.contentType === "carousel" || phase45CarouselSlides || legacyCarouselSlides) && (phase45CarouselSlides || legacyCarouselSlides)) {
+    const slides = (phase45CarouselSlides ?? legacyCarouselSlides ?? []) as any[];
+    const carouselTitle = phase45Carousel.carouselTitle || schema.carouselTitle || post.title || post.topic;
+    const caption = phase45Carousel.caption || schema.caption || post.caption;
+    const hashtags = phase45Carousel.hashtags || schema.hashtags || post.hashtags;
+    const cta = phase45Carousel.cta || schema.cta;
+    const recommendedSize = phase45Carousel.recommendedSize || schema.recommendedSize;
+    const coverPrompt = schema.coverPrompt || phase45Carousel.coverPrompt || post.imagePrompt;
+    const coverArtworkUrl = schema.coverArtworkUrl || schema.finalArtworkUrl || schema.selectedImageUrl || post.selectedImageUrl;
+    return (
+      <div className="space-y-4">
+        <div className="rounded-lg border bg-fuchsia-50/40 border-fuchsia-200 px-3 py-2">
+          <p className="text-xs font-semibold text-fuchsia-700">{String(carouselTitle || "Carousel draft")}</p>
+          <p className="text-[11px] text-fuchsia-700/80 mt-0.5">
+            {slides.length} slide{slides.length === 1 ? "" : "s"}{recommendedSize ? ` · ${recommendedSize}` : ""}
+          </p>
+        </div>
+        {coverArtworkUrl ? (
+          <div className="overflow-hidden rounded-lg border bg-muted">
+            <img src={String(coverArtworkUrl)} alt="Carousel cover" className="w-full" />
+          </div>
+        ) : null}
+        <div className="grid gap-2">
+          {slides.map((slide: any, index: number) => {
+            const headline = slide.headline || slide.title || `Slide ${slide.slideNumber ?? index + 1}`;
+            const body = slide.bodyCopy || slide.body || slide.copy || slide.text;
+            const visual = slide.visualDirection || slide.visual || slide.visualNote;
+            const slideType = slide.slideType;
+            return (
+              <div key={index} className="rounded-md border p-3 bg-card">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium">Slide {slide.slideNumber ?? index + 1}: {String(headline)}</p>
+                  {slideType ? <Badge variant="outline" className="text-[10px] capitalize">{String(slideType)}</Badge> : null}
+                </div>
+                {body ? <p className="text-sm text-muted-foreground mt-1.5">{String(body)}</p> : null}
+                {visual ? <p className="mt-2 text-[11px] text-muted-foreground"><span className="font-medium">Visual:</span> {String(visual)}</p> : null}
+                {slide.imagePrompt ? <p className="mt-1 text-[11px] text-muted-foreground"><span className="font-medium">Image prompt:</span> {String(slide.imagePrompt)}</p> : null}
+              </div>
+            );
+          })}
+        </div>
+        <TextBlock title="Caption">{String(caption || "")}</TextBlock>
+        <TextBlock title="Hashtags">{String(hashtags || "")}</TextBlock>
+        {cta ? <TextBlock title="CTA">{String(cta)}</TextBlock> : null}
+        <TextBlock title="Cover prompt">{String(coverPrompt || "")}</TextBlock>
+        <Phase45ArtworkActions post={post} promptType="cover" />
+      </div>
+    );
+  }
+
+  // Phase 45: structured reel storyboard
+  const phase45Reel = asRecord(schema.reelStoryboard);
+  const phase45ReelScenes = Array.isArray(phase45Reel.scenes) ? phase45Reel.scenes : null;
+  if (post.contentType === "reel_storyboard" || phase45ReelScenes) {
+    const scenes = (phase45ReelScenes ?? (Array.isArray(schema.scenes) ? schema.scenes : [])) as any[];
+    const reelTitle = phase45Reel.reelTitle || schema.reelTitle || post.title || post.topic;
+    const hook = phase45Reel.hookFirstTwoSeconds || schema.hook || schema.hookFirstTwoSeconds;
+    const fullScript = phase45Reel.fullScript || schema.storyboard || schema.fullScript || post.longFormBody;
+    const caption = phase45Reel.caption || schema.caption || post.caption;
+    const hashtags = phase45Reel.hashtags || schema.hashtags || post.hashtags;
+    const cta = phase45Reel.cta || schema.cta;
+    const duration = phase45Reel.duration || schema.duration;
+    const musicMood = phase45Reel.suggestedMusicMood || schema.audioSuggestion;
+    const thumbnailPrompt = schema.thumbnailPrompt || phase45Reel.thumbnailPrompt || post.imagePrompt;
+    const thumbnailUrl = schema.thumbnailUrl || schema.finalArtworkUrl || schema.selectedImageUrl || post.selectedImageUrl;
+    return (
+      <div className="space-y-4">
+        <div className="rounded-lg border bg-rose-50/40 border-rose-200 px-3 py-2">
+          <p className="text-xs font-semibold text-rose-700">{String(reelTitle || "Reel storyboard")}</p>
+          <p className="text-[11px] text-rose-700/80 mt-0.5">
+            {duration ? `${duration}s · ` : ""}9:16 · {scenes.length} scene{scenes.length === 1 ? "" : "s"}{musicMood ? ` · ${String(musicMood)}` : ""}
+          </p>
+        </div>
+        {thumbnailUrl ? (
+          <div className="overflow-hidden rounded-lg border bg-black flex items-center justify-center">
+            <img src={String(thumbnailUrl)} alt="Reel thumbnail" className="max-h-[420px]" />
+          </div>
+        ) : null}
+        {hook ? (
+          <div className="rounded-md border border-rose-200 bg-rose-50/60 px-3 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">Hook (first 2s)</p>
+            <p className="text-sm mt-1">{String(hook)}</p>
+          </div>
+        ) : null}
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scenes</p>
+          {scenes.length > 0 ? scenes.map((scene: any, index: number) => (
+            <div key={index} className="rounded-md border p-3 bg-card">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">
+                  Scene {scene.sceneNumber ?? scene.order ?? index + 1}
+                  {scene.timestamp ? ` · ${String(scene.timestamp)}` : ""}
+                </p>
+                {scene.shotType ? <Badge variant="outline" className="text-[10px]">{String(scene.shotType)}</Badge> : null}
+              </div>
+              {scene.visualDirection || scene.visual ? <p className="text-[12px] text-muted-foreground mt-1.5"><span className="font-medium">Visual:</span> {String(scene.visualDirection || scene.visual)}</p> : null}
+              {scene.onScreenText ? <p className="text-[12px] text-muted-foreground mt-1"><span className="font-medium">On-screen:</span> {String(scene.onScreenText)}</p> : null}
+              {scene.voiceoverLine || scene.voiceover ? <p className="text-[12px] text-muted-foreground mt-1"><span className="font-medium">Voiceover:</span> {String(scene.voiceoverLine || scene.voiceover)}</p> : null}
+              {scene.motionDirection ? <p className="text-[11px] text-muted-foreground mt-1"><span className="font-medium">Motion:</span> {String(scene.motionDirection)}</p> : null}
+              {scene.transition ? <p className="text-[11px] text-muted-foreground mt-1"><span className="font-medium">Transition:</span> {String(scene.transition)}</p> : null}
+            </div>
+          )) : <p className="text-sm text-muted-foreground">{String(fullScript || caption || "")}</p>}
+        </div>
+        {fullScript ? <TextBlock title="Full script">{String(fullScript)}</TextBlock> : null}
+        <TextBlock title="Caption">{String(caption || "")}</TextBlock>
+        <TextBlock title="Hashtags">{String(hashtags || "")}</TextBlock>
+        {cta ? <TextBlock title="CTA">{String(cta)}</TextBlock> : null}
+        <TextBlock title="Thumbnail prompt">{String(thumbnailPrompt || "")}</TextBlock>
+        <VideoTimelineLiteEditor post={post} />
+        <Phase45ArtworkActions post={post} promptType="thumbnail" />
+      </div>
+    );
+  }
 
   if (type === "blog") {
     return (
@@ -2428,11 +2867,13 @@ function DraftPreviewPanel({
   onRetrySkill,
   onApplyQualityCaption,
   onFixPreflight,
+  onUploadManualImage,
   isReviewingQuality,
   isRetryingSkill,
   isApplyingQualityCaption,
   isFixingPreflight,
   growthRules,
+  clientId,
 }: {
   post: Post | null;
   onApprove?: () => void;
@@ -2441,12 +2882,16 @@ function DraftPreviewPanel({
   onRetrySkill?: () => void;
   onApplyQualityCaption?: () => void;
   onFixPreflight?: () => void;
+  onUploadManualImage?: (file: File) => void;
   isReviewingQuality?: boolean;
   isRetryingSkill?: boolean;
   isApplyingQualityCaption?: boolean;
   isFixingPreflight?: boolean;
   growthRules?: GrowthRules | null;
+  clientId?: string;
 }) {
+  const uploadImageInputRef = useRef<HTMLInputElement>(null);
+
   if (!post) {
     return (
       <Card className="xl:sticky xl:top-4">
@@ -2462,6 +2907,19 @@ function DraftPreviewPanel({
   return (
     <Card className="xl:sticky xl:top-4 max-h-[calc(100vh-2rem)] overflow-auto">
       <CardContent className="p-5 space-y-5">
+        {onUploadManualImage && (
+          <input
+            ref={uploadImageInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onUploadManualImage(f);
+              e.target.value = "";
+            }}
+          />
+        )}
         <div>
           <div className="flex flex-wrap gap-1.5 mb-3">
             <Badge variant="secondary" className="capitalize">{contentTypeLabel(post)}</Badge>
@@ -2483,6 +2941,7 @@ function DraftPreviewPanel({
           growthRules={growthRules}
           onFix={onFixPreflight}
           isFixing={isFixingPreflight}
+          clientId={clientId}
         />
 
         <CaptionOptimizerLight post={post} report={report} />
@@ -2498,6 +2957,12 @@ function DraftPreviewPanel({
             <Button size="sm" variant="outline" onClick={onRetrySkill} disabled={isRetryingSkill}>
               {isRetryingSkill ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
               Retry with AI
+            </Button>
+          )}
+          {onUploadManualImage && contentNeedsMedia(post) && (
+            <Button size="sm" variant="outline" onClick={() => uploadImageInputRef.current?.click()}>
+              <Upload className="w-3.5 h-3.5 mr-1.5" />
+              Upload Image
             </Button>
           )}
         </div>
@@ -2585,7 +3050,7 @@ function PostCard({
   actionBar?: ReactNode;
 }) {
   const isDraft = post.status === "draft" || post.status === "in_review";
-  const isApprovedOrScheduled = post.status === "approved" || post.status === "export_ready" || post.status === "scheduled";
+  const isApprovedOrScheduled = ["approved", "export_ready", "ready_to_post", "scheduled", "exported"].includes(post.status);
   const isFailed = post.status === "failed";
   const isPublished = hasPublishedProof(post);
   const platformClass = PLATFORM_COLORS[post.platform || ""] || "bg-muted text-muted-foreground";
@@ -2594,7 +3059,7 @@ function PostCard({
   const preflight = buildPreflightChecks(post, growthRules);
   const preflightWarnCount = preflight.filter((check) => check.status === "warn").length;
 
-  const statusBadgeClass = ((post.status === "posted" || post.status === "published") && !post.publishedAt)
+  const statusBadgeClass = (["posted", "published", "posted_manually", "published_via_api"].includes(post.status) && !post.publishedAt)
     ? "bg-muted text-muted-foreground border border-border"
     : ({
     draft: "",
@@ -2803,6 +3268,17 @@ function PostCard({
                     {imageUrl ? "New Image" : "Gen Image"}
                   </Button>
                 )}
+                <Link href={`/clients/${post.clientId}/image-studio?postId=${post.id}`}>
+                  <Button
+                    variant="outline" size="sm"
+                    className="h-7 text-xs gap-1 px-2"
+                    disabled={isRegeneratingCopy || isGeneratingImage}
+                    title="Open Creative Director concepts and platform sizes"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    Creative
+                  </Button>
+                </Link>
                 {onCopyImagePrompt && postImagePrompt(post) && (
                   <Button
                     variant="outline" size="sm"

@@ -1,8 +1,8 @@
-import { useState } from "react";
-import { useParams } from "wouter";
+import { useEffect, useState } from "react";
+import { Link, useParams } from "wouter";
 import {
   Newspaper, Sparkles, RefreshCw, Save, Copy, CheckCircle2,
-  ChevronDown, ChevronRight, ExternalLink, FileText,
+  ChevronDown, ChevronRight, ExternalLink, FileText, AlertCircle, Link2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -85,6 +85,15 @@ export default function BlogStudio() {
   const [editDraft, setEditDraft] = useState("");
   const [faqOpen, setFaqOpen] = useState(false);
   const [schemaOpen, setSchemaOpen] = useState(false);
+  const [blogConnection, setBlogConnection] = useState<{ siteName: string; siteUrl: string; lastTestStatus: string | null } | null>(null);
+
+  useEffect(() => {
+    if (!clientId) return;
+    fetch(`${BASE}/api/clients/${clientId}/blog/site-connection`)
+      .then((r) => r.ok ? r.json() : { connection: null })
+      .then((data) => setBlogConnection(data.connection ?? null))
+      .catch(() => setBlogConnection(null));
+  }, [clientId]);
 
   async function generate() {
     if (!keyword.trim()) {
@@ -154,6 +163,29 @@ export default function BlogStudio() {
           Enter a keyword or topic and get a full SEO-optimised blog post with outline, FAQ, schema markup, and a publication-ready draft.
         </p>
       </div>
+
+      {/* Connection status */}
+      {blogConnection ? (
+        <div className="flex items-center gap-2 text-xs rounded-md border border-emerald-200 bg-emerald-50/60 px-3 py-2">
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+          <span>Blog will publish to <strong>{blogConnection.siteName}</strong> ({blogConnection.siteUrl}). Connection status:&nbsp;
+            {blogConnection.lastTestStatus === "ok" ? "tested OK" : blogConnection.lastTestStatus === "failed" ? "last test failed" : "not yet tested"}.
+          </span>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2">
+          <div className="flex items-start gap-2 text-xs text-amber-900">
+            <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>No blog site connected. You can still generate, save, and export a draft, but you cannot publish to a website until a connection is added.</span>
+          </div>
+          <Link href={`/clients/${clientId}/settings`}>
+            <Button size="sm" variant="outline" className="shrink-0">
+              <Link2 className="w-3.5 h-3.5 mr-1.5" />
+              Connect Website
+            </Button>
+          </Link>
+        </div>
+      )}
 
       {/* Input form */}
       <Card>

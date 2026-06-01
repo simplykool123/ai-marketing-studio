@@ -519,6 +519,119 @@ export default function CreativeStudio() {
     },
   });
 
+  // ── Phase 45: Carousel / Reel / Campaign Pack (structured generators) ──
+  const generatePhase45Carousel = useMutation({
+    mutationFn: async () => {
+      if (!clientId) throw new Error("Select a client first.");
+      if (!topic.trim()) throw new Error("Add a carousel topic first.");
+      const token = localStorage.getItem("ams_token");
+      const carouselPlatform = ["instagram", "linkedin", "facebook"].includes(platform) ? platform : "instagram";
+      const res = await fetch(`${BASE}/api/clients/${clientId}/creative/generate-carousel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          topic,
+          platform: carouselPlatform,
+          goal: campaignGoal,
+          source: postId ? "ai_visibility_phase45" : fromSource === "ai_brain" ? "ai_brain_phase45" : "creative_studio_phase45",
+          sourcePostId: postId || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not generate carousel.");
+      return data as { post?: { id: string; topic: string; caption: string; platform?: string; contentType?: string } };
+    },
+    onSuccess: (data) => {
+      setLastSkillResult({ post: data.post, skill: { skillId: "phase45_carousel", displayName: "Carousel Builder" } });
+      toast({ title: "Carousel saved to Review", description: "Open Review to inspect slides, caption, and cover prompt." });
+    },
+    onError: (err) => {
+      toast({ title: "Carousel generation failed", description: err instanceof Error ? err.message : "Check AI provider settings.", variant: "destructive" });
+    },
+  });
+
+  const generatePhase45Reel = useMutation({
+    mutationFn: async () => {
+      if (!clientId) throw new Error("Select a client first.");
+      if (!topic.trim()) throw new Error("Add a reel topic first.");
+      const token = localStorage.getItem("ams_token");
+      const reelPlatform =
+        platform === "youtube" ? "youtube_shorts"
+          : platform === "instagram_reels" || platform === "instagram" ? "instagram_reel"
+          : "instagram_reel";
+      const res = await fetch(`${BASE}/api/clients/${clientId}/creative/generate-reel-storyboard`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          topic,
+          platform: reelPlatform,
+          durationSeconds: 30,
+          goal: campaignGoal,
+          source: postId ? "ai_visibility_phase45" : fromSource === "ai_brain" ? "ai_brain_phase45" : "creative_studio_phase45",
+          sourcePostId: postId || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not generate reel storyboard.");
+      return data as { post?: { id: string; topic: string; caption: string; platform?: string; contentType?: string } };
+    },
+    onSuccess: (data) => {
+      setLastSkillResult({ post: data.post, skill: { skillId: "phase45_reel", displayName: "Reel/Shorts Storyboard" } });
+      toast({ title: "Reel storyboard saved to Review", description: "Open Review to inspect hook, scenes, and thumbnail prompt." });
+    },
+    onError: (err) => {
+      toast({ title: "Reel generation failed", description: err instanceof Error ? err.message : "Check AI provider settings.", variant: "destructive" });
+    },
+  });
+
+  const generatePhase45Pack = useMutation({
+    mutationFn: async () => {
+      if (!clientId) throw new Error("Select a client first.");
+      if (!topic.trim()) throw new Error("Add a campaign pack topic first.");
+      const token = localStorage.getItem("ams_token");
+      const platforms = campaignPlatforms.split(",").map((item) => item.trim()).filter(Boolean);
+      const res = await fetch(`${BASE}/api/clients/${clientId}/creative/generate-campaign-pack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          topic,
+          goal: campaignGoal,
+          platforms: platforms.length ? platforms : ["instagram", "linkedin", "facebook"],
+          source: postId ? "ai_visibility_phase45" : fromSource === "ai_brain" ? "ai_brain_phase45" : "creative_studio_phase45",
+          sourcePostId: postId || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not generate campaign pack.");
+      return data as {
+        campaign?: { id: string; name: string };
+        posts?: Array<{ id: string; topic: string; platform?: string | null; contentType?: string }>;
+        meta?: { postsCreated?: number };
+      };
+    },
+    onSuccess: (data) => {
+      const createdDrafts = (data.posts ?? []).map((p) => ({
+        id: p.id,
+        label: `${p.contentType ?? "post"} — ${p.topic}`,
+        topic: p.topic,
+        platform: p.platform ?? undefined,
+      }));
+      setLastCampaignResult({
+        campaign: data.campaign,
+        summary: { createdCount: createdDrafts.length, failedCount: 0 },
+        createdDrafts,
+        failures: [],
+      });
+      toast({
+        title: "Campaign pack saved to Review",
+        description: `${createdDrafts.length} draft${createdDrafts.length === 1 ? "" : "s"} saved (carousel, reel, posts${createdDrafts.some(d => d.label.startsWith("blog")) ? ", blog" : ""}).`,
+      });
+    },
+    onError: (err) => {
+      toast({ title: "Campaign pack failed", description: err instanceof Error ? err.message : "Check AI provider settings.", variant: "destructive" });
+    },
+  });
+
   const generateMiniCampaign = useMutation({
     mutationFn: async () => {
       if (!clientId) throw new Error("Select a client first.");
@@ -992,15 +1105,28 @@ export default function CreativeStudio() {
                   />
                 </div>
               </div>
-              <Button
-                variant="outline"
-                className="w-full gap-2"
-                disabled={!topic.trim() || generateMiniCampaign.isPending}
-                onClick={() => generateMiniCampaign.mutate()}
-              >
-                {generateMiniCampaign.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                {generateMiniCampaign.isPending ? "Generating campaign drafts..." : "Generate Campaign Drafts"}
-              </Button>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Button
+                  variant="outline"
+                  className="w-full gap-2"
+                  disabled={!topic.trim() || generateMiniCampaign.isPending}
+                  onClick={() => generateMiniCampaign.mutate()}
+                >
+                  {generateMiniCampaign.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                  {generateMiniCampaign.isPending ? "Generating drafts..." : "Generate Mini Campaign"}
+                </Button>
+                <Button
+                  className="w-full gap-2"
+                  disabled={!topic.trim() || generatePhase45Pack.isPending}
+                  onClick={() => generatePhase45Pack.mutate()}
+                >
+                  {generatePhase45Pack.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Layers className="w-4 h-4" />}
+                  {generatePhase45Pack.isPending ? "Generating pack..." : "Generate Full Campaign Pack"}
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground -mt-1">
+                Mini Campaign uses individual skills. Full Campaign Pack creates one carousel + LinkedIn post + reel storyboard + 2 social posts (+ blog if available) tied to a single campaign — all saved to Review.
+              </p>
               {lastCampaignResult && (
                 <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1103,7 +1229,27 @@ export default function CreativeStudio() {
                 </div>
               </div>
 
-              {canGenerateWithSkill ? (
+              {format === "carousel" ? (
+                <Button
+                  className="w-full gap-2"
+                  disabled={!topic.trim() || generatePhase45Carousel.isPending}
+                  onClick={() => generatePhase45Carousel.mutate()}
+                >
+                  <PanelsTopLeft className="w-4 h-4" />
+                  {generatePhase45Carousel.isPending ? "Generating carousel..." : "Generate Carousel (5–8 slides)"}
+                  <ArrowRight className="w-4 h-4 ml-auto" />
+                </Button>
+              ) : format === "video" ? (
+                <Button
+                  className="w-full gap-2"
+                  disabled={!topic.trim() || generatePhase45Reel.isPending}
+                  onClick={() => generatePhase45Reel.mutate()}
+                >
+                  <Video className="w-4 h-4" />
+                  {generatePhase45Reel.isPending ? "Generating storyboard..." : "Generate Reel/Short Storyboard (30s)"}
+                  <ArrowRight className="w-4 h-4 ml-auto" />
+                </Button>
+              ) : canGenerateWithSkill ? (
                 <Button
                   className="w-full gap-2"
                   disabled={!topic.trim() || generateSkillDraft.isPending}

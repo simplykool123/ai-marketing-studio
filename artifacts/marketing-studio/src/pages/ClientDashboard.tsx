@@ -263,6 +263,17 @@ export default function ClientDashboard() {
     enabled: !!clientId,
   });
 
+  const { data: blogConnectionData } = useQuery({
+    queryKey: ["blog-connection", clientId],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/clients/${clientId}/blog/site-connection`);
+      if (!res.ok) return { connection: null };
+      return res.json() as Promise<{ connection: { siteName: string } | null }>;
+    },
+    enabled: !!clientId,
+  });
+  const blogConnected = !!blogConnectionData?.connection;
+
   const refreshAnalyticsMutation = useMutation({
     mutationFn: () => refreshAnalytics(clientId!),
     onSuccess: () => {
@@ -470,6 +481,15 @@ export default function ClientDashboard() {
   })();
   return (
     <div className="space-y-6">
+      {/* Readiness chips — show what's missing so users know what to set up */}
+      <ReadinessStrip
+        clientId={clientId!}
+        hasBrandDna={dashboard.hasBrandDna}
+        hasAiKey={dashboard.aiProviderConfigured}
+        hasSocial={hasSocialAccount}
+        hasBlog={blogConnected}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4 rounded-xl border bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 p-6 text-white shadow-sm">
         <div>
@@ -845,8 +865,14 @@ export default function ClientDashboard() {
 
         {activityItems.length === 0 ? (
           <Card className="border-dashed">
-            <CardContent className="py-8 text-center text-muted-foreground">
-              No posts yet. Create a draft to start the workflow.
+            <CardContent className="py-8 text-center text-muted-foreground space-y-3">
+              <p>No posts yet. Create a draft to start the workflow.</p>
+              <Link
+                href={`/clients/${clientId}/brain`}
+                className="inline-flex items-center text-sm text-primary hover:underline"
+              >
+                Open AI Brain to generate ideas <ArrowRight className="w-4 h-4 ml-1" />
+              </Link>
             </CardContent>
           </Card>
         ) : (
@@ -912,6 +938,49 @@ export default function ClientDashboard() {
             })}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ReadinessStrip({
+  clientId,
+  hasBrandDna,
+  hasAiKey,
+  hasSocial,
+  hasBlog,
+}: {
+  clientId: string;
+  hasBrandDna: boolean;
+  hasAiKey: boolean;
+  hasSocial: boolean;
+  hasBlog: boolean;
+}) {
+  const items: Array<{ label: string; ok: boolean; href: string; help: string }> = [
+    { label: "Brand DNA", ok: hasBrandDna, href: `/clients/${clientId}/brand-dna`, help: "Voice, audience, colors, growth rules." },
+    { label: "AI key", ok: hasAiKey, href: "/settings", help: "Anthropic, OpenAI, or Gemini key for content generation." },
+    { label: "Image AI", ok: hasAiKey, href: "/settings", help: "OpenAI, Replicate, or Ideogram key for image generation." },
+    { label: "Blog site", ok: hasBlog, href: `/clients/${clientId}/settings`, help: "Connect WordPress, Ghost, or a webhook to publish blogs." },
+    { label: "Social account", ok: hasSocial, href: `/clients/${clientId}/social-accounts`, help: "Optional — connect for direct publishing. Manual export always works." },
+  ];
+  const missing = items.filter((item) => !item.ok);
+  if (missing.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs">
+      <div className="flex items-start gap-2">
+        <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-700" />
+        <div className="flex-1">
+          <p className="font-medium text-amber-900">A few things still need setup</p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {missing.map((item) => (
+              <Link key={item.label} href={item.href}>
+                <span className="cursor-pointer inline-flex items-center gap-1 rounded-full border border-amber-300 bg-white px-2 py-0.5 text-[11px] text-amber-900 hover:bg-amber-100" title={item.help}>
+                  {item.label} →
+                </span>
+              </Link>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

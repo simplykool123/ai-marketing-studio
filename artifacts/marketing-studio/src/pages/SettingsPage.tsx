@@ -144,6 +144,8 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [isTestingImage, setIsTestingImage] = useState(false);
+  const [imageTestResult, setImageTestResult] = useState<TestResult | null>(null);
   const [providerControls, setProviderControls] = useState<ProviderControls | null>(null);
   const [providerControlsSaving, setProviderControlsSaving] = useState(false);
 
@@ -225,6 +227,25 @@ export default function SettingsPage() {
       setTestResult({ success: false, provider: settings.aiProvider, model: settings.aiModel, keyFound: false, error: "Network error — could not reach server." });
     } finally {
       setIsTesting(false);
+    }
+  };
+
+  const testImageConnection = async () => {
+    if (!settings) return;
+    setIsTestingImage(true);
+    setImageTestResult(null);
+    try {
+      const res = await fetch("/api/settings/test-image-provider", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ provider: settings.imageProvider }),
+      });
+      const data = await res.json() as TestResult;
+      setImageTestResult(data);
+    } catch {
+      setImageTestResult({ success: false, provider: settings.imageProvider, model: settings.imageModel, keyFound: false, error: "Network error — could not reach server." });
+    } finally {
+      setIsTestingImage(false);
     }
   };
 
@@ -410,6 +431,8 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground mt-1">Manage your account and AI preferences</p>
       </div>
+
+      <ProviderReadinessSummary providerStatus={providerStatus} settings={settings} />
 
       <Tabs defaultValue="profile">
         <TabsList>
@@ -627,11 +650,35 @@ export default function SettingsPage() {
                     </Select>
                   </div>
 
-                  <Button onClick={save} disabled={isSaving} size="sm">
-                    {isSaving
-                      ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Saving…</>
-                      : <><Save className="w-3.5 h-3.5 mr-1.5" />Save Changes</>}
-                  </Button>
+                  <div className="flex gap-2 flex-wrap">
+                    <Button onClick={save} disabled={isSaving} size="sm">
+                      {isSaving
+                        ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Saving…</>
+                        : <><Save className="w-3.5 h-3.5 mr-1.5" />Save Changes</>}
+                    </Button>
+                    {imageProviderConfigured && (
+                      <Button variant="outline" onClick={testImageConnection} disabled={isTestingImage} size="sm">
+                        {isTestingImage
+                          ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Testing…</>
+                          : <><FlaskConical className="w-3.5 h-3.5 mr-1.5" />Test Image AI</>}
+                      </Button>
+                    )}
+                  </div>
+                  {imageTestResult && (
+                    <div className={`flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm ${imageTestResult.success ? "border-green-200 bg-green-50 text-green-800" : "border-red-200 bg-red-50 text-red-800"}`}>
+                      {imageTestResult.success ? <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" /> : <XCircle className="w-4 h-4 mt-0.5 shrink-0" />}
+                      <div className="space-y-0.5">
+                        <p className="font-medium">
+                          {imageTestResult.success ? "Image generation works" : "Image generation failed"}
+                        </p>
+                        <p className="text-xs opacity-80">
+                          {imageTestResult.success
+                            ? `Provider: ${imageTestResult.provider} · Key source: ${imageTestResult.keySource ?? "?"} · Hint: ${imageTestResult.keyHint ?? "—"}`
+                            : (imageTestResult.error ?? "Connection failed — check your API key.")}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </CardContent>
@@ -931,5 +978,73 @@ export default function SettingsPage() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+function ProviderReadinessSummary({ providerStatus, settings }: {
+  providerStatus: ProviderStatus | null;
+  settings: Settings | null;
+}) {
+  if (!providerStatus) return null;
+  const textProviders = ["anthropic", "openai", "gemini"] as const;
+  const imageProviders = ["openai", "replicate", "ideogram"] as const;
+  const has = (name: keyof ProviderStatus) => !!providerStatus[name]?.keyExists;
+  const sourceOf = (name: keyof ProviderStatus) => providerStatus[name]?.source ?? "none";
+  const anyText = textProviders.some(has);
+  const anyImage = imageProviders.some(has);
+
+  const Row = ({ label, providers, ok }: { label: string; providers: readonly (keyof ProviderStatus)[]; ok: boolean }) => (
+    <div className="rounded-md border bg-card p-3">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium">{label}</div>
+        {ok
+          ? <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">Ready</Badge>
+          : <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-200">No key</Badge>}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+        {providers.map((p) => (
+          <span key={p} className={`px-2 py-0.5 rounded border ${has(p) ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-muted text-muted-foreground"}`}>
+            {p}{has(p) ? ` · ${sourceOf(p) === "database" ? "your key" : "env fallback"}` : ""}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <Card className="border-dashed">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <FlaskConical className="w-4 h-4 text-primary" />
+          AI Provider Readiness
+        </CardTitle>
+        <CardDescription>
+          Quick check of which AI providers are configured. Add or test keys in the <strong>AI Keys</strong> tab.
+          <br />
+          <span className="text-xs">
+            Currently supported: <strong>OpenAI, Gemini, Anthropic</strong> for text; <strong>OpenAI, Replicate/Flux, Ideogram</strong> for image. Other providers (Mistral, DeepSeek, xAI/Grok, Imagen, Runway, Veo, TTS) are not connected in this build.
+          </span>
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3 sm:grid-cols-2">
+        <Row label="Text AI" providers={textProviders} ok={anyText} />
+        <Row label="Image AI" providers={imageProviders} ok={anyImage} />
+        <div className="sm:col-span-2 rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">Video / TTS:</span> not connected in this build. Reel storyboards and video render specs are saved; MP4 rendering and voiceover audio require an external sidecar/worker. Runway / Veo / Pika and ElevenLabs / OpenAI TTS adapters will land in a later phase.
+        </div>
+        {!anyImage && (
+          <div className="sm:col-span-2 rounded-md border border-amber-200 bg-amber-50/60 p-3 text-xs text-amber-900 flex items-start gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>No image provider connected. Add OpenAI, Replicate, or Ideogram key in <strong>AI Keys</strong> before generating images. Until then, image generation will be blocked with a clear error and no blank images will be saved.</span>
+          </div>
+        )}
+        {!anyText && (
+          <div className="sm:col-span-2 rounded-md border border-red-200 bg-red-50/60 p-3 text-xs text-red-900 flex items-start gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>No text AI provider configured. Most generation flows will fail until you add at least one of Anthropic, OpenAI, or Gemini in <strong>AI Keys</strong>.</span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

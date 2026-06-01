@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { postStatusLabel as sharedPostStatusLabel } from "@/lib/post-status";
 
 const PLATFORM_COLORS: Record<string, string> = {
   instagram: "bg-pink-50 text-pink-700 border-pink-200",
@@ -43,7 +44,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   linkedin: "LinkedIn", youtube: "YouTube", blog: "Blog", newsletter: "Newsletter",
 };
 
-const QUEUE_STATUSES = ["approved", "export_ready", "scheduled", "failed", "posted", "published"];
+const QUEUE_STATUSES = ["approved", "export_ready", "ready_to_post", "scheduled", "exported", "failed", "posted", "posted_manually", "published", "published_via_api"];
 
 const BASE = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
 
@@ -296,13 +297,8 @@ function isNoAccountFailure(post: any): boolean {
 }
 
 function postStatusLabel(post: any): string {
-  if ((post.status === "posted" || post.status === "published") && post.publishedAt) return "Published";
-  if (post.status === "scheduled") return "Scheduled";
   if (isNoAccountFailure(post)) return "Failed: no account connected";
-  if (post.status === "failed") return "Failed";
-  if (post.status === "approved" || post.status === "export_ready") return "Ready";
-  if (post.status === "posted" || post.status === "published") return "Ready";
-  return "Not posted yet";
+  return sharedPostStatusLabel(post.status, { publishedAt: post.publishedAt });
 }
 
 function friendlyPublishError(post: any): string {
@@ -316,7 +312,11 @@ function friendlyPublishError(post: any): string {
 }
 
 function exportableStatus(post: any): string {
-  return post.publishedAt ? "published" : post.status;
+  if (post.publishedAt) {
+    if (post.status === "published" || post.status === "published_via_api" || post.status === "scheduled") return "published_via_api";
+    if (post.status === "posted" || post.status === "posted_manually") return "posted_manually";
+  }
+  return post.status;
 }
 
 function buildExportPackage(clientName: string, posts: any[]) {
@@ -401,7 +401,7 @@ function downloadJson(filename: string, payload: unknown) {
 function PostTimeline({ post }: { post: any }) {
   const steps = [
     { label: "Created", value: post.createdAt },
-    { label: "Approved", value: ["approved", "export_ready", "scheduled", "posted", "published", "failed"].includes(post.status) ? post.updatedAt : null },
+    { label: "Approved", value: ["approved", "export_ready", "ready_to_post", "scheduled", "exported", "posted", "posted_manually", "published", "published_via_api", "failed"].includes(post.status) ? post.updatedAt : null },
     { label: "Scheduled", value: post.scheduledAt },
     {
       label: post.status === "failed" ? "Failed" : post.publishedAt ? "Published" : "Not posted yet",
@@ -425,7 +425,7 @@ export default function PostingQueue() {
   const search = useSearch();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [filter, setFilter] = useState<"all" | "approved" | "export_ready" | "scheduled" | "failed">("all");
+  const [filter, setFilter] = useState<"all" | "approved" | "ready_to_post" | "scheduled" | "exported" | "failed">("all");
   const [artworkPost, setArtworkPost] = useState<any>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [bulkAction, setBulkAction] = useState<"mark-posted" | "workflow" | null>(null);
@@ -680,8 +680,11 @@ export default function PostingQueue() {
 
   const queuePosts = (posts as any[]).filter((post) => {
     if (!QUEUE_STATUSES.includes(post.status)) return false;
-    if ((post.status === "posted" || post.status === "published") && !post.publishedAt) return false;
-    return filter === "all" || post.status === filter;
+    const postedLike = ["posted", "published", "posted_manually", "published_via_api"].includes(post.status);
+    if (postedLike && !post.publishedAt) return false;
+    if (filter === "all") return true;
+    if (filter === "ready_to_post") return post.status === "ready_to_post" || post.status === "export_ready";
+    return post.status === filter;
   });
 
   const sortedPosts = [...queuePosts].sort((a, b) => {
@@ -692,7 +695,7 @@ export default function PostingQueue() {
   });
 
   const selectedPosts = sortedPosts.filter((post) => selectedIds.has(post.id));
-  const readyPosts = sortedPosts.filter((post) => ["approved", "export_ready"].includes(post.status) && !post.scheduledAt);
+  const readyPosts = sortedPosts.filter((post) => ["approved", "export_ready", "ready_to_post"].includes(post.status) && !post.scheduledAt);
   const failedPosts = (posts as any[]).filter((post) => post.status === "failed");
   const clientName = clientData?.name ?? "Client";
   const hasWorkflow = !!publishingReadiness?.workflowConfigured;
@@ -877,9 +880,10 @@ export default function PostingQueue() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All posts</SelectItem>
-                <SelectItem value="approved">Ready to post</SelectItem>
-                <SelectItem value="export_ready">Export ready</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="ready_to_post">Ready to post</SelectItem>
                 <SelectItem value="scheduled">Scheduled</SelectItem>
+                <SelectItem value="exported">Exported</SelectItem>
                 <SelectItem value="failed">Failed</SelectItem>
               </SelectContent>
             </Select>
@@ -998,6 +1002,9 @@ export default function PostingQueue() {
               </div>
               <p className="font-medium">Queue is empty</p>
               <p className="text-sm text-muted-foreground mt-1">Approve drafts in Review to add them here.</p>
+              <Link href={`/clients/${clientId}/drafts`} className="mt-3 inline-flex items-center text-sm text-primary hover:underline">
+                Open Review →
+              </Link>
             </CardContent>
           </Card>
         ) : (
@@ -1029,9 +1036,9 @@ export default function PostingQueue() {
             {sortedPosts.map((post: any, idx: number) => {
               const schedule = formatSchedule(post.scheduledAt);
               const isFailed = post.status === "failed";
-              const isPublished = post.status === "posted" || post.status === "published";
+              const isPublished = ["posted", "published", "posted_manually", "published_via_api"].includes(post.status);
               const hasPublishedProof = isPublished && !!post.publishedAt;
-              const canAct = ["approved", "export_ready", "scheduled", "failed"].includes(post.status);
+              const canAct = ["approved", "export_ready", "ready_to_post", "scheduled", "exported", "failed"].includes(post.status);
               const platform = post.platform ?? "instagram";
               const scheduledReadiness = scheduledReadinessLabel(post, publishingReadiness);
               const queueReadiness = queueReadinessLabel(post, publishingReadiness);
@@ -1074,7 +1081,8 @@ export default function PostingQueue() {
                         <Badge variant="outline" className={cn(
                           "text-xs",
                           post.status === "approved" && "bg-blue-50 text-blue-700",
-                          post.status === "export_ready" && "bg-emerald-50 text-emerald-700",
+                          (post.status === "export_ready" || post.status === "ready_to_post") && "bg-emerald-50 text-emerald-700",
+                          post.status === "exported" && "bg-sky-50 text-sky-700",
                           post.status === "scheduled" && "bg-primary/10 text-primary",
                           hasPublishedProof && "bg-green-50 text-green-700 border-green-200",
                           isFailed && "bg-red-50 text-red-700"

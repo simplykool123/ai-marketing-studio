@@ -223,7 +223,7 @@ export default function Memory() {
   const [socialIntelligence, setSocialIntelligence] = useState<SocialIntelligenceResponse | null>(null);
 
   const activeStoryline = storylines.find((story) => story.isActive);
-  const approvedPosts = posts.filter((post) => ["approved", "export_ready", "scheduled", "posted", "published"].includes(post.status));
+  const approvedPosts = posts.filter((post) => ["approved", "export_ready", "ready_to_post", "scheduled", "exported", "posted", "posted_manually", "published", "published_via_api"].includes(post.status));
   const rejectedPosts = posts.filter((post) => post.status === "rejected");
   const isLoading = memoryLoading || brandLoading || storyLoading || postsLoading;
   const socialMemories = memories.filter((memory) => `${memory.key} ${memory.value}`.toLowerCase().includes("social intelligence"));

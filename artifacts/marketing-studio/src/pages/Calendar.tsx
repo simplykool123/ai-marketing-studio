@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from "react";
-import { useParams } from "wouter";
+import { useParams, Link } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListPostsQueryKey, useListPosts, useUpdatePost } from "@workspace/api-client-react";
 import type { Post } from "@workspace/api-client-react";
@@ -62,7 +62,7 @@ export default function Calendar() {
       (p) =>
         p.clientId === clientId &&
         Boolean(p.scheduledAt) &&
-        ["approved", "export_ready", "scheduled"].includes(p.status ?? "")
+        ["approved", "export_ready", "ready_to_post", "scheduled", "exported"].includes(p.status ?? "")
     ) ?? [];
 
   const getPostsForDay = (day: Date) =>
@@ -288,9 +288,12 @@ export default function Calendar() {
         <div className="space-y-4">
           <h3 className="font-semibold text-base border-b pb-2">Upcoming Posts</h3>
           {upcomingPosts.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">
-              No upcoming scheduled posts.
-            </p>
+            <div className="text-sm text-muted-foreground text-center py-8 space-y-2">
+              <p>No upcoming scheduled posts.</p>
+              <Link href={`/clients/${clientId}/drafts`} className="text-primary hover:underline">
+                Schedule approved drafts →
+              </Link>
+            </div>
           ) : (
             <div className="space-y-2">
               {upcomingPosts.map((post) => (

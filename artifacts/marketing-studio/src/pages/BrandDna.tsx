@@ -33,23 +33,43 @@ import { cn } from "@/lib/utils";
 type GrowthRulesForm = {
   websiteLink: string;
   whatsappNumber: string;
+  whatsappLink: string;
+  phone: string;
+  email: string;
+  businessAddress: string;
+  city: string;
+  country: string;
+  serviceAreas: string;
   defaultCta: string;
+  secondaryCta: string;
   preferredHashtags: string;
   seoKeywords: string;
   locationServiceKeywords: string;
   avoidPhrases: string;
   platformCtaRules: string;
+  preferredPlatforms: string;
+  imageStyleNotes: string;
 };
 
 const emptyGrowthRules: GrowthRulesForm = {
   websiteLink: "",
   whatsappNumber: "",
+  whatsappLink: "",
+  phone: "",
+  email: "",
+  businessAddress: "",
+  city: "",
+  country: "",
+  serviceAreas: "",
   defaultCta: "",
+  secondaryCta: "",
   preferredHashtags: "",
   seoKeywords: "",
   locationServiceKeywords: "",
   avoidPhrases: "",
   platformCtaRules: "",
+  preferredPlatforms: "",
+  imageStyleNotes: "",
 };
 
 const brandDnaSchema = z.object({
@@ -117,6 +137,7 @@ function toBrandDnaFormValues(brandDna: Partial<SavedBrandDna> | null | undefine
 }
 
 type WebsiteAnalysis = {
+  brandName?: string;
   brandTone: string;
   targetAudience: string;
   productsServices: string;
@@ -124,12 +145,28 @@ type WebsiteAnalysis = {
   contentPillars: string;
   colorStyleHints: string;
   keywords: string;
+  seoKeywords?: string;
+  defaultHashtags?: string;
+  primaryCTA?: string;
+  secondaryCTA?: string;
+  preferredPlatforms?: string;
+  serviceAreas?: string;
   visualStyle: string;
   imageStyle: string;
   fontStyle: string;
   designNotes: string;
   imageStyleNotes: string;
   confidenceNotes: string;
+};
+
+type DirectContactData = {
+  phone: string;
+  email: string;
+  whatsappNumber: string;
+  whatsappLink: string;
+  address: string;
+  city: string;
+  country: string;
 };
 
 type WebsiteImageCandidate = {
@@ -154,6 +191,7 @@ type WebsiteAnalysisResponse = {
   websiteUrl: string;
   finalUrl?: string;
   analysis: WebsiteAnalysis;
+  contactData?: DirectContactData;
   pagesAnalyzed?: Array<{ url: string; title: string }>;
   logoCandidates?: WebsiteImageCandidate[];
   imageCandidates?: WebsiteImageCandidate[];
@@ -327,6 +365,9 @@ export default function BrandDna() {
   const [isAnalyzingFallback, setIsAnalyzingFallback] = useState(false);
   const [growthRules, setGrowthRules] = useState<GrowthRulesForm>(emptyGrowthRules);
   const [isSavingGrowthRules, setIsSavingGrowthRules] = useState(false);
+  const [isSuggestingFields, setIsSuggestingFields] = useState(false);
+  const [websiteContactData, setWebsiteContactData] = useState<DirectContactData | null>(null);
+  const [showImportReview, setShowImportReview] = useState(false);
 
   const { data: brandDna, isLoading } = useGetBrandDna(clientId || "");
   const { data: client } = useGetClient(clientId || "");
@@ -396,6 +437,50 @@ export default function BrandDna() {
       });
     } finally {
       setIsSavingGrowthRules(false);
+    }
+  };
+
+  const suggestGrowthFields = async () => {
+    if (!clientId) return;
+    setIsSuggestingFields(true);
+    try {
+      const res = await fetch(`/api/clients/${clientId}/growth-advisor/suggest-brand-fields`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ currentRules: growthRules }),
+      });
+      const data = await res.json().catch(() => ({})) as {
+        seoKeywords?: string;
+        preferredHashtags?: string;
+        defaultCta?: string;
+        localKeywords?: string;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error ?? "Could not suggest fields");
+      let applied = 0;
+      setGrowthRules((current) => {
+        const next = { ...current };
+        if (!current.seoKeywords.trim() && data.seoKeywords) { next.seoKeywords = data.seoKeywords; applied++; }
+        if (!current.preferredHashtags.trim() && data.preferredHashtags) { next.preferredHashtags = data.preferredHashtags; applied++; }
+        if (!current.defaultCta.trim() && data.defaultCta) { next.defaultCta = data.defaultCta; applied++; }
+        if (!current.locationServiceKeywords.trim() && data.localKeywords) { next.locationServiceKeywords = data.localKeywords; applied++; }
+        return next;
+      });
+      toast({
+        title: applied ? `${applied} field${applied === 1 ? "" : "s"} suggested` : "No empty fields to fill",
+        description: applied ? "Review the suggestions and click Save growth rules to keep them." : "All key fields already have saved values.",
+      });
+    } catch (err) {
+      toast({
+        title: "Could not suggest fields",
+        description: err instanceof Error ? err.message : "AI suggestion failed.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSuggestingFields(false);
     }
   };
 
@@ -531,9 +616,11 @@ export default function BrandDna() {
       const data = await res.json() as WebsiteAnalysisResponse;
       setWebsiteAnalysis(data.analysis);
       setWebsiteAnalysisResult(data);
+      setWebsiteContactData(data.contactData ?? null);
       setAnalysisSourceUrl(data.websiteUrl);
       setSelectedImageUrls([]);
       setImageImportStatus({});
+      setShowImportReview(true);
       toast({
         title: "Website analysis ready",
         description: data.warnings?.length
@@ -580,8 +667,10 @@ export default function BrandDna() {
       const data = await res.json() as WebsiteAnalysisResponse;
       setWebsiteAnalysis(data.analysis);
       setWebsiteAnalysisResult(data);
+      setWebsiteContactData(data.contactData ?? null);
       setAnalysisSourceUrl(data.websiteUrl);
       setSelectedImageUrls([]);
+      setShowImportReview(true);
       setImageImportStatus({});
       toast({
         title: "Fallback analysis ready",
@@ -682,6 +771,62 @@ export default function BrandDna() {
         : "Empty Brand Setup fields were filled. Click Save Brand DNA to persist them.";
     setApplySummary(summary);
     toast({ title: "Suggestions applied. Click Save Brand DNA to keep changes.", description: summary });
+  };
+
+  const handleApplyToBrandProfile = async () => {
+    if (!clientId || !websiteAnalysis) return;
+    const analysis = websiteAnalysis;
+    const contacts = websiteContactData;
+
+    const notClear = (v?: string) => !v || v === "Not clear from the page" || v.trim() === "";
+
+    const updated: GrowthRulesForm = { ...growthRules };
+
+    // AI-suggested fields — always fill if current field is empty
+    if (!updated.seoKeywords.trim() && !notClear(analysis.seoKeywords)) updated.seoKeywords = analysis.seoKeywords!;
+    if (!updated.preferredHashtags.trim() && !notClear(analysis.defaultHashtags)) updated.preferredHashtags = analysis.defaultHashtags!;
+    if (!updated.defaultCta.trim() && !notClear(analysis.primaryCTA)) updated.defaultCta = analysis.primaryCTA!;
+    if (!updated.secondaryCta.trim() && !notClear(analysis.secondaryCTA)) updated.secondaryCta = analysis.secondaryCTA!;
+    if (!updated.preferredPlatforms.trim() && !notClear(analysis.preferredPlatforms)) updated.preferredPlatforms = analysis.preferredPlatforms!;
+    if (!updated.serviceAreas.trim() && !notClear(analysis.serviceAreas)) updated.serviceAreas = analysis.serviceAreas!;
+    if (!updated.imageStyleNotes.trim() && !notClear(analysis.imageStyleNotes)) updated.imageStyleNotes = analysis.imageStyleNotes!;
+    if (!updated.locationServiceKeywords.trim() && !notClear(analysis.keywords)) updated.locationServiceKeywords = analysis.keywords!;
+
+    // Website URL — from the analyzed source
+    if (!updated.websiteLink.trim() && analysisSourceUrl) updated.websiteLink = analysisSourceUrl;
+
+    // Contacts — ONLY from direct HTML extraction, never invented
+    if (contacts) {
+      if (!updated.phone.trim() && contacts.phone) updated.phone = contacts.phone;
+      if (!updated.email.trim() && contacts.email) updated.email = contacts.email;
+      if (!updated.whatsappLink.trim() && contacts.whatsappLink) updated.whatsappLink = contacts.whatsappLink;
+      if (!updated.whatsappNumber.trim() && contacts.whatsappNumber) updated.whatsappNumber = contacts.whatsappNumber;
+      if (!updated.businessAddress.trim() && contacts.address) updated.businessAddress = contacts.address;
+      if (!updated.city.trim() && contacts.city) updated.city = contacts.city;
+      if (!updated.country.trim() && contacts.country) updated.country = contacts.country;
+    }
+
+    setGrowthRules(updated);
+
+    // Save to memory immediately
+    const res = await fetch(`/api/clients/${clientId}/memory`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        key: "Content Growth Rules / client defaults",
+        value: JSON.stringify(updated),
+      }),
+    }).catch(() => null);
+
+    if (res?.ok) {
+      setShowImportReview(false);
+      toast({ title: "Brand Profile updated from website", description: "Growth rules saved. Review the Brand Profile tab." });
+    } else {
+      toast({ title: "Failed to save Brand Profile", variant: "destructive" });
+    }
   };
 
   const handleUseExtractedLogo = async (url: string) => {
@@ -1171,6 +1316,77 @@ export default function BrandDna() {
                 <Save className="w-4 h-4" />
                 {replaceFilledFields ? "Replace Brand DNA with suggestions" : "Fill empty fields only"}
               </Button>
+
+              {showImportReview && (
+                <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold">Save to Brand Profile</p>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setShowImportReview(false)} className="text-xs text-muted-foreground h-auto py-1 px-2">Dismiss</Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Review what was found and click Save to update the Brand Profile (SEO keywords, CTAs, hashtags, contact details).</p>
+
+                  <div className="space-y-2">
+                    {/* Contacts — from HTML extraction only */}
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Contact details (from HTML links)</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {[
+                        { label: "Phone", value: websiteContactData?.phone },
+                        { label: "Email", value: websiteContactData?.email },
+                        { label: "WhatsApp", value: websiteContactData?.whatsappLink },
+                        { label: "Address", value: websiteContactData?.address },
+                        { label: "City", value: websiteContactData?.city },
+                        { label: "Country", value: websiteContactData?.country },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="flex items-start gap-2 text-xs">
+                          <span className="text-muted-foreground w-16 shrink-0">{label}:</span>
+                          {value ? (
+                            <span className="text-foreground font-medium break-all">{value} <span className="text-[10px] text-emerald-600 font-normal">found on website</span></span>
+                          ) : (
+                            <span className="text-muted-foreground italic">Not found — add manually or suggest with AI</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    {/* AI suggested fields */}
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">AI suggested from website content</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {[
+                        { label: "SEO keywords", value: websiteAnalysis.seoKeywords },
+                        { label: "Hashtags", value: websiteAnalysis.defaultHashtags },
+                        { label: "Primary CTA", value: websiteAnalysis.primaryCTA },
+                        { label: "Secondary CTA", value: websiteAnalysis.secondaryCTA },
+                        { label: "Platforms", value: websiteAnalysis.preferredPlatforms },
+                        { label: "Service areas", value: websiteAnalysis.serviceAreas },
+                      ].map(({ label, value }) => {
+                        const isClear = value && value !== "Not clear from the page";
+                        return (
+                          <div key={label} className="flex items-start gap-2 text-xs">
+                            <span className="text-muted-foreground w-24 shrink-0">{label}:</span>
+                            {isClear ? (
+                              <span className="text-foreground break-words">{value} <span className="text-[10px] text-sky-600 font-normal">AI suggested</span></span>
+                            ) : (
+                              <span className="text-muted-foreground italic">Not clear — add manually</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 pt-1">
+                    <Button type="button" size="sm" onClick={handleApplyToBrandProfile} className="gap-2">
+                      <Save className="w-3.5 h-3.5" />
+                      Save to Brand Profile
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => setShowImportReview(false)}>
+                      Skip
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
@@ -1349,92 +1565,204 @@ export default function BrandDna() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Content Growth Rules</CardTitle>
-              <CardDescription>
-                Optional conversion and SEO defaults. The AI uses these only when they fit naturally, so posts do not become link-stuffed.
-              </CardDescription>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base">Brand Profile</CardTitle>
+                  <CardDescription className="mt-1">
+                    Business contact, CTA, SEO and content defaults. AI uses these when they fit naturally — posts do not become link-stuffed.
+                  </CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={suggestGrowthFields}
+                  disabled={isSuggestingFields}
+                  className="shrink-0"
+                >
+                  {isSuggestingFields ? <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+                  Suggest with AI
+                </Button>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Website link</label>
-                  <Input
-                    value={growthRules.websiteLink}
-                    onChange={(event) => setGrowthRules((current) => ({ ...current, websiteLink: event.target.value }))}
-                    placeholder="https://brand.com"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">WhatsApp number</label>
-                  <Input
-                    value={growthRules.whatsappNumber}
-                    onChange={(event) => setGrowthRules((current) => ({ ...current, whatsappNumber: event.target.value }))}
-                    placeholder="+1 555 000 0000"
-                  />
+            <CardContent className="space-y-5">
+              {/* Business contact */}
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Business Contact</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Website</label>
+                    <Input
+                      value={growthRules.websiteLink}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, websiteLink: event.target.value }))}
+                      placeholder="https://brand.com"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">WhatsApp number</label>
+                    <Input
+                      value={growthRules.whatsappNumber}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        const digits = value.replace(/\D/g, "");
+                        const link = digits ? `https://wa.me/${digits}` : "";
+                        setGrowthRules((current) => ({ ...current, whatsappNumber: value, whatsappLink: link }));
+                      }}
+                      placeholder="+1 555 000 0000"
+                    />
+                    {growthRules.whatsappLink && (
+                      <p className="text-xs text-muted-foreground">
+                        Link: <span className="font-mono">{growthRules.whatsappLink}</span>
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Phone</label>
+                    <Input
+                      value={growthRules.phone}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, phone: event.target.value }))}
+                      placeholder="+1 555 000 0000"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Email</label>
+                    <Input
+                      value={growthRules.email}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, email: event.target.value }))}
+                      placeholder="hello@brand.com"
+                      type="email"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">City</label>
+                    <Input
+                      value={growthRules.city}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, city: event.target.value }))}
+                      placeholder="Mumbai, Jakarta, Los Angeles..."
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Country</label>
+                    <Input
+                      value={growthRules.country}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, country: event.target.value }))}
+                      placeholder="India, Indonesia, US..."
+                    />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="text-sm font-medium">Business address</label>
+                    <Input
+                      value={growthRules.businessAddress}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, businessAddress: event.target.value }))}
+                      placeholder="Full address (optional, used in local SEO posts)"
+                    />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="text-sm font-medium">Service areas</label>
+                    <Input
+                      value={growthRules.serviceAreas}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, serviceAreas: event.target.value }))}
+                      placeholder="South Mumbai, Bandra, Andheri, Pan India delivery..."
+                    />
+                  </div>
                 </div>
               </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Default CTA</label>
-                  <Input
-                    value={growthRules.defaultCta}
-                    onChange={(event) => setGrowthRules((current) => ({ ...current, defaultCta: event.target.value }))}
-                    placeholder="Book a consultation, shop the collection, message us..."
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Preferred hashtags</label>
-                  <Input
-                    value={growthRules.preferredHashtags}
-                    onChange={(event) => setGrowthRules((current) => ({ ...current, preferredHashtags: event.target.value }))}
-                    placeholder="#brand #interiordesign #customfurniture"
-                  />
-                </div>
-              </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">SEO keywords</label>
-                  <Textarea
-                    value={growthRules.seoKeywords}
-                    onChange={(event) => setGrowthRules((current) => ({ ...current, seoKeywords: event.target.value }))}
-                    placeholder="premium sofa, modular furniture, interior design..."
-                    rows={2}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Location / service keywords</label>
-                  <Textarea
-                    value={growthRules.locationServiceKeywords}
-                    onChange={(event) => setGrowthRules((current) => ({ ...current, locationServiceKeywords: event.target.value }))}
-                    placeholder="Los Angeles showroom, custom upholstery, delivery areas..."
-                    rows={2}
-                  />
-                </div>
-              </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Avoid words / phrases</label>
-                  <Textarea
-                    value={growthRules.avoidPhrases}
-                    onChange={(event) => setGrowthRules((current) => ({ ...current, avoidPhrases: event.target.value }))}
-                    placeholder="cheap, luxury without proof, limited time if not true..."
-                    rows={2}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Platform-specific CTA rules</label>
-                  <Textarea
-                    value={growthRules.platformCtaRules}
-                    onChange={(event) => setGrowthRules((current) => ({ ...current, platformCtaRules: event.target.value }))}
-                    placeholder="Instagram: save/share. LinkedIn: book a consult. Facebook: message on WhatsApp."
-                    rows={2}
-                  />
+
+              {/* CTAs */}
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">CTA & Platforms</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Primary CTA</label>
+                    <Input
+                      value={growthRules.defaultCta}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, defaultCta: event.target.value }))}
+                      placeholder="Book a consultation, shop the collection, message us..."
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Secondary CTA</label>
+                    <Input
+                      value={growthRules.secondaryCta}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, secondaryCta: event.target.value }))}
+                      placeholder="Follow for more, save this post, share with a friend..."
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Preferred platforms</label>
+                    <Input
+                      value={growthRules.preferredPlatforms}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, preferredPlatforms: event.target.value }))}
+                      placeholder="instagram, linkedin, facebook..."
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Preferred hashtags</label>
+                    <Input
+                      value={growthRules.preferredHashtags}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, preferredHashtags: event.target.value }))}
+                      placeholder="#brand #interiordesign #customfurniture"
+                    />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="text-sm font-medium">Platform-specific CTA rules</label>
+                    <Textarea
+                      value={growthRules.platformCtaRules}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, platformCtaRules: event.target.value }))}
+                      placeholder="Instagram: save/share. LinkedIn: book a consult. Facebook: message on WhatsApp."
+                      rows={2}
+                    />
+                  </div>
                 </div>
               </div>
+
+              {/* SEO & Content */}
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">SEO & Content Rules</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">SEO keywords</label>
+                    <Textarea
+                      value={growthRules.seoKeywords}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, seoKeywords: event.target.value }))}
+                      placeholder="premium sofa, modular furniture, interior design..."
+                      rows={2}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Location / service keywords</label>
+                    <Textarea
+                      value={growthRules.locationServiceKeywords}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, locationServiceKeywords: event.target.value }))}
+                      placeholder="Mumbai showroom, pan India delivery, home consultation..."
+                      rows={2}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Avoid words / phrases</label>
+                    <Textarea
+                      value={growthRules.avoidPhrases}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, avoidPhrases: event.target.value }))}
+                      placeholder="cheap, luxury without proof, limited time if not true..."
+                      rows={2}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">Image style notes</label>
+                    <Textarea
+                      value={growthRules.imageStyleNotes}
+                      onChange={(event) => setGrowthRules((current) => ({ ...current, imageStyleNotes: event.target.value }))}
+                      placeholder="Warm tones, natural lighting, lifestyle photography, avoid busy backgrounds..."
+                      rows={2}
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-                <span>Saved rules feed AI Ideas, Campaign Planner, Marketing Calendar, Review rewrites, Image Studio, Video Studio, and Quality Review through AI Memory.</span>
+                <span>Saved profile feeds AI Ideas, Campaign Planner, Review rewrites, Image Studio, Video Studio, and Quality Review through AI Memory.</span>
                 <Button type="button" variant="outline" size="sm" onClick={saveGrowthRules} disabled={isSavingGrowthRules}>
-                  {isSavingGrowthRules ? "Saving..." : "Save growth rules"}
+                  {isSavingGrowthRules ? "Saving..." : "Save Brand Profile"}
                 </Button>
               </div>
             </CardContent>

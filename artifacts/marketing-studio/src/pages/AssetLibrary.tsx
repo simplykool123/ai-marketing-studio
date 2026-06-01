@@ -209,17 +209,17 @@ export default function AssetLibrary() {
         <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs leading-relaxed">
             Assets saved through Review, Image Studio, Brand Setup, and Video Studio use Supabase active storage.{" "}
-            Large videos and old published media can be archived later to reduce storage cost.
+            Google Drive archive is not connected yet. Archive is available after Drive setup; Supabase files are never deleted by this placeholder.
           </p>
           <Button
             size="sm"
             variant="outline"
             className="h-8 gap-1.5 self-start text-xs sm:self-center"
             disabled
-            title="Google Drive archive is scaffolded for a later phase. V1 never deletes Supabase files."
+            title="Google Drive archive not connected yet. Archive available after Drive setup."
           >
             <Archive className="w-3.5 h-3.5" />
-            Archive to Google Drive
+            Connect Drive
           </Button>
         </div>
       </div>
@@ -315,7 +315,7 @@ export default function AssetLibrary() {
                       variant="secondary"
                       className="h-8 w-8"
                       disabled
-                      title="Archive to Google Drive is coming later. V1 never deletes Supabase files."
+                      title="Google Drive archive not connected yet. Archive available after Drive setup."
                     >
                       <Archive className="w-3 h-3" />
                     </Button>

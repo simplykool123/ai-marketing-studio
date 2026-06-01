@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Link, useParams } from "wouter";
 import {
   AlertTriangle,
@@ -12,6 +12,7 @@ import {
   Sparkles,
   TrendingUp,
   Wand2,
+  Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import AiVisibility from "@/components/AiVisibility";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -116,15 +118,74 @@ function creativeStudioHref(clientId: string, opportunity: ContentOpportunity): 
 export default function TrendIntelligence() {
   const { clientId } = useParams<{ clientId: string }>();
   const { toast } = useToast();
+  const [activeTab, setActiveTab] = useState<"trends" | "ai-visibility">("trends");
   const [industry, setIndustry] = useState("");
   const [region, setRegion] = useState("US");
   const [timeWindow, setTimeWindow] = useState<"today" | "this_week" | "next_week">("this_week");
   const [contentGoal, setContentGoal] = useState<"awareness" | "engagement" | "leads" | "sales">("awareness");
   const [topicHint, setTopicHint] = useState("");
+  const [topicChips, setTopicChips] = useState<string[]>([]);
   const [platforms, setPlatforms] = useState<string[]>(["instagram", "linkedin", "google"]);
   const [result, setResult] = useState<TrendResearch | null>(null);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!clientId) return;
+    const chips: string[] = [];
+
+    fetch(`${BASE}/api/clients/${clientId}/brand-dna`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((dna: Record<string, string> | null) => {
+        if (!dna) return;
+        if (dna.industry?.trim()) setIndustry(dna.industry.trim());
+        if (dna.campaignGoals?.trim()) {
+          const goal = dna.campaignGoals.toLowerCase();
+          if (goal.includes("lead")) setContentGoal("leads");
+          else if (goal.includes("sales") || goal.includes("sale")) setContentGoal("sales");
+          else if (goal.includes("engag")) setContentGoal("engagement");
+        }
+        if (dna.contentThemes?.trim()) {
+          dna.contentThemes.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 4).forEach((chip) => {
+            if (!chips.includes(chip)) chips.push(chip);
+          });
+          setTopicChips([...chips]);
+        }
+      })
+      .catch(() => {});
+
+    fetch(`${BASE}/api/clients/${clientId}/memory`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((entries: Array<{ key: string; value: string }>) => {
+        const rulesEntry = [...entries].reverse().find((e) => e.key === "Content Growth Rules / client defaults");
+        if (!rulesEntry?.value) return;
+        try {
+          const rules = JSON.parse(rulesEntry.value) as Record<string, string>;
+          if (rules.country?.trim()) setRegion(rules.country.trim().substring(0, 5).toUpperCase());
+          else if (rules.city?.trim()) setRegion(rules.city.trim().substring(0, 5).toUpperCase());
+          else if (rules.serviceAreas?.trim()) setRegion(rules.serviceAreas.trim().split(/[,/]+/)[0].trim().substring(0, 8).toUpperCase());
+          if (rules.preferredPlatforms?.trim()) {
+            const saved = rules.preferredPlatforms.split(/[,\s]+/).map((p: string) => p.trim().toLowerCase()).filter(Boolean);
+            const mapped = saved.filter((p: string) => PLATFORMS.some((platform) => platform.value === p));
+            if (mapped.length > 0) setPlatforms(mapped);
+          }
+          if (rules.seoKeywords?.trim()) {
+            rules.seoKeywords.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 5).forEach((chip) => {
+              if (!chips.includes(chip)) chips.push(chip);
+            });
+          }
+          if (rules.serviceAreas?.trim()) {
+            rules.serviceAreas.split(/[,/]+/).map((s) => s.trim()).filter(Boolean).slice(0, 3).forEach((chip) => {
+              if (!chips.includes(chip)) chips.push(chip);
+            });
+          }
+          if (chips.length > 0) setTopicChips([...chips]);
+        } catch {
+          // ignore parse errors
+        }
+      })
+      .catch(() => {});
+  }, [clientId]);
 
   const socialSignals = useMemo(
     () => result?.trendSignals.filter((signal) => signal.source === "social_memory") ?? [],
@@ -256,6 +317,43 @@ export default function TrendIntelligence() {
         </Link>
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-2 border-b">
+        <button
+          onClick={() => setActiveTab("trends")}
+          className={cn(
+            "px-4 py-2 text-sm font-medium border-b-2 transition-colors",
+            activeTab === "trends"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4" />
+            Trend Research
+          </div>
+        </button>
+        <button
+          onClick={() => setActiveTab("ai-visibility")}
+          className={cn(
+            "px-4 py-2 text-sm font-medium border-b-2 transition-colors",
+            activeTab === "ai-visibility"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <div className="flex items-center gap-2">
+            <Eye className="h-4 w-4" />
+            AI Visibility
+          </div>
+        </button>
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === "ai-visibility" ? (
+        <AiVisibility />
+      ) : (
+        <>
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Research setup</CardTitle>
@@ -271,8 +369,27 @@ export default function TrendIntelligence() {
             <Input value={region} onChange={(event) => setRegion(event.target.value.toUpperCase())} placeholder="US, IN, GB" />
           </div>
           <div className="space-y-1.5">
-            <Label>Topic hint</Label>
-            <Input value={topicHint} onChange={(event) => setTopicHint(event.target.value)} placeholder="Optional: sofas, festive interiors, small spaces..." />
+            <Label>Topic hint <span className="text-muted-foreground font-normal">(optional)</span></Label>
+            <Input value={topicHint} onChange={(event) => setTopicHint(event.target.value)} placeholder="Leave blank to use Brand DNA, or pick a suggestion below..." />
+            {topicChips.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {topicChips.map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    onClick={() => setTopicHint(chip)}
+                    className={cn(
+                      "rounded-full border px-2.5 py-0.5 text-xs transition-colors",
+                      topicHint === chip
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-input bg-background text-muted-foreground hover:border-primary hover:text-foreground"
+                    )}
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Time window</Label>
@@ -482,6 +599,8 @@ export default function TrendIntelligence() {
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

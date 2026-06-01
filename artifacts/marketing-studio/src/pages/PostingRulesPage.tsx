@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Settings2, Clock, Ban, Plus, X, Save, Globe, CalendarDays, Timer } from "lucide-react";
+import { BlogConnectionCard } from "@/components/BlogConnectionCard";
 
 const PLATFORMS = ["instagram", "facebook", "twitter", "linkedin"] as const;
 const PLATFORM_LABELS: Record<string, string> = {
@@ -356,6 +357,8 @@ export default function PostingRulesPage() {
           Save Rules
         </Button>
       </div>
+
+      <BlogConnectionCard clientId={clientId ?? ""} />
     </div>
   );
 }
