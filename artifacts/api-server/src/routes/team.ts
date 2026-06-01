@@ -100,7 +100,7 @@ router.get("/clients/:clientId/team", requireClientRole(), async (req, res): Pro
       .where(eq(clientInvitesTable.clientId, clientId))
       .orderBy(desc(clientInvitesTable.createdAt));
 
-    res.json({ members, invites });
+    res.json({ members, invites, currentUserRole: (req as AuthRequest).clientRole ?? null });
   } catch {
     res.status(500).json({ error: "Failed to load team access" });
   }

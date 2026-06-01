@@ -601,6 +601,10 @@ Aspect ratio: ${aspectRatio}.`;
       logger.info({ clientId }, "Image Studio: image generated");
       res.json({ post, imageUrl: generated.durableUrl, providerImageUrl: generated.providerUrl, prompt: fullPrompt, style, provider: generated.provider, model: generated.model, fallbackUsed: generated.fallbackUsed });
     } catch (err) {
+      if (err instanceof Error && err.message.startsWith("No image provider connected.")) {
+        res.status(503).json({ error: err.message });
+        return;
+      }
       const { status, message } = toAiErrorResponse(
         err, "Failed to generate image. Add key in Settings → AI Keys."
       );

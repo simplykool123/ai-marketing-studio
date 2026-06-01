@@ -235,7 +235,7 @@ export async function markPublished(postId: string, clientId: string, publishedA
     await db.insert(postingLogsTable).values({
       clientId,
       postId,
-      action: "mark_published",
+      action: "mock_post",
       status: "success",
       provider: "manual",
     });

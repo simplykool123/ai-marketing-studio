@@ -14,7 +14,7 @@ export interface AuthRequest extends Request<Record<string, string>> {
 export const ALL_CLIENT_ROLES: ClientRole[]     = ["owner", "admin", "editor", "approver", "viewer"];
 export const MANAGE_CLIENT_ROLES: ClientRole[]  = ["owner", "admin"];
 export const EDIT_CONTENT_ROLES: ClientRole[]   = ["owner", "admin", "editor"];
-export const APPROVE_CONTENT_ROLES: ClientRole[] = ["owner", "admin", "approver"];
+export const APPROVE_CONTENT_ROLES: ClientRole[] = ["owner", "admin", "editor", "approver"];
 export const MUTATE_CONTENT_ROLES: ClientRole[] = ["owner", "admin", "editor", "approver"];
 
 // ---------------------------------------------------------------------------

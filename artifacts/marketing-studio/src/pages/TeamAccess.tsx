@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Copy, MailPlus, Shield, Trash2, XCircle } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 
 type ClientRole = "owner" | "admin" | "editor" | "approver" | "viewer";
 type TeamMember = {
@@ -33,6 +34,7 @@ type TeamInvite = {
 type TeamResponse = {
   members: TeamMember[];
   invites: TeamInvite[];
+  currentUserRole?: ClientRole | null;
 };
 
 const ROLES: { value: ClientRole; label: string; description: string }[] = [
@@ -102,6 +104,7 @@ async function removeMember(clientId: string, userId: string): Promise<void> {
 
 export default function TeamAccess() {
   const { clientId } = useParams<{ clientId: string }>();
+  const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
@@ -163,6 +166,8 @@ export default function TeamAccess() {
   };
 
   const pendingInvites = data?.invites.filter((invite) => invite.status === "pending") ?? [];
+  const currentUserRole = data?.currentUserRole ?? data?.members.find((member) => member.userId === user?.id)?.role ?? null;
+  const canManageTeam = currentUserRole === "owner" || currentUserRole === "admin";
 
   return (
     <div className="max-w-5xl space-y-6">
@@ -172,46 +177,55 @@ export default function TeamAccess() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Invite teammate or client</CardTitle>
-            <CardDescription>Email is link-only in V1. No email provider is required.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>Email</Label>
-              <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Role</Label>
-              <Select value={role} onValueChange={(value) => setRole(value as ClientRole)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {ROLES.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>
-                      {item.label} - {item.description}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Button onClick={() => createInviteMutation.mutate()} disabled={createInviteMutation.isPending || !email.trim()} className="gap-2">
-              <MailPlus className="w-4 h-4" />
-              Create invite
-            </Button>
-            {newInviteLink && (
-              <div className="rounded-md border bg-muted/30 p-3">
-                <p className="text-xs font-medium">Copy invite link</p>
-                <div className="mt-2 flex gap-2">
-                  <Input value={newInviteLink} readOnly className="font-mono text-xs" />
-                  <Button variant="outline" size="icon" onClick={() => copyLink(newInviteLink)}>
-                    <Copy className="w-4 h-4" />
-                  </Button>
-                </div>
+        {canManageTeam ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Invite teammate or client</CardTitle>
+              <CardDescription>Email is link-only in V1. No email provider is required.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-1.5">
+                <Label>Email</Label>
+                <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" />
               </div>
-            )}
-          </CardContent>
-        </Card>
+              <div className="space-y-1.5">
+                <Label>Role</Label>
+                <Select value={role} onValueChange={(value) => setRole(value as ClientRole)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {ROLES.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label} - {item.description}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button onClick={() => createInviteMutation.mutate()} disabled={createInviteMutation.isPending || !email.trim()} className="gap-2">
+                <MailPlus className="w-4 h-4" />
+                Create invite
+              </Button>
+              {newInviteLink && (
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs font-medium">Copy invite link</p>
+                  <div className="mt-2 flex gap-2">
+                    <Input value={newInviteLink} readOnly className="font-mono text-xs" />
+                    <Button variant="outline" size="icon" onClick={() => copyLink(newInviteLink)}>
+                      <Copy className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Team permissions</CardTitle>
+              <CardDescription>Your role can view the team, but only owners and admins can invite teammates or change roles.</CardDescription>
+            </CardHeader>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>
@@ -248,15 +262,19 @@ export default function TeamAccess() {
                     <Shield className="mr-1 w-3 h-3" />
                     {member.role}
                   </Badge>
-                  <Select value={member.role} onValueChange={(nextRole) => roleMutation.mutate({ userId: member.userId, nextRole: nextRole as ClientRole })}>
-                    <SelectTrigger className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {ROLES.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => removeMutation.mutate(member.userId)} title="Remove member">
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  {canManageTeam && (
+                    <>
+                      <Select value={member.role} onValueChange={(nextRole) => roleMutation.mutate({ userId: member.userId, nextRole: nextRole as ClientRole })}>
+                        <SelectTrigger className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {ROLES.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => removeMutation.mutate(member.userId)} title="Remove member">
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
             ))
@@ -282,14 +300,18 @@ export default function TeamAccess() {
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant="outline" className={cn("capitalize", ROLE_BADGE[invite.role])}>{invite.role}</Badge>
-                    <Button variant="outline" size="sm" disabled={!storedLink} onClick={() => storedLink && copyLink(storedLink)} className="gap-1.5">
-                      <Copy className="w-3.5 h-3.5" />
-                      Copy invite link
-                    </Button>
-                    <Button variant="ghost" size="sm" className="text-destructive" onClick={() => cancelInviteMutation.mutate(invite.id)}>
-                      <XCircle className="mr-1.5 w-3.5 h-3.5" />
-                      Cancel
-                    </Button>
+                    {canManageTeam && (
+                      <>
+                        <Button variant="outline" size="sm" disabled={!storedLink} onClick={() => storedLink && copyLink(storedLink)} className="gap-1.5">
+                          <Copy className="w-3.5 h-3.5" />
+                          Copy invite link
+                        </Button>
+                        <Button variant="ghost" size="sm" className="text-destructive" onClick={() => cancelInviteMutation.mutate(invite.id)}>
+                          <XCircle className="mr-1.5 w-3.5 h-3.5" />
+                          Cancel
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
               );
